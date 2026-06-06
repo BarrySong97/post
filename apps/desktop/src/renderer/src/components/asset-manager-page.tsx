@@ -555,7 +555,7 @@ function AppWindowChrome({
   return (
     <>
       <div className="window-drag fixed inset-x-0 top-0 z-40 h-12 bg-transparent" />
-      <div className="window-no-drag fixed left-[100px] top-[6px] z-[80] flex items-center gap-3">
+      <div className="window-no-drag fixed left-[96px] top-[5px] z-[80] flex items-center gap-3">
         <Button
           isIconOnly
           aria-label={sidebarCollapsed ? "展开左侧栏" : "收起左侧栏"}

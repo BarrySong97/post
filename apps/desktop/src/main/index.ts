@@ -64,7 +64,7 @@ function createWindow(): BrowserWindow {
     process.platform === "darwin"
       ? ({
           backgroundColor: "#00000000",
-          trafficLightPosition: { x: 24, y: 14 },
+          trafficLightPosition: { x: 18, y: 14 },
           transparent: true,
           vibrancy: "sidebar",
           visualEffectState: "active",
