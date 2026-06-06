@@ -1,0 +1,23 @@
+appId: com.post.desktop
+productName: Post
+directories:
+  output: release
+files:
+  - out/**
+  - package.json
+extraResources:
+  - from: ../../packages/db/drizzle
+    to: drizzle
+asarUnpack:
+  - "**/*.node"
+npmRebuild: true
+mac:
+  target:
+    - dmg
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+

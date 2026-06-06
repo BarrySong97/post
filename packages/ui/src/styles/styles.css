@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+@source "../../../../apps/**/*.{ts,tsx}";
+@source "../../../../packages/**/*.{ts,tsx}";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  color-scheme: light;
+  --background: oklch(0.985 0.004 247);
+  --foreground: oklch(0.18 0.012 248);
+  --surface: oklch(1 0 0);
+  --surface-muted: oklch(0.95 0.007 247);
+  --border-subtle: oklch(0.88 0.01 247);
+  --sidebar-item-hover: rgb(24 24 27 / 0.045);
+  --sidebar-item-pressed: rgb(24 24 27 / 0.075);
+  --sidebar-item-selected: rgb(24 24 27 / 0.07);
+  --sidebar-item-selected-hover: rgb(24 24 27 / 0.09);
+  --sidebar-item-selected-border: rgb(24 24 27 / 0.065);
+}
+
+@theme inline {
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border-subtle: var(--border-subtle);
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    min-height: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-width: 360px;
+    overflow: hidden;
+    background: transparent;
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  button,
+  input,
+  textarea,
+  [role="button"] {
+    -webkit-app-region: no-drag;
+  }
+
+  .window-drag {
+    -webkit-app-region: drag;
+  }
+
+  .window-no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+/* Panel collapse/expand animation */
+.panel-layout #sidebar,
+.panel-layout #agent {
+  transition: flex-grow 0.25s ease-in-out;
+}
+
+.panel-layout:has([data-separator="active"]) #sidebar,
+.panel-layout:has([data-separator="active"]) #agent {
+  transition: none;
+}

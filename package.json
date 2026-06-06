@@ -1,0 +1,31 @@
+{
+  "name": "post",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo -F desktop dev",
+    "build": "turbo build",
+    "check-types": "turbo check-types",
+    "db:generate": "pnpm -F @post/db db:generate",
+    "db:migrate": "pnpm -F @post/db db:migrate",
+    "db:studio": "pnpm -F @post/db db:studio",
+    "package": "pnpm -F desktop package"
+  },
+  "devDependencies": {
+    "turbo": "^2.8.12",
+    "typescript": "catalog:"
+  },
+  "packageManager": "pnpm@10.14.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "esbuild"
+    ]
+  }
+}
+

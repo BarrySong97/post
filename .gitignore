@@ -1,0 +1,12 @@
+node_modules
+.turbo
+.superpowers
+dist
+out
+release
+*.tsbuildinfo
+*.db
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.DS_Store

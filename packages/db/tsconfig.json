@@ -1,0 +1,14 @@
+{
+  "extends": "@post/config/tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "declaration": true,
+    "sourceMap": true,
+    "composite": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "drizzle.config.ts"]
+}
+
