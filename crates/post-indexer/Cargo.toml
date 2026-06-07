@@ -1,0 +1,7 @@
+[package]
+name = "post-indexer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+image = { version = "0.25.8", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "tiff", "webp"] }

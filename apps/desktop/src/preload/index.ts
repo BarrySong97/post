@@ -9,6 +9,10 @@ const api = {
     name: process.platform,
   },
   getDatabasePath: () => ipcRenderer.invoke("get-database-path") as Promise<string>,
+  setWindowControlsState: (state: {
+    trafficLightsVisible?: boolean;
+    trafficLightPosition?: { x: number; y: number } | null;
+  }) => ipcRenderer.invoke("window:set-controls-state", state) as Promise<void>,
   trpcRequest: (request: { type: string; path: string; input: unknown }) =>
     ipcRenderer.invoke("trpc:request", request) as Promise<unknown>,
 };

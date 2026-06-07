@@ -7,13 +7,17 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "turbo -F desktop dev",
+    "dev": "pnpm rebuild:electron && turbo -F desktop dev",
     "build": "turbo build",
     "check-types": "turbo check-types",
     "db:generate": "pnpm -F @post/db db:generate",
     "db:migrate": "pnpm -F @post/db db:migrate",
     "db:studio": "pnpm -F @post/db db:studio",
-    "package": "pnpm -F desktop package"
+    "indexer:build": "cargo build -p post-indexer --release",
+    "indexer:check": "cargo check -p post-indexer",
+    "indexer:test": "cargo test -p post-indexer",
+    "package": "pnpm indexer:build && pnpm -F desktop package",
+    "rebuild:electron": "node_modules/.pnpm/node_modules/.bin/electron-rebuild -f -w better-sqlite3"
   },
   "devDependencies": {
     "turbo": "^2.8.12",
@@ -28,4 +32,3 @@
     ]
   }
 }
-

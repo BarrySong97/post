@@ -63,13 +63,7 @@
     -webkit-app-region: no-drag;
   }
 
-  .window-drag {
-    -webkit-app-region: drag;
-  }
 
-  .window-no-drag {
-    -webkit-app-region: no-drag;
-  }
 }
 
 /* Panel collapse/expand animation */
@@ -81,4 +75,12 @@
 .panel-layout:has([data-separator="active"]) #sidebar,
 .panel-layout:has([data-separator="active"]) #agent {
   transition: none;
+}
+
+.window-drag {
+  -webkit-app-region: drag;
+}
+
+.window-no-drag {
+  -webkit-app-region: no-drag;
 }

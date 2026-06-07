@@ -11,6 +11,10 @@ declare global {
         name: NodeJS.Platform;
       };
       getDatabasePath: () => Promise<string>;
+      setWindowControlsState: (state: {
+        trafficLightsVisible?: boolean;
+        trafficLightPosition?: { x: number; y: number } | null;
+      }) => Promise<void>;
       trpcRequest: (request: {
         type: string;
         path: string;

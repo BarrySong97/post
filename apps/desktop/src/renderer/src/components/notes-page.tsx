@@ -152,7 +152,7 @@ export function NotesPage() {
   };
 
   return (
-    <main className="min-h-screen bg-background px-6 py-8 text-foreground">
+    <main className="h-full overflow-auto bg-background px-6 py-8 text-foreground">
       <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[360px_1fr]">
         <section className="rounded-lg border border-border-subtle bg-surface p-5 shadow-sm">
           <div className="mb-5">

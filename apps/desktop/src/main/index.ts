@@ -1,16 +1,56 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, shell } from "electron";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
-import { join } from "node:path";
+import path, { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { getDatabasePath, initDatabase } from "./db";
+import { schema } from "@post/db";
+import { and, eq } from "drizzle-orm";
+
+import { getDatabase, getDatabasePath, initDatabase } from "./db";
+import { getThumbnailCacheRoot } from "./indexer";
 import { appRouter } from "./trpc/router";
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "post-file",
+    privileges: {
+      standard: true,
+      secure: true,
+      corsEnabled: true,
+    },
+  },
+]);
 
 type TRPCRequest = {
   type: "query" | "mutation" | "subscription";
   path: string;
   input: unknown;
 };
+
+const TRAFFIC_LIGHT_POSITION = { x: 18, y: 14 };
+
+type WindowControlsState = {
+  trafficLightsVisible?: boolean;
+  trafficLightPosition?: { x: number; y: number } | null;
+};
+
+type MacWindowControls = BrowserWindow & {
+  setWindowButtonPosition?: (position: { x: number; y: number } | null) => void;
+};
+
+function applyWindowControlsState(window: BrowserWindow, state: WindowControlsState) {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const macWindow = window as MacWindowControls;
+  const visible = state.trafficLightsVisible ?? true;
+  const position = state.trafficLightPosition ?? TRAFFIC_LIGHT_POSITION;
+
+  if (typeof macWindow.setWindowButtonPosition === "function") {
+    macWindow.setWindowButtonPosition(visible ? position : { x: -120, y: position.y });
+  }
+}
 
 function getCallerProcedure(caller: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((target, segment) => {
@@ -59,12 +99,76 @@ function registerTRPCHandler(): void {
   });
 }
 
+function registerAssetProtocol(): void {
+  protocol.registerFileProtocol("post-file", (request, callback) => {
+    try {
+      const url = new URL(request.url);
+      if (url.hostname === "thumb") {
+        const assetId = decodeURIComponent(url.pathname.replace(/^\/+/, "").split("/")[0] ?? "");
+        const row = getDatabase()
+          .select()
+          .from(schema.imageCache)
+          .where(and(eq(schema.imageCache.assetId, assetId), eq(schema.imageCache.status, "ready")))
+          .get();
+
+        if (!row?.thumbnailPath) {
+          callback({ error: -6 });
+          return;
+        }
+
+        const thumbnailRoot = path.resolve(getThumbnailCacheRoot());
+        const absolutePath = path.resolve(row.thumbnailPath);
+        if (absolutePath !== thumbnailRoot && !absolutePath.startsWith(`${thumbnailRoot}${path.sep}`)) {
+          callback({ error: -10 });
+          return;
+        }
+
+        callback({ path: absolutePath });
+        return;
+      }
+
+      if (url.hostname === "asset") {
+        const assetId = decodeURIComponent(url.pathname.replace(/^\/+/, "").split("/")[0] ?? "");
+        const row = getDatabase()
+          .select({
+            file: schema.assetFiles,
+            vault: schema.vaults,
+          })
+          .from(schema.assetFiles)
+          .innerJoin(schema.vaults, eq(schema.vaults.id, schema.assetFiles.vaultId))
+          .where(eq(schema.assetFiles.assetId, assetId))
+          .get();
+
+        if (!row || !row.file.fileExists) {
+          callback({ error: -6 });
+          return;
+        }
+
+        const vaultRoot = path.resolve(row.vault.rootPath);
+        const absolutePath = path.resolve(vaultRoot, row.file.relativePath);
+        if (absolutePath !== vaultRoot && !absolutePath.startsWith(`${vaultRoot}${path.sep}`)) {
+          callback({ error: -10 });
+          return;
+        }
+
+        callback({ path: absolutePath });
+        return;
+      }
+
+      callback({ error: -6 });
+    } catch (error) {
+      console.error("Failed to serve asset file", error);
+      callback({ error: -2 });
+    }
+  });
+}
+
 function createWindow(): BrowserWindow {
   const macWindowOptions =
     process.platform === "darwin"
       ? ({
           backgroundColor: "#00000000",
-          trafficLightPosition: { x: 18, y: 14 },
+          trafficLightPosition: TRAFFIC_LIGHT_POSITION,
           transparent: true,
           vibrancy: "sidebar",
           visualEffectState: "active",
@@ -89,7 +193,7 @@ function createWindow(): BrowserWindow {
 
   mainWindow.on("ready-to-show", () => {
     mainWindow.show();
-    if (is.dev && process.env.OPEN_DEVTOOLS === "1") {
+    if (is.dev) {
       mainWindow.webContents.openDevTools({ mode: "detach" });
     }
   });
@@ -118,7 +222,14 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("get-database-path", () => getDatabasePath());
+  ipcMain.handle("window:set-controls-state", (event, state: WindowControlsState) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window) {
+      applyWindowControlsState(window, state);
+    }
+  });
   registerTRPCHandler();
+  registerAssetProtocol();
 
   createWindow();
 });

@@ -8,6 +8,8 @@ files:
 extraResources:
   - from: ../../packages/db/drizzle
     to: drizzle
+  - from: ../../target/release/post-indexer
+    to: post-indexer
 asarUnpack:
   - "**/*.node"
 npmRebuild: true
@@ -20,4 +22,3 @@ win:
 linux:
   target:
     - AppImage
-

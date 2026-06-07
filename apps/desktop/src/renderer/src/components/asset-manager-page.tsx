@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, type ComponentType, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DragDropProvider, type DragEndEvent } from "@dnd-kit/react";
 import { isSortable, useSortable } from "@dnd-kit/react/sortable";
 import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
@@ -7,15 +8,9 @@ import { AnimatePresence, motion } from "motion/react";
 import { useMasonry, usePositioner, useResizeObserver as useMasonryResizeObserver } from "masonic";
 import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
-  AlertCircle,
   Archive,
   ArrowLeft,
-  Bot,
-  CalendarClock,
-  CheckCircle2,
   ChevronDown,
-  Circle,
-  Clock3,
   ExternalLink,
   FileSpreadsheet,
   FileText,
@@ -26,25 +21,28 @@ import {
   Inbox,
   Info,
   Link as LinkIcon,
-  ListFilter,
   MoreHorizontal,
   PanelLeftOpen,
   PanelLeftClose,
-  PanelRightOpen,
-  PanelRightClose,
-  PanelsTopLeft,
   Pencil,
-  Pin,
   Play,
   Plus,
-  Send,
   ShieldCheck,
-  Sparkles,
   Tags,
   Trash2,
   Video,
 } from "lucide-react";
-import { Button, Chip, TextArea } from "@heroui/react";
+import {
+  AccordionBody,
+  AccordionItem,
+  AccordionPanel,
+  AccordionRoot,
+  Button,
+  Chip,
+  Tag,
+  TagGroup,
+  Tabs,
+} from "@heroui/react";
 
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import {
@@ -53,6 +51,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { trpc, type RouterOutputs } from "@/lib/trpc";
 
 type AssetKind = "markdown" | "image" | "video" | "link" | "web" | "file";
 type AssetStatus = "inbox" | "organized" | "draft" | "published";
@@ -68,12 +67,20 @@ type Asset = {
   source: string;
   sourceType: "vault" | "external_file" | "url";
   time: string;
+  timestampMs: number;
   tag: string;
   collection?: string;
   meta: string;
   accent: number;
   height?: "short" | "medium" | "tall";
   duration?: string;
+  mediaUrl?: string;
+  thumbnailUrl?: string;
+  thumbnailStatus?: "pending" | "ready" | "failed" | null;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
+  thumbnailWidth?: number | null;
+  thumbnailHeight?: number | null;
   url?: string;
   related: string[];
   // subtype helpers
@@ -83,97 +90,70 @@ type Asset = {
   imageCount?: number;  // image: images in the collection
 };
 
-type SmartView = {
-  id: string;
-  name: string;
-  count: number;
-  icon: typeof Inbox;
-  conditions: string[];
-};
+type IndexedAsset = RouterOutputs["assets"]["list"]["assets"][number];
+type SidebarTag = RouterOutputs["assets"]["list"]["tags"][number];
+type SidebarView = RouterOutputs["assets"]["list"]["views"][number];
+type AssetSummary = RouterOutputs["assets"]["list"]["summary"];
 
-type PanelControls = {
-  sidebarCollapsed: boolean;
-  agentCollapsed: boolean;
-  onToggleSidebar: () => void;
-  onToggleAgent: () => void;
-};
-
-const tags = [
-  { name: "待整理", count: 18, hue: 25 },
-  { name: "灵感采集", count: 38, hue: 205 },
-  { name: "竞品分析", count: 23, hue: 148 },
-  { name: "文案素材", count: 19, hue: 275 },
-  { name: "视频脚本", count: 7, hue: 8 },
-  { name: "客户案例", count: 14, hue: 42 },
-  { name: "行业报告", count: 9, hue: 188 },
-  { name: "品牌资产", count: 26, hue: 315 },
-  { name: "已发布", count: 31, hue: 232 },
-];
-
-const smartViews: SmartView[] = [
-  {
-    id: "this-week",
-    name: "本周新增",
-    count: 18,
-    icon: Clock3,
-    conditions: ["时间在本周", "状态不是已发布"],
-  },
-  {
-    id: "untagged",
-    name: "未打标签",
-    count: 7,
-    icon: Circle,
-    conditions: ["标签为空", "来源包含 Vault"],
-  },
-  {
-    id: "competitor-video",
-    name: "竞品 · 视频精选",
-    count: 11,
-    icon: Play,
-    conditions: ["类型是视频", "标签包含竞品分析", "时间在近 30 天"],
-  },
-  {
-    id: "inspiration-wall",
-    name: "灵感 · 图片墙",
-    count: 38,
-    icon: PanelsTopLeft,
-    conditions: ["类型是图片", "标签包含灵感采集"],
-  },
-];
-
-const conversations = [
-  { id: "clash-config", title: "查找 Clash 配置对话", time: "1 小时" },
-  { id: "ymtc-market", title: "确认长江存储是否创业板", time: "5 小时" },
-  { id: "margin-trading", title: "查询融资交易资格", time: "1 天" },
-  { id: "get-started", title: "Get started", time: "2 天" },
-  { id: "etf-return", title: "计算 ETF 收益", time: "2 天" },
-  { id: "sendgrid-alternatives", title: "查找类似 SendGrid 验证服务", time: "2 天" },
-  { id: "sendgrid-auth", title: "修复 SendGrid 邮件认证", time: "2 天" },
-  { id: "ai-dependency-regression", title: "防止 AI 依赖退化", time: "3 天" },
-  { id: "codex-account-switch", title: "切换本地 Codex 账户", time: "3 天", active: true },
-  { id: "submail-inbox", title: "确认子邮箱 inbox 支持", time: "3 天" },
-  { id: "subdomain-dns-docs", title: "编写子域 DNS 配置文档", time: "4 天" },
-];
-
-type SidebarSectionId = "views" | "conversations" | "tags";
+type SidebarSectionId = "views" | "tags";
 
 type SidebarOrderState = {
   sections: SidebarSectionId[];
   views: string[];
-  conversations: string[];
   tags: string[];
 };
 
 const SIDEBAR_ORDER_STORAGE_KEY = "post.assetManager.sidebarOrder.v1";
-const SIDEBAR_SECTION_IDS: SidebarSectionId[] = ["views", "conversations", "tags"];
+const ASSET_FILTER_OPEN_STORAGE_KEY = "post.assetManager.filterOpen.v1";
+const SIDEBAR_SECTION_IDS: SidebarSectionId[] = ["views", "tags"];
 const SIDEBAR_SECTION_TYPE = "sidebar-section";
 const SIDEBAR_ITEM_TYPE_PREFIX = "sidebar-item:";
+const TRAFFIC_LIGHT_POSITION = { x: 18, y: 14 };
+const SIDEBAR_PREVIEW_MAX_WIDTH = 320;
+const SIDEBAR_PREVIEW_VIEWPORT_RATIO = 0.84;
+const SIDEBAR_PREVIEW_EXIT_PADDING = 32;
+const SIDEBAR_EDGE_HOTSPOT_WIDTH = 24;
+let lastWindowControlsVisible: boolean | null = null;
 
-const getDefaultSidebarOrder = (): SidebarOrderState => ({
+function isMacWindow() {
+  return typeof window !== "undefined" && window.api?.platform?.isMac === true;
+}
+
+function syncWindowControlsWithSidebar(trafficLightsVisible: boolean) {
+  if (!isMacWindow() || typeof window.api.setWindowControlsState !== "function") {
+    return;
+  }
+
+  if (lastWindowControlsVisible === trafficLightsVisible) {
+    return;
+  }
+  lastWindowControlsVisible = trafficLightsVisible;
+
+  void window.api
+    .setWindowControlsState({
+      trafficLightsVisible,
+      trafficLightPosition: TRAFFIC_LIGHT_POSITION,
+    })
+    .catch(() => {
+      // Window control APIs are macOS/Electron-version specific.
+    });
+}
+
+function getSidebarPreviewWidth() {
+  if (typeof window === "undefined") {
+    return SIDEBAR_PREVIEW_MAX_WIDTH;
+  }
+
+  return Math.min(SIDEBAR_PREVIEW_MAX_WIDTH, window.innerWidth * SIDEBAR_PREVIEW_VIEWPORT_RATIO);
+}
+
+const getDefaultSidebarOrder = (
+  views: readonly SidebarView[] = [],
+  tags: readonly SidebarTag[] = [],
+): SidebarOrderState => ({
   sections: [...SIDEBAR_SECTION_IDS],
-  views: smartViews.map((view) => view.id),
-  conversations: conversations.map((conversation) => conversation.id),
-  tags: tags.map((tag) => tag.name),
+  views: views.map((view) => view.id),
+  tags: tags.map((tag) => tag.id),
 });
 
 function isSidebarSectionId(value: unknown): value is SidebarSectionId {
@@ -214,28 +194,38 @@ function mergeKnownOrder<T extends string>(
   return [...storedIds, ...missingIds];
 }
 
-function normalizeSidebarOrder(value: unknown): SidebarOrderState {
-  const defaults = getDefaultSidebarOrder();
+function normalizeSidebarOrder(value: unknown, defaults: SidebarOrderState): SidebarOrderState {
   const stored = value && typeof value === "object" ? value as Partial<SidebarOrderState> : {};
 
   return {
     sections: mergeKnownOrder(stored.sections, defaults.sections, isSidebarSectionId),
     views: mergeKnownOrder(stored.views, defaults.views),
-    conversations: mergeKnownOrder(stored.conversations, defaults.conversations),
     tags: mergeKnownOrder(stored.tags, defaults.tags),
   };
 }
 
-function readSidebarOrderFromStorage() {
+function readSidebarOrderFromStorage(defaults: SidebarOrderState) {
   if (typeof window === "undefined") {
-    return getDefaultSidebarOrder();
+    return defaults;
   }
 
   try {
     const raw = window.localStorage.getItem(SIDEBAR_ORDER_STORAGE_KEY);
-    return normalizeSidebarOrder(raw ? JSON.parse(raw) : null);
+    return normalizeSidebarOrder(raw ? JSON.parse(raw) : null, defaults);
   } catch {
-    return getDefaultSidebarOrder();
+    return defaults;
+  }
+}
+
+function readAssetFilterOpenFromStorage() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    return window.localStorage.getItem(ASSET_FILTER_OPEN_STORAGE_KEY) === "true";
+  } catch {
+    return false;
   }
 }
 
@@ -251,248 +241,115 @@ function orderByIds<T>(
   });
 }
 
-const assets: Asset[] = [
-  // ── Markdown ────────────────────────────────────────────
-  {
-    id: "md-interview-04",
-    kind: "markdown",
-    status: "inbox",
-    privacy: "normal",
-    title: "用户访谈摘录 · 第 4 位",
-    body: "我不想再建一堆文件夹了。我永远记不住东西放在哪个夹子里，只想搜一下，或者让它自己归类。最好的状态是什么都不用记，东西自己就到了对的地方。",
-    source: "Vault / interviews/user-04.md",
-    sourceType: "vault",
-    time: "今天 09:14",
-    tag: "待整理",
-    collection: "竞品分析包",
-    meta: "Markdown · 612 字",
-    accent: 150,
-    height: "short",
-    related: ["web-competitor-pricing", "video-q2-launch"],
-  },
-  {
-    id: "md-home-copy",
-    kind: "markdown",
-    status: "draft",
-    privacy: "normal",
-    title: "首页主文案 v3",
-    body: "管理你收集的一切。文字、图片、视频、链接，都作为一级资产进入一个库。AI 自动整理，随时检索，不再有遗失的灵感。",
-    source: "Vault / drafts/home-copy.md",
-    sourceType: "vault",
-    time: "今天 11:02",
-    tag: "文案素材",
-    meta: "Markdown · 248 字",
-    accent: 275,
-    height: "short",
-    related: ["md-interview-04"],
-  },
-  // ── Image · 本地 ─────────────────────────────────────────
-  {
-    id: "image-packaging",
-    kind: "image",
-    status: "organized",
-    privacy: "normal",
-    title: "极简包装设计参考集",
-    body: "日本无印风格的留白与材质，留意瓶身比例与字号层级。",
-    source: "外部文件夹 / packaging",
-    sourceType: "external_file",
-    time: "2 小时前",
-    tag: "灵感采集",
-    collection: "品牌视觉素材",
-    meta: "本地图片 · 9 张 · JPG",
-    accent: 204,
-    height: "medium",
-    imageCount: 9,
-    related: [],
-  },
-  // ── Image · 链接 ─────────────────────────────────────────
-  {
-    id: "image-color-board",
-    kind: "image",
-    status: "organized",
-    privacy: "normal",
-    title: "2026 色彩趋势板",
-    body: "偏灰调的莫兰迪色组，可以作为下个季度包装与 KV 的基底色板。",
-    source: "pinterest.com",
-    sourceType: "url",
-    time: "3 天前",
-    tag: "灵感采集",
-    collection: "品牌视觉素材",
-    meta: "链接图片 · 2400 × 1600",
-    accent: 188,
-    height: "tall",
-    domain: "pinterest.com",
-    related: ["image-packaging"],
-  },
-  // ── Video · 本地 ─────────────────────────────────────────
-  {
-    id: "video-local-brand",
-    kind: "video",
-    status: "organized",
-    privacy: "normal",
-    title: "品牌主视觉视频 · 初剪",
-    body: "开头节奏太慢，需要把产品出镜时间提前到 20 秒以内。",
-    source: "外部文件夹 / exports/brand-v1.mp4",
-    sourceType: "external_file",
-    time: "昨天",
-    tag: "品牌资产",
-    collection: "发布候选",
-    meta: "本地视频 · MP4 · 1:24",
-    accent: 315,
-    height: "medium",
-    duration: "1:24",
-    related: ["link-frameio"],
-  },
-  // ── Video · 链接（YouTube）────────────────────────────────
-  {
-    id: "video-q2-launch",
-    kind: "video",
-    status: "organized",
-    privacy: "normal",
-    title: "竞品 Q2 发布会拆解",
-    body: "前 8 分钟都在讲叙事，把产品定位成第二大脑，功能演示压到最后。",
-    source: "youtube.com",
-    sourceType: "url",
-    time: "昨天",
-    tag: "竞品分析",
-    collection: "竞品分析包",
-    meta: "视频链接 · YouTube · 12:34",
-    accent: 280,
-    height: "medium",
-    duration: "12:34",
-    domain: "youtube.com",
-    url: "https://youtube.com/watch?v=demo",
-    related: ["md-interview-04", "web-competitor-pricing"],
-  },
-  // ── Web · 有 OG 图 ───────────────────────────────────────
-  {
-    id: "web-producthunt",
-    kind: "web",
-    status: "organized",
-    privacy: "normal",
-    title: "Notion AI 上线 Product Hunt",
-    body: "头图是一张很大的渐变图，标题层级与 CTA 的位置很值得参考。",
-    source: "producthunt.com",
-    sourceType: "url",
-    time: "上周",
-    tag: "竞品分析",
-    collection: "竞品分析包",
-    meta: "网页存档 · OG 图已缓存",
-    accent: 25,
-    height: "medium",
-    ogImage: true,
-    domain: "producthunt.com",
-    url: "https://producthunt.com/posts/notion-ai",
-    related: ["web-competitor-pricing"],
-  },
-  // ── Web · 无 OG 图 ───────────────────────────────────────
-  {
-    id: "web-competitor-pricing",
-    kind: "web",
-    status: "draft",
-    privacy: "normal",
-    title: "竞品定价页收藏",
-    body: "免费档普遍卡在 1 GB / 单设备，是切入点。第一版只保存链接和元信息。",
-    source: "competitor.example",
-    sourceType: "url",
-    time: "2 周前",
-    tag: "竞品分析",
-    collection: "竞品分析包",
-    meta: "网页收藏 · 仅元信息",
-    accent: 42,
-    height: "short",
-    ogImage: false,
-    domain: "competitor.example",
-    url: "https://competitor.example/pricing",
-    related: ["video-q2-launch", "md-interview-04"],
-  },
-  // ── Link · 私密外链 ──────────────────────────────────────
-  {
-    id: "link-frameio",
-    kind: "link",
-    status: "organized",
-    privacy: "private",
-    title: "产品 15s 短片 · 终稿",
-    body: "Frame.io 审片链接。标记为私密，外部 AI 批量分析会自动跳过。",
-    source: "frame.io",
-    sourceType: "url",
-    time: "上周",
-    tag: "品牌资产",
-    collection: "发布候选",
-    meta: "外部链接 · 0:15",
-    accent: 315,
-    height: "short",
-    duration: "0:15",
-    domain: "frame.io",
-    related: ["image-color-board"],
-  },
-  // ── File · PDF ───────────────────────────────────────────
-  {
-    id: "file-q1-report",
-    kind: "file",
-    status: "organized",
-    privacy: "normal",
-    title: "2026 Q1 行业分析报告",
-    body: "第三章的市场规模数据值得关注，中小企业采用率同比增长 34%，高于上年预测。",
-    source: "外部文件夹 / reports/q1-2026.pdf",
-    sourceType: "external_file",
-    time: "3 天前",
-    tag: "行业报告",
-    meta: "PDF · 28 页 · 4.2 MB",
-    accent: 25,
-    height: "medium",
-    fileExt: "pdf",
-    related: ["web-competitor-pricing"],
-  },
-  // ── File · CSV ───────────────────────────────────────────
-  {
-    id: "file-competitor-data",
-    kind: "file",
-    status: "inbox",
-    privacy: "normal",
-    title: "竞品功能矩阵 · 原始数据",
-    body: "从各竞品官网手动整理，需要补充定价列和 API 支持情况。",
-    source: "外部文件夹 / research/competitor-matrix.csv",
-    sourceType: "external_file",
-    time: "今天 08:30",
-    tag: "竞品分析",
-    meta: "CSV · 1,234 行 · 78 KB",
-    accent: 148,
-    height: "short",
-    fileExt: "csv",
-    related: ["web-competitor-pricing", "video-q2-launch"],
-  },
-  // ── File · DOCX ──────────────────────────────────────────
-  {
-    id: "file-brand-guide",
-    kind: "file",
-    status: "published",
-    privacy: "normal",
-    title: "品牌视觉规范 2026",
-    body: "已更新色值为 oklch 色彩空间，新增深色模式配色方案和图标使用规范。",
-    source: "外部文件夹 / brand/guide-v4.docx",
-    sourceType: "external_file",
-    time: "上周",
-    tag: "品牌资产",
-    collection: "品牌视觉素材",
-    meta: "DOCX · 64 页 · 12.1 MB",
-    accent: 230,
-    height: "short",
-    fileExt: "docx",
-    related: ["image-packaging", "image-color-board"],
-  },
-];
-
-const agentTasks = [
-  { title: "读取待整理资产", state: "done" },
-  { title: "识别 Markdown、图片、视频、链接", state: "done" },
-  { title: "建议标签和集合", state: "running" },
-  { title: "发现跨资产关系", state: "todo" },
-  { title: "等待用户确认写入 SQLite", state: "todo" },
-] as const;
-
 function getTagHue(name: string): number {
-  return tags.find((tag) => tag.name === name)?.hue ?? 210;
+  let hash = 0;
+  for (let index = 0; index < name.length; index += 1) {
+    hash = (hash * 31 + name.charCodeAt(index)) % 360;
+  }
+
+  return hash || 210;
+}
+
+function mapIndexedAssetKind(kind: IndexedAsset["kind"], extension?: string | null): AssetKind {
+  if (kind === "markdown" || kind === "image" || kind === "video" || kind === "web") {
+    return kind;
+  }
+
+  if (extension === "url" || extension === "webloc") {
+    return "link";
+  }
+
+  return "file";
+}
+
+function mapIndexedAssetStatus(status: IndexedAsset["status"]): AssetStatus {
+  if (status === "archived") {
+    return "organized";
+  }
+
+  return status;
+}
+
+function formatBytes(sizeBytes: number) {
+  if (sizeBytes < 1024) {
+    return `${sizeBytes} B`;
+  }
+
+  if (sizeBytes < 1024 * 1024) {
+    return `${Math.round(sizeBytes / 1024)} KB`;
+  }
+
+  return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatAssetTime(value: unknown) {
+  const date = value instanceof Date ? value : new Date(value as string | number);
+
+  if (Number.isNaN(date.getTime())) {
+    return "刚刚";
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function getAssetTimestampMs(value: unknown) {
+  const date = value instanceof Date ? value : new Date(value as string | number);
+  return Number.isNaN(date.getTime()) ? Date.now() : date.getTime();
+}
+
+function mapIndexedAsset(asset: IndexedAsset): Asset {
+  const tag = asset.tags[0]?.name ?? "待整理";
+  const kind = mapIndexedAssetKind(asset.kind, asset.extension);
+  const extension = asset.extension ?? asset.fileName.split(".").pop() ?? "file";
+  const mediaUrl = kind === "image"
+    ? `post-file://asset/${encodeURIComponent(asset.id)}/${encodeURIComponent(asset.fileName)}`
+    : undefined;
+  const usesOriginalAsThumbnail = kind === "image" && extension.toLowerCase() === "svg";
+  const thumbnailUrl = usesOriginalAsThumbnail
+    ? mediaUrl
+    : kind === "image" && asset.image?.status === "ready" && asset.image.thumbnailPath
+      ? `post-file://thumb/${encodeURIComponent(asset.id)}/${encodeURIComponent(asset.fileName)}.jpg`
+      : undefined;
+  const metaPrefix = {
+    markdown: "Markdown",
+    image: "图片",
+    video: "视频",
+    link: "链接",
+    web: "网页",
+    file: extension.toUpperCase(),
+  } satisfies Record<AssetKind, string>;
+
+  return {
+    id: asset.id,
+    kind,
+    status: mapIndexedAssetStatus(asset.status),
+    privacy: asset.privacy,
+    title: asset.title,
+    body: asset.description ?? `路径：${asset.relativePath}`,
+    source: `${asset.vaultName} / ${asset.relativePath}`,
+    sourceType: "vault",
+    time: formatAssetTime(asset.mtimeMs),
+    timestampMs: getAssetTimestampMs(asset.mtimeMs),
+    tag,
+    meta: `${metaPrefix[kind]} · ${formatBytes(asset.sizeBytes)}`,
+    accent: getTagHue(tag),
+    height: kind === "image" ? "medium" : "short",
+    mediaUrl,
+    thumbnailUrl,
+    thumbnailStatus: asset.image?.status ?? (usesOriginalAsThumbnail ? "ready" : null),
+    imageWidth: asset.image?.width,
+    imageHeight: asset.image?.height,
+    thumbnailWidth: asset.image?.thumbnailWidth,
+    thumbnailHeight: asset.image?.thumbnailHeight,
+    related: asset.relatedIds,
+    fileExt: kind === "file" ? extension : undefined,
+    imageCount: kind === "image" ? 1 : undefined,
+  };
 }
 
 function getKindMeta(kind: AssetKind) {
@@ -515,6 +372,157 @@ function getStatusLabel(status: AssetStatus) {
     draft: "草稿",
     published: "已发布",
   }[status];
+}
+
+type AssetTypeFilter = "markdown" | "image" | "video" | "link" | "file";
+type AssetFilterMatch = "and" | "or";
+type AssetTimeFilter = "any" | "today" | "week" | "m30" | "custom";
+type AssetStatusFilter = "any" | "inbox" | "draft" | "published";
+
+type AssetFilterState = {
+  types: AssetTypeFilter[];
+  tags: string[];
+  sources: string[];
+  match: AssetFilterMatch;
+  time: AssetTimeFilter;
+  status: AssetStatusFilter;
+};
+
+const ASSET_TYPE_FILTERS = [
+  { value: "markdown", label: "文字", icon: FileText },
+  { value: "image", label: "图片", icon: ImageIcon },
+  { value: "video", label: "视频", icon: Video },
+  { value: "link", label: "链接", icon: LinkIcon },
+  { value: "file", label: "文件", icon: FileText },
+] satisfies Array<{ value: AssetTypeFilter; label: string; icon: typeof FileText }>;
+
+const MATCH_FILTERS = [
+  { value: "and", label: "全部条件" },
+  { value: "or", label: "任意条件" },
+] satisfies Array<{ value: AssetFilterMatch; label: string }>;
+
+const TIME_FILTERS = [
+  { value: "any", label: "不限" },
+  { value: "today", label: "今天" },
+  { value: "week", label: "本周" },
+  { value: "m30", label: "近 30 天" },
+  { value: "custom", label: "自定义" },
+] satisfies Array<{ value: AssetTimeFilter; label: string }>;
+
+const STATUS_FILTERS = [
+  { value: "any", label: "不限" },
+  { value: "inbox", label: "待整理" },
+  { value: "draft", label: "草稿" },
+  { value: "published", label: "已发布" },
+] satisfies Array<{ value: AssetStatusFilter; label: string }>;
+
+const TYPE_FILTER_LABELS = Object.fromEntries(
+  ASSET_TYPE_FILTERS.map((item) => [item.value, item.label]),
+) as Record<AssetTypeFilter, string>;
+const TIME_FILTER_LABELS = Object.fromEntries(
+  TIME_FILTERS.map((item) => [item.value, item.label]),
+) as Record<AssetTimeFilter, string>;
+const STATUS_FILTER_LABELS = Object.fromEntries(
+  STATUS_FILTERS.map((item) => [item.value, item.label]),
+) as Record<AssetStatusFilter, string>;
+
+function getDefaultAssetFilters(): AssetFilterState {
+  return getEmptyAssetFilters();
+}
+
+function getEmptyAssetFilters(match: AssetFilterMatch = "and"): AssetFilterState {
+  return {
+    types: [],
+    tags: [],
+    sources: [],
+    match,
+    time: "any",
+    status: "any",
+  };
+}
+
+function getActiveFilterCount(filters: AssetFilterState) {
+  return (
+    filters.types.length +
+    filters.tags.length +
+    filters.sources.length +
+    (filters.time !== "any" ? 1 : 0) +
+    (filters.status !== "any" ? 1 : 0)
+  );
+}
+
+function getAssetSourceLabel(asset: Asset) {
+  if (asset.sourceType === "vault") {
+    return "资产库";
+  }
+
+  if (asset.sourceType === "external_file") {
+    return "本地文件";
+  }
+
+  return "链接";
+}
+
+function getAssetTagNames(asset: Asset) {
+  return asset.tag === "待整理" ? [] : [asset.tag];
+}
+
+function isAssetInTimeRange(asset: Asset, time: AssetTimeFilter) {
+  if (time === "any" || time === "custom") {
+    return true;
+  }
+
+  const date = new Date(asset.timestampMs);
+  const now = new Date();
+  const elapsedMs = Math.max(0, now.getTime() - asset.timestampMs);
+  if (time === "today") {
+    return date.toDateString() === now.toDateString();
+  }
+
+  if (time === "week") {
+    return elapsedMs <= 7 * 24 * 60 * 60 * 1000;
+  }
+
+  return elapsedMs <= 30 * 24 * 60 * 60 * 1000;
+}
+
+function filterAssets(assetItems: readonly Asset[], filters: AssetFilterState) {
+  const predicates: Array<(asset: Asset) => boolean> = [];
+
+  if (filters.types.length > 0) {
+    predicates.push((asset) => filters.types.some((type) => {
+      if (type === "link") {
+        return asset.kind === "link" || asset.kind === "web";
+      }
+
+      return asset.kind === type;
+    }));
+  }
+
+  if (filters.tags.length > 0) {
+    predicates.push((asset) => filters.tags.every((tag) => getAssetTagNames(asset).includes(tag)));
+  }
+
+  if (filters.sources.length > 0) {
+    predicates.push((asset) => filters.sources.includes(getAssetSourceLabel(asset)));
+  }
+
+  if (filters.status !== "any") {
+    predicates.push((asset) => asset.status === filters.status);
+  }
+
+  if (filters.time !== "any") {
+    predicates.push((asset) => isAssetInTimeRange(asset, filters.time));
+  }
+
+  if (predicates.length === 0) {
+    return [...assetItems];
+  }
+
+  return assetItems.filter((asset) => {
+    const matches = predicates.map((predicate) => predicate(asset));
+    return filters.match === "and" ? matches.every(Boolean) : matches.some(Boolean);
+  });
 }
 
 function SourceBadge({ asset }: { asset: Asset }) {
@@ -543,43 +551,6 @@ function TagPill({ name }: { name: string }) {
       />
       {name}
     </Chip>
-  );
-}
-
-function AppWindowChrome({
-  sidebarCollapsed,
-  agentCollapsed,
-  onToggleSidebar,
-  onToggleAgent,
-}: PanelControls) {
-  return (
-    <>
-      <div className="window-drag fixed inset-x-0 top-0 z-40 h-12 bg-transparent" />
-      <div className="window-no-drag fixed left-[96px] top-[5px] z-[80] flex items-center gap-3">
-        <Button
-          isIconOnly
-          aria-label={sidebarCollapsed ? "展开左侧栏" : "收起左侧栏"}
-          size="sm"
-          variant="ghost"
-          className="h-8 w-8 text-zinc-500 hover:bg-black/5"
-          onPress={onToggleSidebar}
-        >
-          {sidebarCollapsed ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
-        </Button>
-      </div>
-      <div className="window-no-drag fixed right-5 top-[6px] z-[80]">
-        <Button
-          isIconOnly
-          aria-label={agentCollapsed ? "展开 Agent" : "收起 Agent"}
-          size="sm"
-          variant="ghost"
-          className="h-8 w-8 text-zinc-500 hover:bg-black/5"
-          onPress={onToggleAgent}
-        >
-          {agentCollapsed ? <PanelRightOpen size={20} /> : <PanelRightClose size={20} />}
-        </Button>
-      </div>
-    </>
   );
 }
 
@@ -778,15 +749,28 @@ function VisualBlock({ asset }: { asset: Asset }) {
 
   // Image (local or linked)
   if (asset.kind === "image") {
+    if (asset.mediaUrl) {
+      return (
+        <div className="relative overflow-hidden border-b border-zinc-100 bg-zinc-100">
+          <img
+            src={asset.mediaUrl}
+            alt={asset.title}
+            className="block h-auto w-full"
+            draggable={false}
+          />
+        </div>
+      );
+    }
+
     return (
       <div className={`relative ${heightCls} overflow-hidden border-b border-zinc-100`} style={{ background: grad }}>
         <Hatch />
         <div className="absolute inset-0 flex items-end p-3">
           <div className="flex items-center gap-1.5 rounded-md bg-white/70 px-2.5 py-1 text-[11px] font-medium text-zinc-700 shadow-sm backdrop-blur">
             <ImageIcon size={12} />
-            {asset.sourceType === "external_file"
-              ? `本地图片${asset.imageCount ? ` · ${asset.imageCount} 张` : ""}`
-              : `链接图片${asset.domain ? ` · ${asset.domain}` : ""}`}
+            {asset.sourceType === "url"
+              ? `链接图片${asset.domain ? ` · ${asset.domain}` : ""}`
+              : `本地图片${asset.imageCount ? ` · ${asset.imageCount} 张` : ""}`}
           </div>
         </div>
       </div>
@@ -863,95 +847,255 @@ function VisualBlock({ asset }: { asset: Asset }) {
   return null;
 }
 
-function AssetCard({ asset }: { asset: Asset }) {
+function AssetKindMark({ asset }: { asset: Asset }) {
   const { label, icon: Icon } = getKindMeta(asset.kind);
-  const hasVisual =
-    asset.kind === "image" ||
-    asset.kind === "video" ||
-    (asset.kind === "web" && asset.ogImage) ||
-    asset.kind === "file";
-  const showUrlRow = asset.kind === "link" || (asset.kind === "web" && !asset.ogImage);
 
-  const KindBadge = ({ overlay }: { overlay?: boolean }) => (
+  return (
     <Chip
       size="sm"
-      className={`shrink-0 px-1.5 font-mono text-[10px] text-zinc-500 ${
-        overlay
-          ? "border border-white/30 bg-white/80 shadow-sm backdrop-blur"
-          : "border border-zinc-200 bg-white"
-      }`}
+      className="mt-0.5 h-auto min-h-0 shrink-0 gap-1 bg-transparent px-0 py-0 font-mono text-[9.5px] font-semibold tracking-wide text-zinc-400"
     >
       <Icon size={12} />
       {label}
     </Chip>
   );
+}
+
+function getAssetCoverLabel(asset: Asset) {
+  if (asset.kind === "image") {
+    return asset.sourceType === "url"
+      ? `链接图片${asset.domain ? ` · ${asset.domain}` : ""}`
+      : `本地图片${asset.imageCount ? ` · ${asset.imageCount} 张` : ""}`;
+  }
+
+  if (asset.kind === "video") {
+    return asset.domain ? `视频链接 · ${asset.domain}` : "本地视频";
+  }
+
+  return "OG 图";
+}
+
+function AssetCardMedia({ asset }: { asset: Asset }) {
+  const heightCls = { short: "h-32", medium: "h-44", tall: "h-72" }[asset.height ?? "medium"];
+  const isVideo = asset.kind === "video";
+  const Icon = asset.kind === "image" ? ImageIcon : asset.kind === "video" ? Play : LinkIcon;
+  const imageAspectRatio = asset.kind === "image" && asset.imageWidth && asset.imageHeight
+    ? `${asset.imageWidth} / ${asset.imageHeight}`
+    : undefined;
 
   return (
-    <article className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-[0_1px_2px_rgba(20,20,20,0.04)] transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md">
+    <div
+      className={`relative ${imageAspectRatio ? "" : heightCls} overflow-hidden`}
+      style={{
+        ...(imageAspectRatio ? { aspectRatio: imageAspectRatio } : {}),
+        background: `
+          radial-gradient(120% 90% at 18% 12%, oklch(0.86 0.06 ${asset.accent}) 0%, transparent 62%),
+          linear-gradient(150deg, oklch(0.76 0.08 ${asset.accent}) 0%, oklch(0.9 0.05 ${asset.accent + 34}) 100%)
+        `,
+      }}
+    >
+      {asset.kind === "image" && asset.thumbnailUrl ? (
+        <img
+          src={asset.thumbnailUrl}
+          alt={asset.title}
+          className="absolute inset-0 h-full w-full object-cover"
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+        />
+      ) : null}
+
+      <Chip
+        size="sm"
+        className="absolute bottom-2.5 left-2.5 h-auto min-h-0 max-w-[calc(100%-20px)] gap-1.5 rounded-[7px] bg-white/82 px-2 py-1 text-[10.5px] font-medium text-[#37322c] shadow-[0_1px_1px_rgba(20,18,14,0.06)] backdrop-blur"
+      >
+        <Icon size={11} className="shrink-0" fill={isVideo ? "currentColor" : "none"} />
+        <span className="truncate">{getAssetCoverLabel(asset)}</span>
+      </Chip>
+
+      {isVideo ? (
+        <>
+          <span className="absolute left-1/2 top-1/2 grid h-11 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[#1c1916]/45 text-white shadow-sm backdrop-blur-sm">
+            <Play size={17} fill="currentColor" />
+          </span>
+          {asset.duration ? (
+            <span className="absolute right-2.5 top-2.5 rounded-md bg-[#1c1916]/55 px-1.5 py-0.5 font-mono text-[10.5px] text-white">
+              {asset.duration}
+            </span>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function AssetFilePreview({ asset }: { asset: Asset }) {
+  const FileIcon = asset.fileExt === "csv" || asset.fileExt === "xls" || asset.fileExt === "xlsx"
+    ? FileSpreadsheet
+    : FileText;
+  const extHueMap: Record<string, number> = {
+    pdf: 12,
+    csv: 150,
+    xls: 150,
+    xlsx: 150,
+    doc: 222,
+    docx: 222,
+  };
+  const extHue = extHueMap[asset.fileExt ?? ""] ?? 230;
+
+  return (
+    <div
+      className="mt-3 flex flex-col items-center justify-center gap-2 rounded-xl bg-white py-7"
+      style={{ color: `oklch(0.52 0.16 ${extHue})` }}
+    >
+      <FileIcon size={30} strokeWidth={1.6} />
+      <Chip
+        size="sm"
+        className="h-auto min-h-0 bg-transparent px-0 py-0 font-mono text-[11px] font-semibold uppercase tracking-wide"
+      >
+        .{asset.fileExt ?? "file"}
+      </Chip>
+    </div>
+  );
+}
+
+function AssetUrlPreview({ asset }: { asset: Asset }) {
+  const domain = asset.domain ?? asset.url ?? asset.source;
+
+  return (
+    <div className="mt-3 flex items-center gap-2.5 rounded-[10px] bg-white px-3 py-2.5">
+      <span
+        className="h-3.5 w-3.5 shrink-0 rounded"
+        style={{
+          background: `linear-gradient(135deg, oklch(0.56 0.14 ${asset.accent}), oklch(0.42 0.12 ${asset.accent}))`,
+        }}
+      />
+      <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-[#1c1b19]">
+        {domain}
+      </span>
+      <ExternalLink size={12} className="shrink-0 text-zinc-400" />
+    </div>
+  );
+}
+
+function AssetCardTagRow({ asset }: { asset: Asset }) {
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+      <Chip size="sm" className="h-auto min-h-0 gap-1.5 bg-transparent px-0 py-0 text-[11.5px] font-medium text-[#1c1b19]">
+        <span
+          className="h-[7px] w-[7px] rounded-full"
+          style={{ background: `oklch(0.6 0.14 ${getTagHue(asset.tag)})` }}
+        />
+        {asset.tag}
+      </Chip>
+      <Chip size="sm" className="h-auto min-h-0 bg-transparent px-0 py-0 text-[11.5px] text-zinc-400 before:mr-2 before:text-zinc-300 before:content-['·']">
+        {getAssetSourceLabel(asset)}
+      </Chip>
+      {asset.privacy === "private" ? (
+        <Chip size="sm" className="h-auto min-h-0 gap-1 bg-transparent px-0 py-0 text-[10.5px] font-semibold text-amber-700">
+          <ShieldCheck size={11} />
+          私密
+        </Chip>
+      ) : null}
+    </div>
+  );
+}
+
+const AssetCard = React.memo(function AssetCard({ asset }: { asset: Asset }) {
+  const hasCover =
+    asset.kind === "image" ||
+    asset.kind === "video" ||
+    (asset.kind === "web" && asset.ogImage);
+  const showUrlRow = asset.kind === "link" || (asset.kind === "web" && !asset.ogImage);
+
+  return (
+    <article className="overflow-hidden rounded-2xl bg-[#f6f5f2] transition-colors duration-150 hover:bg-[#f2f1ed]">
       <button
         type="button"
-        className="block w-full text-left"
+        className="block w-full text-left outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/20"
         onClick={() => {
           window.location.hash = `/assets/${asset.id}`;
         }}
       >
-        {hasVisual ? (
-          <div className="relative">
-            <VisualBlock asset={asset} />
-            <div className="absolute right-2 top-2">
-              <KindBadge overlay />
-            </div>
-          </div>
-        ) : null}
+        {hasCover ? <AssetCardMedia asset={asset} /> : null}
 
-        <div className="space-y-3 p-4">
-          <div className="flex items-start gap-2">
-            <h2 className="min-w-0 flex-1 text-[15px] font-semibold leading-6 text-zinc-950">
+        <div className="px-4 py-3.5">
+          <div className="flex items-start gap-2.5">
+            <h2 className="min-w-0 flex-1 text-[15.5px] font-semibold leading-[1.4] tracking-normal text-[#1c1b19]">
               {asset.title}
             </h2>
-            {!hasVisual ? <KindBadge /> : null}
+            {!hasCover ? <AssetKindMark asset={asset} /> : null}
           </div>
 
-          {showUrlRow ? (
-            <div className="flex items-center gap-1.5 rounded-md border border-zinc-100 bg-zinc-50 px-2.5 py-1.5">
-              {asset.kind === "link" ? (
-                <ExternalLink size={11} className="shrink-0 text-zinc-400" />
-              ) : (
-                <Globe size={11} className="shrink-0 text-zinc-400" />
-              )}
-              <span className="truncate text-[11px] text-zinc-500">{asset.domain ?? asset.url ?? asset.source}</span>
-            </div>
-          ) : null}
+          {asset.kind === "file" ? <AssetFilePreview asset={asset} /> : null}
+          {showUrlRow ? <AssetUrlPreview asset={asset} /> : null}
 
           {asset.body ? (
-            <p className="line-clamp-5 whitespace-pre-line text-sm leading-6 text-zinc-600">
+            <p className="mt-2.5 line-clamp-5 whitespace-pre-line text-[13px] leading-[1.62] text-[#6c6a64]">
               {asset.body}
             </p>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-2">
-            <TagPill name={asset.tag} />
-            <SourceBadge asset={asset} />
-            {asset.privacy === "private" ? (
-              <Chip size="sm" className="bg-amber-50 text-[11px] text-amber-700">
-                <ShieldCheck size={12} />
-                私密
-              </Chip>
-            ) : null}
-          </div>
+          <AssetCardTagRow asset={asset} />
 
-          <div className="flex items-center justify-between gap-3 text-xs text-zinc-400">
-            <span className="truncate">{asset.meta}</span>
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-[#1c120e]/[0.06] pt-3 text-[11px] text-zinc-400">
+            <span className="min-w-0 truncate">{asset.meta}</span>
             <span className="shrink-0">{asset.time}</span>
           </div>
         </div>
       </button>
     </article>
   );
+});
+
+function SidebarEdgeHotspot({ onOpen }: { onOpen: () => void }) {
+  return (
+    <div
+      aria-hidden="true"
+      className="window-no-drag absolute inset-y-0 left-0 z-[75]"
+      style={{ width: SIDEBAR_EDGE_HOTSPOT_WIDTH }}
+      onMouseEnter={onOpen}
+      onMouseMove={onOpen}
+    />
+  );
 }
 
-function Sidebar() {
-  const [sidebarOrder, setSidebarOrder] = useState(readSidebarOrderFromStorage);
+function FloatingSidebarDragOverlay() {
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute left-0 top-0 z-[95] h-14 w-[min(320px,84vw)]"
+    >
+      <div className="pointer-events-auto window-drag absolute left-0 top-0 h-full w-[88px]" />
+      <div className="pointer-events-auto window-drag absolute left-[140px] right-0 top-0 h-full" />
+    </div>
+  );
+}
+
+function Sidebar({
+  tagItems,
+  viewItems,
+  summary,
+  onToggleSidebar,
+  toggleMode = "collapse",
+  floating = false,
+}: {
+  tagItems: SidebarTag[];
+  viewItems: SidebarView[];
+  summary: AssetSummary;
+  onToggleSidebar: () => void;
+  toggleMode?: "collapse" | "expand";
+  floating?: boolean;
+}) {
+  const defaultSidebarOrder = useMemo(
+    () => getDefaultSidebarOrder(viewItems, tagItems),
+    [viewItems, tagItems],
+  );
+  const [sidebarOrder, setSidebarOrder] = useState(() => readSidebarOrderFromStorage(defaultSidebarOrder));
+
+  useEffect(() => {
+    setSidebarOrder((current) => normalizeSidebarOrder(current, defaultSidebarOrder));
+  }, [defaultSidebarOrder]);
 
   useEffect(() => {
     try {
@@ -962,16 +1106,12 @@ function Sidebar() {
   }, [sidebarOrder]);
 
   const orderedViews = useMemo(
-    () => orderByIds(smartViews, sidebarOrder.views, (view) => view.id).slice(0, 5),
-    [sidebarOrder.views],
-  );
-  const orderedConversations = useMemo(
-    () => orderByIds(conversations, sidebarOrder.conversations, (conversation) => conversation.id).slice(0, 10),
-    [sidebarOrder.conversations],
+    () => orderByIds(viewItems, sidebarOrder.views, (view) => view.id).slice(0, 5),
+    [sidebarOrder.views, viewItems],
   );
   const orderedTags = useMemo(
-    () => orderByIds(tags, sidebarOrder.tags, (tag) => tag.name).slice(0, 10),
-    [sidebarOrder.tags],
+    () => orderByIds(tagItems, sidebarOrder.tags, (tag) => tag.id).slice(0, 10),
+    [sidebarOrder.tags, tagItems],
   );
 
   const handleSidebarDragEnd = (event: DragEndEvent) => {
@@ -1014,37 +1154,13 @@ function Sidebar() {
             {orderedViews.map((view, index) => (
               <SortableSidebarItem key={view.id} sectionId="views" itemId={view.id} index={index}>
                 <SidebarItem
-                  icon={view.icon}
+                  icon={FolderKanban}
                   label={view.name}
                   meta={view.count}
                   actions={
                     <>
                       <SidebarItemActionButton label={`编辑 ${view.name}`} icon={Pencil} />
                       <SidebarItemActionButton label={`删除 ${view.name}`} icon={Trash2} />
-                    </>
-                  }
-                />
-              </SortableSidebarItem>
-            ))}
-          </div>
-        </SidebarSection>
-      );
-    }
-
-    if (sectionId === "conversations") {
-      return (
-        <SidebarSection title="对话" dragHandleRef={dragHandleRef}>
-          <div className="space-y-0.5">
-            {orderedConversations.map((conversation, index) => (
-              <SortableSidebarItem key={conversation.id} sectionId="conversations" itemId={conversation.id} index={index}>
-                <SidebarItem
-                  label={conversation.title}
-                  active={conversation.active}
-                  meta={conversation.active ? undefined : conversation.time}
-                  actions={
-                    <>
-                      <SidebarItemActionButton label={`置顶 ${conversation.title}`} icon={Pin} />
-                      <SidebarItemActionButton label={`归档 ${conversation.title}`} icon={Archive} />
                     </>
                   }
                 />
@@ -1071,9 +1187,9 @@ function Sidebar() {
       >
         <div className="space-y-0.5">
           {orderedTags.map((tag, index) => (
-            <SortableSidebarItem key={tag.name} sectionId="tags" itemId={tag.name} index={index}>
+            <SortableSidebarItem key={tag.id} sectionId="tags" itemId={tag.id} index={index}>
               <SidebarItem
-                colorDot={`oklch(0.62 0.14 ${tag.hue})`}
+                colorDot={tag.color ?? `oklch(0.62 0.14 ${getTagHue(tag.name)})`}
                 label={tag.name}
                 meta={tag.count}
                 actions={
@@ -1090,14 +1206,41 @@ function Sidebar() {
     );
   };
 
+  const ToggleIcon = toggleMode === "expand" ? PanelLeftOpen : PanelLeftClose;
+  const sidebarChromePadding = isMacWindow() ? "pl-[100px]" : "pl-3";
+  const sidebarChromeClassName = `relative mt-[10.5px] h-12 ${sidebarChromePadding}`;
+  const sidebarChromeDragClassName = floating ? "window-no-drag" : "window-drag";
+
   return (
-    <aside className="flex h-full w-full flex-col border-r border-white/45 bg-white/45 shadow-[inset_-1px_0_0_rgba(255,255,255,0.45)] backdrop-blur-2xl backdrop-saturate-150">
-      {/* 固定顶部：资产管理（traffic light 留出 pt-12） */}
-      <div className="shrink-0 px-3 pb-1 pt-12">
+    <aside
+      className={`flex h-full w-full flex-col border-r shadow-[inset_-1px_0_0_rgba(255,255,255,0.45)] ${
+        floating
+          ? "overflow-hidden rounded-r-2xl border-zinc-200 bg-white shadow-2xl shadow-black/15"
+          : "border-white/45 bg-white/45 backdrop-blur-2xl backdrop-saturate-150"
+      }`}
+    >
+      <div className={sidebarChromeClassName}>
+        <div aria-hidden="true" className={`${sidebarChromeDragClassName} absolute inset-0 z-0`} />
+        <div className="window-no-drag pointer-events-auto relative z-10 inline-flex -ml-1 -translate-y-1.5">
+          <Button
+            isIconOnly
+            aria-label={toggleMode === "expand" ? "展开左侧栏" : "收起左侧栏"}
+            data-no-drag
+            size="sm"
+            variant="ghost"
+            className="window-no-drag h-8 w-8 text-zinc-500 hover:bg-black/5"
+            onPress={onToggleSidebar}
+          >
+            <ToggleIcon size={19} />
+          </Button>
+        </div>
+      </div>
+
+      <div className="shrink-0 px-3 pb-1">
         <SidebarSection
           title="资产管理"
           action={
-            <button type="button" className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5">
+            <button type="button" className="window-no-drag flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5">
               <Plus size={11} />
               新建
             </button>
@@ -1105,9 +1248,8 @@ function Sidebar() {
         >
           <div className="space-y-0.5">
             {[
-              { icon: Archive, label: "全部资产", count: 142, active: true },
-              { icon: Inbox, label: "待整理", count: 18 },
-              { icon: CalendarClock, label: "发布入口", count: 6 },
+              { icon: Archive, label: "全部资产", count: summary.total, active: true },
+              { icon: Inbox, label: "待整理", count: summary.inbox },
             ].map((item) => (
               <SidebarItem
                 key={item.label}
@@ -1122,7 +1264,7 @@ function Sidebar() {
         </SidebarSection>
       </div>
 
-      {/* 可滚动部分：Views / 对话 / Tags */}
+      {/* 可滚动部分：Views / Tags */}
       <ScrollArea className="min-h-0 flex-1" viewportClassName="px-3 pb-4 pt-2">
         <DragDropProvider
           sensors={(defaults) => [
@@ -1157,50 +1299,467 @@ function Sidebar() {
   );
 }
 
-function MainToolbar() {
-  return (
-    <div className="border-b border-zinc-100 px-7 pb-4 pt-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="mr-auto flex items-baseline gap-2">
-          <h1 className="text-xl font-semibold tracking-normal text-zinc-950">全部资产</h1>
-          <span className="text-sm text-zinc-400">10 / 142</span>
-        </div>
-      </div>
+type AssetBoardHeaderProps = {
+  filterOpen: boolean;
+  activeFilterCount: number;
+  onToggleFilter: () => void;
+  dragEnabled?: boolean;
+};
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        {["全部", "图片", "视频", "Markdown", "链接", "网页", "文件"].map((filter, index) => (
-          <Chip
-            key={filter}
-            size="sm"
-            className={`cursor-default px-2.5 py-1 text-xs ${
-              index === 0 ? "bg-zinc-950 text-white" : "border border-zinc-200 bg-white text-zinc-600"
-            }`}
-          >
-            {filter}
-          </Chip>
-        ))}
-        <Button size="sm" variant="ghost" className="h-7 border border-dashed border-zinc-200 px-2.5 text-xs text-zinc-400">
+function AssetBoardHeader({
+  filterOpen,
+  activeFilterCount,
+  onToggleFilter,
+  dragEnabled = true,
+}: AssetBoardHeaderProps) {
+  const filterActive = filterOpen || activeFilterCount > 0;
+  const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
+
+  return (
+    <div className={`${dragClassName} relative z-[70] flex h-14 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}>
+      <h1 className="mr-auto text-lg font-semibold tracking-normal text-zinc-950">全部资产</h1>
+      <div className="window-no-drag relative z-[80] flex items-center gap-2.5 pointer-events-auto">
+        <Button
+          size="sm"
+          variant={filterActive ? "secondary" : "ghost"}
+          aria-controls="asset-filter-panel"
+          aria-expanded={filterOpen}
+          className={`window-no-drag h-7 min-h-0 gap-1.5 rounded-lg px-2.5 text-[11.5px] ${
+            filterActive
+              ? "border border-blue-200 bg-blue-50 text-blue-700"
+              : "border border-zinc-200 bg-white text-zinc-600"
+          }`}
+          onPress={onToggleFilter}
+        >
           <Filter size={14} />
           筛选
+          {activeFilterCount > 0 ? (
+            <span className="ml-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-blue-600 px-1 text-[9px] font-bold leading-none text-white">
+              {activeFilterCount}
+            </span>
+          ) : null}
+          <ChevronDown
+            size={13}
+            className={`transition-transform duration-200 ${filterOpen ? "rotate-180" : ""}`}
+          />
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          className="window-no-drag h-7 min-h-0 gap-1.5 rounded-lg px-2.5 text-[11.5px] font-semibold"
+          onPress={() => {}}
+        >
+          <Plus size={14} />
+          新建
         </Button>
       </div>
     </div>
   );
 }
 
-function MasonryCard({ data }: { index: number; data: Asset; width: number }) {
-  return <AssetCard asset={data} />;
+type FilterSegmentProps<T extends string> = {
+  options: Array<{ value: T; label: string }>;
+  value: T;
+  onChange: (value: T) => void;
+};
+
+function FilterSegment<T extends string>({ options, value, onChange }: FilterSegmentProps<T>) {
+  return (
+    <Tabs.Root
+      selectedKey={value}
+      onSelectionChange={(key) => onChange(String(key) as T)}
+      className="gap-0"
+    >
+      <Tabs.ListContainer className="inline-flex">
+        <Tabs.List className="w-auto rounded-lg bg-zinc-100 p-0.5">
+          {options.map((option) => (
+            <Tabs.Tab
+              key={option.value}
+              id={option.value}
+              className="h-6 w-auto rounded-md px-2.5 text-[11.5px] font-medium text-zinc-500 data-[selected=true]:text-zinc-950"
+            >
+              <Tabs.Indicator className="rounded-md bg-white shadow-[0_1px_2px_rgba(20,18,14,0.06)]" />
+              {option.label}
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
+      </Tabs.ListContainer>
+    </Tabs.Root>
+  );
 }
 
-function AssetBoard() {
-  const scrollRef = useRef<HTMLDivElement>(null);
+type AssetFilterTagOption<T extends string = string> = {
+  value: T;
+  label: string;
+  icon?: ComponentType<{ size?: number; className?: string }>;
+  dotHue?: number;
+};
+
+type AssetFilterTagGroupProps<T extends string> = {
+  label: string;
+  options: readonly AssetFilterTagOption<T>[];
+  selectedValues: readonly T[];
+  onSelectedValuesChange: (values: T[]) => void;
+};
+
+function AssetFilterTagGroup<T extends string>({
+  label,
+  options,
+  selectedValues,
+  onSelectedValuesChange,
+}: AssetFilterTagGroupProps<T>) {
+  return (
+    <TagGroup
+      aria-label={label}
+      size="sm"
+      selectionMode="multiple"
+      selectedKeys={new Set(selectedValues)}
+      onSelectionChange={(keys) => {
+        const nextValues = keys === "all"
+          ? options.map((option) => option.value)
+          : Array.from(keys, (key) => String(key) as T);
+
+        onSelectedValuesChange(nextValues);
+      }}
+      className="gap-0"
+    >
+      <TagGroup.List className="flex flex-wrap gap-1.5">
+        {options.map(({ value, label: optionLabel, icon: Icon, dotHue }) => (
+          <Tag
+            key={value}
+            id={value}
+            className="h-6 min-h-0 cursor-default gap-1.5 rounded-full bg-zinc-100 px-2.5 py-0 text-[11.5px] font-medium text-zinc-500 transition-colors hover:bg-zinc-200/70 hover:text-zinc-700 data-[selected=true]:bg-blue-50 data-[selected=true]:font-semibold data-[selected=true]:text-blue-700 data-[selected=true]:shadow-[inset_0_0_0_1px_rgba(37,99,235,0.24)]"
+          >
+            {Icon ? <Icon size={12} /> : null}
+            {dotHue !== undefined ? (
+              <span
+                className="h-[7px] w-[7px] rounded-full"
+                style={{ background: `oklch(0.6 0.14 ${dotHue})` }}
+              />
+            ) : null}
+            {optionLabel}
+          </Tag>
+        ))}
+      </TagGroup.List>
+    </TagGroup>
+  );
+}
+
+function AssetFilterField({ label, children, wide = true }: { label: string; children: ReactNode; wide?: boolean }) {
+  return (
+    <div className={`flex gap-3 ${wide ? "items-start" : "flex-col"}`}>
+      <span className={`shrink-0 text-[10.5px] font-semibold tracking-wide text-zinc-400 ${wide ? "w-8 pt-1" : ""}`}>
+        {label}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{children}</div>
+    </div>
+  );
+}
+
+type AssetFilterPanelProps = {
+  filters: AssetFilterState;
+  onFiltersChange: React.Dispatch<React.SetStateAction<AssetFilterState>>;
+  tagOptions: SidebarTag[];
+  sourceOptions: string[];
+  resultCount: number;
+};
+
+function AssetFilterPanel({
+  filters,
+  onFiltersChange,
+  tagOptions,
+  sourceOptions,
+  resultCount,
+}: AssetFilterPanelProps) {
+  return (
+    <AccordionPanel id="asset-filter-panel" className="overflow-hidden border-b border-zinc-200 bg-[#fbfbfa]">
+      <AccordionBody className="space-y-3 px-6 py-3">
+        <div className="flex items-center gap-2.5">
+          <span className="text-[10.5px] font-semibold tracking-wide text-zinc-400">符合</span>
+          <FilterSegment
+            options={MATCH_FILTERS}
+            value={filters.match}
+            onChange={(match) => onFiltersChange((current) => ({ ...current, match }))}
+          />
+        </div>
+
+        <AssetFilterField label="类型">
+          <AssetFilterTagGroup
+            label="资产类型"
+            options={ASSET_TYPE_FILTERS}
+            selectedValues={filters.types}
+            onSelectedValuesChange={(types) => onFiltersChange((current) => ({ ...current, types }))}
+          />
+        </AssetFilterField>
+
+        <AssetFilterField label="标签">
+          <AssetFilterTagGroup
+            label="资产标签"
+            options={tagOptions.map((tag) => ({
+              value: tag.name,
+              label: tag.name,
+              dotHue: getTagHue(tag.name),
+            }))}
+            selectedValues={filters.tags}
+            onSelectedValuesChange={(tags) => onFiltersChange((current) => ({ ...current, tags }))}
+          />
+        </AssetFilterField>
+
+        <AssetFilterField label="来源">
+          <AssetFilterTagGroup
+            label="资产来源"
+            options={sourceOptions.map((source) => ({ value: source, label: source }))}
+            selectedValues={filters.sources}
+            onSelectedValuesChange={(sources) => onFiltersChange((current) => ({ ...current, sources }))}
+          />
+        </AssetFilterField>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <AssetFilterField label="时间" wide={false}>
+            <FilterSegment
+              options={TIME_FILTERS}
+              value={filters.time}
+              onChange={(time) => onFiltersChange((current) => ({ ...current, time }))}
+            />
+          </AssetFilterField>
+          <AssetFilterField label="状态" wide={false}>
+            <FilterSegment
+              options={STATUS_FILTERS}
+              value={filters.status}
+              onChange={(status) => onFiltersChange((current) => ({ ...current, status }))}
+            />
+          </AssetFilterField>
+        </div>
+
+        <div className="flex items-center border-t border-zinc-100 pt-2.5">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 min-h-0 px-1 text-[11.5px] text-zinc-500"
+            onPress={() => onFiltersChange((current) => getEmptyAssetFilters(current.match))}
+          >
+            重置全部
+          </Button>
+          <div className="ml-auto flex items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="secondary"
+              className="h-7 min-h-0 rounded-lg border border-zinc-200 bg-white px-2.5 text-[11.5px] text-zinc-500"
+              onPress={() => {}}
+            >
+              <Plus size={13} />
+              存为视图
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              className="h-7 min-h-0 rounded-lg px-3 text-[11.5px] font-semibold"
+              onPress={() => {}}
+            >
+              应用筛选 · {resultCount} 项
+            </Button>
+          </div>
+        </div>
+      </AccordionBody>
+    </AccordionPanel>
+  );
+}
+
+type ActiveFilterChip = {
+  key: string;
+  label: string;
+  group: "type" | "tag" | "source" | "time" | "status";
+  value?: string;
+  hue?: number;
+};
+
+function getActiveFilterChips(filters: AssetFilterState): ActiveFilterChip[] {
+  return [
+    ...filters.types.map((type) => ({
+      key: `type-${type}`,
+      label: TYPE_FILTER_LABELS[type],
+      group: "type" as const,
+      value: type,
+    })),
+    ...filters.tags.map((tag) => ({
+      key: `tag-${tag}`,
+      label: tag,
+      group: "tag" as const,
+      value: tag,
+      hue: getTagHue(tag),
+    })),
+    ...filters.sources.map((source) => ({
+      key: `source-${source}`,
+      label: source,
+      group: "source" as const,
+      value: source,
+    })),
+    ...(filters.time !== "any"
+      ? [{
+        key: "time",
+        label: TIME_FILTER_LABELS[filters.time],
+        group: "time" as const,
+      }]
+      : []),
+    ...(filters.status !== "any"
+      ? [{
+        key: "status",
+        label: STATUS_FILTER_LABELS[filters.status],
+        group: "status" as const,
+      }]
+      : []),
+  ];
+}
+
+function AssetActiveFilterSummary({
+  filters,
+  onFiltersChange,
+  resultCount,
+  totalCount,
+}: {
+  filters: AssetFilterState;
+  onFiltersChange: React.Dispatch<React.SetStateAction<AssetFilterState>>;
+  resultCount: number;
+  totalCount: number;
+}) {
+  const chips = getActiveFilterChips(filters);
+
+  if (chips.length === 0) {
+    return null;
+  }
+
+  const removeChips = (keys: Set<React.Key>) => {
+    const chipsByKey = new Map(chips.map((chip) => [chip.key, chip]));
+
+    onFiltersChange((current) => {
+      return Array.from(keys).reduce<AssetFilterState>((nextFilters, key) => {
+        const chip = chipsByKey.get(String(key));
+
+        if (!chip) {
+          return nextFilters;
+        }
+
+        if (chip.group === "type") {
+          return { ...nextFilters, types: nextFilters.types.filter((type) => type !== chip.value) };
+        }
+
+        if (chip.group === "tag") {
+          return { ...nextFilters, tags: nextFilters.tags.filter((tag) => tag !== chip.value) };
+        }
+
+        if (chip.group === "source") {
+          return { ...nextFilters, sources: nextFilters.sources.filter((source) => source !== chip.value) };
+        }
+
+        if (chip.group === "time") {
+          return { ...nextFilters, time: "any" };
+        }
+
+        return { ...nextFilters, status: "any" };
+      }, current);
+    });
+  };
+
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-zinc-100 px-6 py-2">
+      <span className="mr-1 text-[11.5px] font-semibold text-zinc-500">
+        已筛选 · {resultCount} / {totalCount} 项
+      </span>
+      <TagGroup
+        aria-label="已筛选条件"
+        size="sm"
+        onRemove={removeChips}
+        className="gap-0"
+      >
+        <TagGroup.List className="flex flex-wrap gap-1.5">
+          {chips.map((chip) => (
+            <Tag
+              key={chip.key}
+              id={chip.key}
+              className="h-5 min-h-0 cursor-default gap-1.5 rounded-full bg-[#f3f2ef] px-2 py-0 text-[11px] font-medium text-zinc-700"
+            >
+              {chip.hue !== undefined ? (
+                <span
+                  className="h-[7px] w-[7px] rounded-full"
+                  style={{ background: `oklch(0.6 0.14 ${chip.hue})` }}
+                />
+              ) : null}
+              {chip.label}
+            </Tag>
+          ))}
+        </TagGroup.List>
+      </TagGroup>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-5 min-h-0 px-1 text-[11px] text-zinc-400 hover:text-zinc-700"
+        onPress={() => onFiltersChange((current) => getEmptyAssetFilters(current.match))}
+      >
+        清除
+      </Button>
+    </div>
+  );
+}
+
+const MasonryCard = React.memo(function MasonryCard({ data }: { index: number; data: Asset; width: number }) {
+  return <AssetCard asset={data} />;
+});
+
+function AssetBoard({
+  assetItems,
+  tagOptions,
+  vaultName,
+  loading,
+  importing,
+  reconciling,
+  conflictCount,
+  errorMessage,
+  onImportVault,
+  onReconcileVault,
+  dragEnabled = true,
+}: {
+  assetItems: Asset[];
+  tagOptions: SidebarTag[];
+  vaultName?: string;
+  loading: boolean;
+  importing: boolean;
+  reconciling: boolean;
+  conflictCount: number;
+  errorMessage?: string;
+  onImportVault: () => void;
+  onReconcileVault: () => void;
+  dragEnabled?: boolean;
+}) {
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
+  const masonryGridRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
   const [isScrolling, setIsScrolling] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(readAssetFilterOpenFromStorage);
+  const [filters, setFilters] = useState(getDefaultAssetFilters);
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const scrollFrame = useRef<number | undefined>(undefined);
+  const isScrollingRef = useRef(false);
+  const activeFilterCount = getActiveFilterCount(filters);
+  const sourceOptions = useMemo(
+    () => Array.from(new Set(assetItems.map(getAssetSourceLabel))),
+    [assetItems],
+  );
+  const filteredAssetItems = useMemo(
+    () => filterAssets(assetItems, filters),
+    [assetItems, filters],
+  );
 
   useEffect(() => {
-    const el = scrollRef.current;
+    try {
+      window.localStorage.setItem(ASSET_FILTER_OPEN_STORAGE_KEY, String(filterOpen));
+    } catch {
+      // Ignore storage failures; filter UI should still work for the current session.
+    }
+  }, [filterOpen]);
+
+  useEffect(() => {
+    const el = scrollViewportRef.current;
     if (!el) return;
 
     const ro = new ResizeObserver(() => {
@@ -1210,10 +1769,23 @@ function AssetBoard() {
     setSize({ width: el.clientWidth, height: el.clientHeight });
 
     const onScroll = () => {
-      setScrollTop(el.scrollTop);
-      setIsScrolling(true);
+      if (scrollFrame.current === undefined) {
+        scrollFrame.current = window.requestAnimationFrame(() => {
+          scrollFrame.current = undefined;
+          setScrollTop(el.scrollTop);
+        });
+      }
+
+      if (!isScrollingRef.current) {
+        isScrollingRef.current = true;
+        setIsScrolling(true);
+      }
+
       clearTimeout(scrollTimer.current);
-      scrollTimer.current = setTimeout(() => setIsScrolling(false), 150);
+      scrollTimer.current = setTimeout(() => {
+        isScrollingRef.current = false;
+        setIsScrolling(false);
+      }, 150);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
 
@@ -1221,11 +1793,14 @@ function AssetBoard() {
       ro.disconnect();
       el.removeEventListener("scroll", onScroll);
       clearTimeout(scrollTimer.current);
+      if (scrollFrame.current !== undefined) {
+        window.cancelAnimationFrame(scrollFrame.current);
+      }
     };
   }, []);
 
-  // subtract px-7 padding (28px × 2 = 56px)
-  const innerWidth = Math.max(0, size.width - 56);
+  // subtract px-6 padding (24px × 2 = 48px)
+  const innerWidth = Math.max(0, size.width - 48);
   const positioner = usePositioner(
     { width: innerWidth, columnGutter: 16, columnWidth: 260 },
     [innerWidth],
@@ -1237,36 +1812,123 @@ function AssetBoard() {
     scrollTop,
     isScrolling,
     height: size.height,
-    containerRef: scrollRef,
-    items: assets,
+    containerRef: masonryGridRef,
+    items: filteredAssetItems,
     render: MasonryCard,
     resizeObserver,
-    overscanBy: 2,
+    itemHeightEstimate: 340,
+    itemKey: (asset) => asset.id,
+    overscanBy: 1,
   });
 
   return (
     <main className="flex h-full min-w-0 flex-col bg-white">
-      <MainToolbar />
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-7 py-5">
-        {masonry}
+      <AccordionRoot
+        hideSeparator
+        expandedKeys={filterOpen ? ["asset-filters"] : []}
+        onExpandedChange={(keys) => setFilterOpen(keys.has("asset-filters"))}
+        className="shrink-0"
+      >
+        <AccordionItem id="asset-filters" className="border-none">
+          <AssetBoardHeader
+            filterOpen={filterOpen}
+            activeFilterCount={activeFilterCount}
+            onToggleFilter={() => setFilterOpen((open) => !open)}
+            dragEnabled={dragEnabled}
+          />
+          <AssetFilterPanel
+            filters={filters}
+            onFiltersChange={setFilters}
+            tagOptions={tagOptions}
+            sourceOptions={sourceOptions}
+            resultCount={filteredAssetItems.length}
+          />
+        </AccordionItem>
+      </AccordionRoot>
+      <AssetActiveFilterSummary
+        filters={filters}
+        onFiltersChange={setFilters}
+        resultCount={filteredAssetItems.length}
+        totalCount={assetItems.length}
+      />
+      <div className="flex shrink-0 items-center gap-2 border-b border-zinc-100 px-6 py-2">
+        <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">
+          {vaultName ? `当前资产库：${vaultName}` : "还没有选择资产库"}
+        </span>
+        {conflictCount > 0 ? (
+          <Chip size="sm" className="bg-amber-50 text-xs text-amber-700">
+            {conflictCount} 个待确认冲突
+          </Chip>
+        ) : null}
+        {vaultName ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            isDisabled={reconciling}
+            onPress={onReconcileVault}
+          >
+            <Archive size={14} />
+            {reconciling ? "同步中" : "同步"}
+          </Button>
+        ) : null}
+        <Button
+          size="sm"
+          variant="secondary"
+          className="h-7 px-2 text-xs"
+          isDisabled={importing}
+          onPress={onImportVault}
+        >
+          <FolderKanban size={14} />
+          {importing ? "索引中" : "选择文件夹"}
+        </Button>
       </div>
+      {errorMessage ? (
+        <div className="shrink-0 border-b border-red-100 bg-red-50 px-6 py-2 text-xs text-red-700">
+          {errorMessage}
+        </div>
+      ) : null}
+      <ScrollArea
+        type="hover"
+        scrollHideDelay={260}
+        className="min-h-0 flex-1"
+        viewportRef={scrollViewportRef}
+        viewportClassName="px-6 py-[18px]"
+        scrollbarClassName="w-2 border-l-0 bg-transparent p-[2px] opacity-0 transition-opacity duration-150 data-[state=visible]:opacity-100 hover:opacity-100"
+        thumbClassName="bg-zinc-400/35 hover:bg-zinc-500/45"
+      >
+        {loading ? (
+          <div className="grid h-56 place-items-center text-sm text-zinc-400">正在读取资产库</div>
+        ) : filteredAssetItems.length ? (
+          masonry
+        ) : (
+          <div className="grid h-72 place-items-center">
+            <div className="text-center">
+              <FolderKanban className="mx-auto text-zinc-300" size={36} />
+              <h2 className="mt-3 text-sm font-semibold text-zinc-800">选择一个文件夹开始索引</h2>
+              <p className="mt-1 text-xs text-zinc-500">文件留在原地，标签和关系写入 SQLite。</p>
+            </div>
+          </div>
+        )}
+      </ScrollArea>
     </main>
   );
 }
 
-function AssetDetail({ asset }: { asset: Asset }) {
+function AssetDetail({ asset, dragEnabled = true }: { asset: Asset; dragEnabled?: boolean }) {
   const { label, icon: Icon } = getKindMeta(asset.kind);
   const hasVisual = asset.kind === "image" || asset.kind === "video";
   const isLinkAsset = asset.kind === "web" || asset.kind === "link";
+  const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
 
   return (
     <main className="flex h-full min-w-0 flex-col bg-white">
-      <div className="border-b border-zinc-100 px-7 pb-4 pt-16">
+      <div className={`${dragClassName} border-b border-zinc-100 px-7 pb-4 pt-16`}>
         <div className="flex items-center gap-2 text-sm text-zinc-500">
           <Button
             size="sm"
             variant="ghost"
-            className="h-8 px-2"
+            className="window-no-drag h-8 px-2"
             onPress={() => {
               window.location.hash = "/";
             }}
@@ -1299,7 +1961,7 @@ function AssetDetail({ asset }: { asset: Asset }) {
               ) : null}
             </div>
           </div>
-          <Button isIconOnly aria-label="更多资产操作" variant="secondary">
+          <Button isIconOnly aria-label="更多资产操作" variant="secondary" className="window-no-drag">
             <MoreHorizontal size={17} />
           </Button>
         </div>
@@ -1376,13 +2038,23 @@ function InspectorSection({
   );
 }
 
-function AssetInspector({ asset }: { asset: Asset }) {
-  const relatedAssets = assets.filter((item) => asset.related.includes(item.id));
-  const view = smartViews[2];
+function AssetInspector({
+  asset,
+  allAssets,
+  onAddTag,
+  dragEnabled = true,
+}: {
+  asset: Asset;
+  allAssets: Asset[];
+  onAddTag: (assetId: string, name: string) => void;
+  dragEnabled?: boolean;
+}) {
+  const relatedAssets = allAssets.filter((item) => asset.related.includes(item.id));
+  const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
 
   return (
     <aside className="flex h-full w-full flex-col border-l border-zinc-200 bg-zinc-50/70">
-      <div className="flex items-center gap-2 border-b border-zinc-200 px-5 py-4">
+      <div className={`${dragClassName} flex items-center gap-2 border-b border-zinc-200 px-5 py-4`}>
         <Info size={17} className="text-blue-600" />
         <span className="font-semibold text-zinc-950">资产信息</span>
         <Chip size="sm" className="ml-auto bg-white text-xs text-zinc-500">
@@ -1417,10 +2089,19 @@ function AssetInspector({ asset }: { asset: Asset }) {
                 {asset.collection}
               </Chip>
             ) : null}
-            <Chip size="sm" className="border border-dashed border-zinc-200 bg-white text-xs text-zinc-400">
+            <button
+              type="button"
+              className="inline-flex h-6 items-center gap-1.5 rounded-full border border-dashed border-zinc-200 bg-white px-2 text-xs text-zinc-400 transition-colors hover:border-blue-200 hover:text-blue-600"
+              onClick={() => {
+                const name = window.prompt("输入标签名称");
+                if (name?.trim()) {
+                  onAddTag(asset.id, name.trim());
+                }
+              }}
+            >
               <Plus size={12} />
               添加标签
-            </Chip>
+            </button>
           </div>
 
           <div className="mt-4 space-y-2">
@@ -1445,206 +2126,149 @@ function AssetInspector({ asset }: { asset: Asset }) {
           </div>
         </InspectorSection>
 
-        <InspectorSection title="当前 View 查询" icon={ListFilter}>
-          <p className="text-xs leading-5 text-zinc-500">
-            View 是保存好的 SQLite 查询条件，结果实时刷新。
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {view.conditions.map((condition) => (
-              <Chip key={condition} size="sm" className="border border-zinc-200 bg-white text-xs text-zinc-600">
-                {condition}
-              </Chip>
-            ))}
-          </div>
-        </InspectorSection>
       </ScrollArea>
     </aside>
   );
 }
 
-function AgentPanel({ asset }: { asset?: Asset }) {
-  return (
-    <aside className="flex h-full w-full flex-col border-l border-zinc-200 bg-zinc-50/70">
-      <div className="flex items-center gap-2 border-b border-zinc-200 px-5 pb-4 pt-16">
-        <Sparkles size={17} className="text-blue-600" />
-        <span className="font-semibold text-blue-700">Agent</span>
-        <span className="flex items-center gap-1.5 text-xs text-zinc-500">
-          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-          工作中
-        </span>
-      </div>
-
-      <ScrollArea className="min-h-0 flex-1" viewportClassName="space-y-4 p-5">
-        {asset ? (
-          <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
-            <div className="flex items-start gap-2">
-              <Bot size={16} className="mt-0.5 text-blue-600" />
-              <div>
-                <div className="text-sm font-semibold text-blue-950">针对当前资产</div>
-                <p className="mt-1 text-sm leading-6 text-blue-900/75">
-                  我可以解释、补标签、找相似素材，或把它加入一个 Collection。
-                </p>
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {["解释这条资产", "找相似素材", "自动补标签", "建立关系"].map((action) => (
-                <Chip key={action} className="bg-white text-xs text-blue-700">
-                  {action}
-                </Chip>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="ml-auto max-w-[320px] rounded-xl rounded-tr-sm bg-blue-600 px-4 py-3 text-sm leading-6 text-white">
-            把待整理里的素材按主题分组，给出标签建议。私密资产不要发给外部模型。
-          </div>
-        )}
-
-        <div className="flex gap-3">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-600">
-            <Sparkles size={16} />
-          </span>
-          <div className="text-sm leading-6 text-zinc-700">
-            {asset
-              ? `已读取「${asset.title}」。这条资产属于 ${asset.tag}，当前有 ${asset.related.length} 条关系。`
-              : "我会先做基础索引，再异步分析摘要、标签和关系。AI 结果会作为建议，确认后才写入 SQLite。"}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-sm font-semibold text-zinc-950">任务流</span>
-            <span className="text-xs text-zinc-400">3 / 5</span>
-          </div>
-          <div className="space-y-2">
-            {agentTasks.map((task) => (
-              <div key={task.title} className="flex items-center gap-2 text-sm">
-                {task.state === "done" ? (
-                  <CheckCircle2 size={16} className="text-emerald-600" />
-                ) : task.state === "running" ? (
-                  <AlertCircle size={16} className="text-blue-600" />
-                ) : (
-                  <Circle size={16} className="text-zinc-300" />
-                )}
-                <span className={task.state === "todo" ? "text-zinc-400" : "text-zinc-700"}>{task.title}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-lg border border-blue-200 bg-white p-4 shadow-[0_0_0_3px_rgba(37,99,235,0.08)]">
-          <div className="flex items-center gap-2 text-sm font-semibold text-zinc-950">
-            <FileText size={15} className="text-blue-600" />
-            整理建议 · v1
-          </div>
-          <p className="mt-2 text-sm leading-6 text-zinc-600">
-            建议把 18 个待整理资产分成「竞品分析」「灵感采集」「品牌资产」三组，并为 4 条链接补充网页收藏类型。
-          </p>
-          <div className="mt-3 flex justify-end gap-2">
-            <Button size="sm" variant="secondary">
-              查看
-            </Button>
-            <Button size="sm" variant="primary">
-              应用建议
-            </Button>
-          </div>
-        </div>
-      </ScrollArea>
-
-      <div className="border-t border-zinc-200 p-4">
-        <TextArea
-          aria-label="Ask Agent"
-          className="min-h-20 w-full resize-none"
-          placeholder={asset ? "针对这条资产提问..." : "让 Agent 搜索、整理或分析资产..."}
-          variant="secondary"
-        />
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <div className="flex gap-2">
-            <Chip className="bg-zinc-100 text-xs text-zinc-600">引用卡片</Chip>
-            <Chip className="bg-zinc-100 text-xs text-zinc-600">批量整理</Chip>
-          </div>
-          <Button isIconOnly aria-label="发送给 Agent" size="sm" variant="primary">
-            <Send size={16} />
-          </Button>
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-function getMainDefaultSize(activeAsset: Asset | undefined, sidebarCollapsed: boolean, agentCollapsed: boolean) {
+function getMainDefaultSize(activeAsset: Asset | undefined, sidebarCollapsed: boolean) {
   if (!activeAsset) {
-    if (sidebarCollapsed && agentCollapsed) {
-      return 100;
-    }
-
-    if (sidebarCollapsed) {
-      return 72;
-    }
-
-    if (agentCollapsed) {
-      return 80;
-    }
-
-    return 52;
+    return sidebarCollapsed ? 100 : 80;
   }
 
-  if (sidebarCollapsed && agentCollapsed) {
-    return 80;
-  }
-
-  if (sidebarCollapsed) {
-    return 58;
-  }
-
-  if (agentCollapsed) {
-    return 60;
-  }
-
-  return 38;
+  return sidebarCollapsed ? 80 : 60;
 }
 
 export function AssetManagerPage({ assetId }: { assetId?: string }) {
-  const activeAsset = assetId ? assets.find((asset) => asset.id === assetId) : undefined;
+  const queryClient = useQueryClient();
+  const assetsQuery = useQuery(trpc.assets.list.queryOptions());
+  const indexedAssets = useMemo(
+    () => assetsQuery.data?.assets.map(mapIndexedAsset) ?? [],
+    [assetsQuery.data?.assets],
+  );
+  const assetItems = indexedAssets;
+  const activeAsset = assetId ? assetItems.find((asset) => asset.id === assetId) : undefined;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [sidebarVisible, setSidebarVisible] = useState(true);
-  const [agentCollapsed, setAgentCollapsed] = useState(false);
-  const [agentVisible, setAgentVisible] = useState(true);
+  const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false);
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
-  const agentPanelRef = useRef<PanelImperativeHandle | null>(null);
+  const importVault = useMutation(
+    trpc.assets.selectFolderAndScan.mutationOptions({
+      onSuccess: async () => {
+        await queryClient.invalidateQueries(trpc.assets.list.queryFilter());
+        await queryClient.invalidateQueries(trpc.assets.vaults.queryFilter());
+      },
+    }),
+  );
+  const reconcileVault = useMutation(
+    trpc.assets.reconcile.mutationOptions({
+      onSuccess: async () => {
+        await queryClient.invalidateQueries(trpc.assets.list.queryFilter());
+      },
+    }),
+  );
+  const addTag = useMutation(
+    trpc.assets.addTag.mutationOptions({
+      onSuccess: async () => {
+        await queryClient.invalidateQueries(trpc.assets.list.queryFilter());
+      },
+    }),
+  );
 
-  const controls: PanelControls = {
-    sidebarCollapsed,
-    agentCollapsed,
-    onToggleSidebar: () => {
-      if (sidebarPanelRef.current?.isCollapsed()) {
-        sidebarPanelRef.current.expand();
-        setTimeout(() => setSidebarVisible(true), 50);
-      } else {
-        setSidebarVisible(false);
-        sidebarPanelRef.current?.collapse();
-      }
-    },
-    onToggleAgent: () => {
-      if (agentPanelRef.current?.isCollapsed()) {
-        agentPanelRef.current.expand();
-        setTimeout(() => setAgentVisible(true), 50);
-      } else {
-        setAgentVisible(false);
-        agentPanelRef.current?.collapse();
-      }
-    },
+  const handleToggleSidebar = () => {
+    if (sidebarCollapsed || sidebarPanelRef.current?.isCollapsed()) {
+      sidebarPanelRef.current?.expand();
+      setSidebarCollapsed(false);
+      setSidebarPreviewOpen(false);
+      return;
+    }
+
+    sidebarPanelRef.current?.collapse();
+    setSidebarCollapsed(true);
+    setSidebarPreviewOpen(false);
   };
 
+  useEffect(() => {
+    syncWindowControlsWithSidebar(!sidebarCollapsed || sidebarPreviewOpen);
+  }, [sidebarCollapsed, sidebarPreviewOpen]);
+
+  useEffect(() => {
+    if (!sidebarCollapsed || !sidebarPreviewOpen) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const previewWidth = getSidebarPreviewWidth();
+      const exitPadding = SIDEBAR_PREVIEW_EXIT_PADDING;
+      const outsideHorizontalBounds =
+        event.clientX < -exitPadding || event.clientX > previewWidth + exitPadding;
+      const outsideVerticalBounds =
+        event.clientY < -exitPadding || event.clientY > window.innerHeight + exitPadding;
+
+      if (outsideHorizontalBounds || outsideVerticalBounds) {
+        setSidebarPreviewOpen(false);
+      }
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+    };
+  }, [sidebarCollapsed, sidebarPreviewOpen]);
+
+  useEffect(() => {
+    return () => {
+      syncWindowControlsWithSidebar(true);
+    };
+  }, []);
+
+  const backgroundWindowDragEnabled = !(sidebarCollapsed && sidebarPreviewOpen);
+
   return (
-    <div className="relative h-screen min-h-0 overflow-hidden text-zinc-950">
-      <AppWindowChrome {...controls} />
-      <ResizablePanelGroup
-        id={activeAsset ? "asset-detail-layout" : "asset-board-layout"}
-        direction="horizontal"
-        className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
-        resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
-      >
+      <div className="relative h-full min-h-0 overflow-hidden text-zinc-950">
+        {sidebarCollapsed && !sidebarPreviewOpen ? (
+          <div
+            aria-hidden="true"
+            className="window-drag absolute left-6 right-48 top-0 z-[74] h-14"
+          />
+        ) : null}
+        {sidebarCollapsed ? <SidebarEdgeHotspot onOpen={() => setSidebarPreviewOpen(true)} /> : null}
+        {sidebarCollapsed ? (
+          <motion.div
+            key="sidebar-preview"
+            className="absolute inset-y-0 left-0 z-[85] w-[min(320px,84vw)]"
+            initial={false}
+            animate={{ x: sidebarPreviewOpen ? 0 : "-100%" }}
+            transition={{ x: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
+            style={{
+              pointerEvents: sidebarPreviewOpen ? "auto" : "none",
+              transformOrigin: "left center",
+            }}
+            onMouseEnter={() => setSidebarPreviewOpen(true)}
+          >
+            <Sidebar
+              tagItems={assetsQuery.data?.tags ?? []}
+              viewItems={assetsQuery.data?.views ?? []}
+              onToggleSidebar={handleToggleSidebar}
+              toggleMode="expand"
+              floating
+              summary={assetsQuery.data?.summary ?? {
+                total: 0,
+                inbox: 0,
+                organized: 0,
+                draft: 0,
+                published: 0,
+                archived: 0,
+              }}
+            />
+          </motion.div>
+        ) : null}
+        {sidebarCollapsed && sidebarPreviewOpen ? <FloatingSidebarDragOverlay /> : null}
+        <ResizablePanelGroup
+          id={activeAsset ? "asset-detail-layout" : "asset-board-layout"}
+          direction="horizontal"
+          className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
+          resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
+        >
         <ResizablePanel
           panelRef={sidebarPanelRef}
           id="sidebar"
@@ -1653,10 +2277,32 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
           maxSize={28}
           collapsible
           collapsedSize={0}
-          onResize={(size) => setSidebarCollapsed(size.asPercentage === 0)}
-          className={`transition-opacity duration-150 ${sidebarVisible ? "opacity-100" : "opacity-0"}`}
+          onResize={(size) => {
+            const nextCollapsed = size.asPercentage === 0;
+            setSidebarCollapsed(nextCollapsed);
+            if (!nextCollapsed) {
+              setSidebarPreviewOpen(false);
+            }
+          }}
+          className={`overflow-hidden transition-opacity duration-150 ${
+            sidebarCollapsed ? "pointer-events-none opacity-0" : "opacity-100"
+          }`}
         >
-          <Sidebar />
+          {!sidebarCollapsed ? (
+            <Sidebar
+              tagItems={assetsQuery.data?.tags ?? []}
+              viewItems={assetsQuery.data?.views ?? []}
+              onToggleSidebar={handleToggleSidebar}
+              summary={assetsQuery.data?.summary ?? {
+                total: 0,
+                inbox: 0,
+                organized: 0,
+                draft: 0,
+                published: 0,
+                archived: 0,
+              }}
+            />
+          ) : null}
         </ResizablePanel>
         <ResizableHandle
           withHandle
@@ -1665,39 +2311,50 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
 
         <ResizablePanel
           id="main"
-          defaultSize={getMainDefaultSize(activeAsset, sidebarCollapsed, agentCollapsed)}
+          defaultSize={getMainDefaultSize(activeAsset, sidebarCollapsed)}
           minSize={activeAsset ? 34 : 42}
+          className="relative z-[60]"
         >
-          {activeAsset ? <AssetDetail asset={activeAsset} /> : <AssetBoard />}
+          {activeAsset ? (
+            <AssetDetail asset={activeAsset} dragEnabled={backgroundWindowDragEnabled} />
+          ) : (
+            <AssetBoard
+              assetItems={assetItems}
+              tagOptions={assetsQuery.data?.tags ?? []}
+              dragEnabled={backgroundWindowDragEnabled}
+              vaultName={assetsQuery.data?.vault?.name}
+              loading={assetsQuery.isLoading}
+              importing={importVault.isPending}
+              reconciling={reconcileVault.isPending}
+              conflictCount={assetsQuery.data?.conflictCount ?? 0}
+              errorMessage={
+                importVault.error?.message ?? reconcileVault.error?.message ?? assetsQuery.error?.message
+              }
+              onImportVault={() => importVault.mutate()}
+              onReconcileVault={() => {
+                const vaultId = assetsQuery.data?.vault?.id;
+                if (vaultId) {
+                  reconcileVault.mutate({ vaultId });
+                }
+              }}
+            />
+          )}
         </ResizablePanel>
 
         {activeAsset ? (
           <>
             <ResizableHandle withHandle />
             <ResizablePanel id="inspector" defaultSize={20} minSize={18} maxSize={32}>
-              <AssetInspector asset={activeAsset} />
+              <AssetInspector
+                asset={activeAsset}
+                allAssets={assetItems}
+                dragEnabled={backgroundWindowDragEnabled}
+                onAddTag={(targetAssetId, name) => addTag.mutate({ assetId: targetAssetId, name })}
+              />
             </ResizablePanel>
           </>
         ) : null}
-
-        <ResizableHandle
-          withHandle
-          className={agentCollapsed ? "opacity-0 pointer-events-none" : ""}
-        />
-        <ResizablePanel
-          panelRef={agentPanelRef}
-          id="agent"
-          defaultSize={activeAsset ? 22 : 28}
-          minSize={18}
-          maxSize={38}
-          collapsible
-          collapsedSize={0}
-          onResize={(size) => setAgentCollapsed(size.asPercentage === 0)}
-          className={`transition-opacity duration-150 ${agentVisible ? "opacity-100" : "opacity-0"}`}
-        >
-          <AgentPanel asset={activeAsset} />
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    </div>
+        </ResizablePanelGroup>
+      </div>
   );
 }
