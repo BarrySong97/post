@@ -1,4 +1,13 @@
-import React, { useState, useRef, useEffect, useMemo, type ComponentType, type ReactNode } from "react";
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useMemo,
+  useId,
+  type ComponentType,
+  type ReactNode,
+  type SVGProps,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DragDropProvider, type DragEndEvent } from "@dnd-kit/react";
 import { isSortable, useSortable } from "@dnd-kit/react/sortable";
@@ -6,6 +15,9 @@ import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
 import { arrayMove } from "@dnd-kit/helpers";
 import { AnimatePresence, motion } from "motion/react";
 import { useMasonry, usePositioner, useResizeObserver as useMasonryResizeObserver } from "masonic";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal as XTermTerminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
 import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Archive,
@@ -15,6 +27,8 @@ import {
   FileSpreadsheet,
   FileText,
   Filter,
+  FolderClosed,
+  FolderOpen,
   FolderKanban,
   Globe,
   Image as ImageIcon,
@@ -24,13 +38,16 @@ import {
   MoreHorizontal,
   PanelLeftOpen,
   PanelLeftClose,
+  PanelRightOpen,
   Pencil,
   Play,
   Plus,
   ShieldCheck,
+  SquareTerminal,
   Tags,
   Trash2,
   Video,
+  X,
 } from "lucide-react";
 import {
   AccordionBody,
@@ -39,6 +56,8 @@ import {
   AccordionRoot,
   Button,
   Chip,
+  Dropdown,
+  Label,
   Tag,
   TagGroup,
   Tabs,
@@ -105,6 +124,7 @@ type SidebarOrderState = {
 
 const SIDEBAR_ORDER_STORAGE_KEY = "post.assetManager.sidebarOrder.v1";
 const ASSET_FILTER_OPEN_STORAGE_KEY = "post.assetManager.filterOpen.v1";
+const OPEN_VAULT_TARGET_STORAGE_KEY = "post.assetManager.openVaultTarget.v1";
 const SIDEBAR_SECTION_IDS: SidebarSectionId[] = ["views", "tags"];
 const SIDEBAR_SECTION_TYPE = "sidebar-section";
 const SIDEBAR_ITEM_TYPE_PREFIX = "sidebar-item:";
@@ -114,6 +134,158 @@ const SIDEBAR_PREVIEW_VIEWPORT_RATIO = 0.84;
 const SIDEBAR_PREVIEW_EXIT_PADDING = 32;
 const SIDEBAR_EDGE_HOTSPOT_WIDTH = 24;
 let lastWindowControlsVisible: boolean | null = null;
+
+type OpenVaultTarget = "vscode" | "cursor" | "zed" | "finder";
+type OpenVaultIcon = ComponentType<SVGProps<SVGSVGElement>>;
+
+const CursorEditorIcon: OpenVaultIcon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 466.73 532.09"
+    className={className}
+    fill="currentColor"
+  >
+    <path d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z" />
+  </svg>
+);
+
+const VisualStudioCodeIcon: OpenVaultIcon = (props) => {
+  const id = useId().replaceAll(":", "");
+  const maskId = `${id}-vscode-a`;
+  const topShadowFilterId = `${id}-vscode-b`;
+  const sideShadowFilterId = `${id}-vscode-c`;
+  const overlayGradientId = `${id}-vscode-d`;
+
+  return (
+    <svg {...props} fill="none" viewBox="0 0 100 100">
+      <mask id={maskId} width="100" height="100" x="0" y="0" maskUnits="userSpaceOnUse">
+        <path
+          fill="#fff"
+          fillRule="evenodd"
+          d="M70.912 99.317a6.223 6.223 0 0 0 4.96-.19l20.589-9.907A6.25 6.25 0 0 0 100 83.587V16.413a6.25 6.25 0 0 0-3.54-5.632L75.874.874a6.226 6.226 0 0 0-7.104 1.21L29.355 38.04 12.187 25.01a4.162 4.162 0 0 0-5.318.236l-5.506 5.009a4.168 4.168 0 0 0-.004 6.162L16.247 50 1.36 63.583a4.168 4.168 0 0 0 .004 6.162l5.506 5.01a4.162 4.162 0 0 0 5.318.236l17.168-13.032L68.77 97.917a6.217 6.217 0 0 0 2.143 1.4ZM75.015 27.3 45.11 50l29.906 22.701V27.3Z"
+          clipRule="evenodd"
+        />
+      </mask>
+      <g mask={`url(#${maskId})`}>
+        <path
+          fill="#0065A9"
+          d="M96.461 10.796 75.857.876a6.23 6.23 0 0 0-7.107 1.207l-67.451 61.5a4.167 4.167 0 0 0 .004 6.162l5.51 5.009a4.167 4.167 0 0 0 5.32.236l81.228-61.62c2.725-2.067 6.639-.124 6.639 3.297v-.24a6.25 6.25 0 0 0-3.539-5.63Z"
+        />
+        <g filter={`url(#${topShadowFilterId})`}>
+          <path
+            fill="#007ACC"
+            d="m96.461 89.204-20.604 9.92a6.229 6.229 0 0 1-7.107-1.207l-67.451-61.5a4.167 4.167 0 0 1 .004-6.162l5.51-5.009a4.167 4.167 0 0 1 5.32-.236l81.228 61.62c2.725 2.067 6.639.124 6.639-3.297v.24a6.25 6.25 0 0 1-3.539 5.63Z"
+          />
+        </g>
+        <g filter={`url(#${sideShadowFilterId})`}>
+          <path
+            fill="#1F9CF0"
+            d="M75.858 99.126a6.232 6.232 0 0 1-7.108-1.21c2.306 2.307 6.25.674 6.25-2.588V4.672c0-3.262-3.944-4.895-6.25-2.589a6.232 6.232 0 0 1 7.108-1.21l20.6 9.908A6.25 6.25 0 0 1 100 16.413v67.174a6.25 6.25 0 0 1-3.541 5.633l-20.601 9.906Z"
+          />
+        </g>
+        <path
+          fill={`url(#${overlayGradientId})`}
+          fillRule="evenodd"
+          d="M70.851 99.317a6.224 6.224 0 0 0 4.96-.19L96.4 89.22a6.25 6.25 0 0 0 3.54-5.633V16.413a6.25 6.25 0 0 0-3.54-5.632L75.812.874a6.226 6.226 0 0 0-7.104 1.21L29.294 38.04 12.126 25.01a4.162 4.162 0 0 0-5.317.236l-5.507 5.009a4.168 4.168 0 0 0-.004 6.162L16.186 50 1.298 63.583a4.168 4.168 0 0 0 .004 6.162l5.507 5.009a4.162 4.162 0 0 0 5.317.236L29.294 61.96l39.414 35.958a6.218 6.218 0 0 0 2.143 1.4ZM74.954 27.3 45.048 50l29.906 22.701V27.3Z"
+          clipRule="evenodd"
+          opacity=".25"
+          style={{ mixBlendMode: "overlay" }}
+        />
+      </g>
+      <defs>
+        <filter
+          id={topShadowFilterId}
+          width="116.727"
+          height="92.246"
+          x="-8.394"
+          y="15.829"
+          colorInterpolationFilters="sRGB"
+          filterUnits="userSpaceOnUse"
+        >
+          <feFlood floodOpacity="0" result="BackgroundImageFix" />
+          <feColorMatrix in="SourceAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" />
+          <feOffset />
+          <feGaussianBlur stdDeviation="4.167" />
+          <feColorMatrix values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0" />
+          <feBlend in2="BackgroundImageFix" mode="overlay" result="effect1_dropShadow" />
+          <feBlend in="SourceGraphic" in2="effect1_dropShadow" result="shape" />
+        </filter>
+        <filter
+          id={sideShadowFilterId}
+          width="47.917"
+          height="116.151"
+          x="60.417"
+          y="-8.076"
+          colorInterpolationFilters="sRGB"
+          filterUnits="userSpaceOnUse"
+        >
+          <feFlood floodOpacity="0" result="BackgroundImageFix" />
+          <feColorMatrix in="SourceAlpha" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" />
+          <feOffset />
+          <feGaussianBlur stdDeviation="4.167" />
+          <feColorMatrix values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.25 0" />
+          <feBlend in2="BackgroundImageFix" mode="overlay" result="effect1_dropShadow" />
+          <feBlend in="SourceGraphic" in2="effect1_dropShadow" result="shape" />
+        </filter>
+        <linearGradient
+          id={overlayGradientId}
+          x1="49.939"
+          x2="49.939"
+          y1=".258"
+          y2="99.742"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop stopColor="#fff" />
+          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+};
+
+const ZedEditorIcon: OpenVaultIcon = (props) => {
+  const id = useId().replaceAll(":", "");
+  const clipPathId = `${id}-zed-logo-a`;
+
+  return (
+    <svg {...props} fill="none" viewBox="0 0 96 96">
+      <g clipPath={`url(#${clipPathId})`}>
+        <path
+          fill="currentColor"
+          fillRule="evenodd"
+          d="M9 6a3 3 0 0 0-3 3v66H0V9a9 9 0 0 1 9-9h80.379c4.009 0 6.016 4.847 3.182 7.682L43.055 57.187H57V51h6v7.688a4.5 4.5 0 0 1-4.5 4.5H37.055L26.743 73.5H73.5V36h6v37.5a6 6 0 0 1-6 6H20.743L10.243 90H87a3 3 0 0 0 3-3V21h6v66a9 9 0 0 1-9 9H6.621c-4.009 0-6.016-4.847-3.182-7.682L52.757 39H39v6h-6v-7.5a4.5 4.5 0 0 1 4.5-4.5h21.257l10.5-10.5H22.5V60h-6V22.5a6 6 0 0 1 6-6h52.757L85.757 6H9Z"
+          clipRule="evenodd"
+        />
+      </g>
+      <defs>
+        <clipPath id={clipPathId}>
+          <path fill="#fff" d="M0 0h96v96H0z" />
+        </clipPath>
+      </defs>
+    </svg>
+  );
+};
+
+const OPEN_VAULT_TARGETS: Array<{
+  id: OpenVaultTarget;
+  label: string;
+  icon: OpenVaultIcon;
+}> = [
+  { id: "vscode", label: "VS Code", icon: VisualStudioCodeIcon },
+  { id: "cursor", label: "Cursor", icon: CursorEditorIcon },
+  { id: "zed", label: "Zed", icon: ZedEditorIcon },
+  { id: "finder", label: "Finder", icon: FolderClosed },
+];
+const DEFAULT_OPEN_VAULT_TARGET = OPEN_VAULT_TARGETS[0];
+const HEADER_ICON_CLASS_NAME = "size-3.5 shrink-0";
+
+function isOpenVaultTarget(value: unknown): value is OpenVaultTarget {
+  return OPEN_VAULT_TARGETS.some((target) => target.id === value);
+}
+
+function getOpenVaultTarget(id: OpenVaultTarget) {
+  return OPEN_VAULT_TARGETS.find((target) => target.id === id) ?? DEFAULT_OPEN_VAULT_TARGET;
+}
 
 function isMacWindow() {
   return typeof window !== "undefined" && window.api?.platform?.isMac === true;
@@ -1302,36 +1474,70 @@ function Sidebar({
 type AssetBoardHeaderProps = {
   filterOpen: boolean;
   activeFilterCount: number;
+  vaultAvailable: boolean;
+  terminalAvailable: boolean;
+  terminalOpen: boolean;
   onToggleFilter: () => void;
+  onToggleTerminal: () => void;
   dragEnabled?: boolean;
 };
 
 function AssetBoardHeader({
   filterOpen,
   activeFilterCount,
+  vaultAvailable,
+  terminalAvailable,
+  terminalOpen,
   onToggleFilter,
+  onToggleTerminal,
   dragEnabled = true,
 }: AssetBoardHeaderProps) {
   const filterActive = filterOpen || activeFilterCount > 0;
   const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
+  const [openWithMenuOpen, setOpenWithMenuOpen] = useState(false);
+  const [preferredOpenTargetId, setPreferredOpenTargetId] = useState<OpenVaultTarget>(() => {
+    if (typeof window === "undefined") {
+      return DEFAULT_OPEN_VAULT_TARGET.id;
+    }
+
+    const storedTarget = window.localStorage.getItem(OPEN_VAULT_TARGET_STORAGE_KEY);
+    return isOpenVaultTarget(storedTarget) ? storedTarget : DEFAULT_OPEN_VAULT_TARGET.id;
+  });
+  const openVaultLocation = useMutation(
+    trpc.assets.openVaultLocation.mutationOptions({
+      onSuccess: () => setOpenWithMenuOpen(false),
+    }),
+  );
+  const smallButtonClassName = "window-no-drag h-6 min-h-0 gap-1.5 rounded-lg px-2 text-[11px]";
+  const preferredOpenTarget = getOpenVaultTarget(preferredOpenTargetId);
+  const PreferredOpenIcon = preferredOpenTarget.icon;
+
+  const openVaultWithTarget = (targetId: OpenVaultTarget, persistTarget: boolean) => {
+    if (persistTarget) {
+      setPreferredOpenTargetId(targetId);
+      window.localStorage.setItem(OPEN_VAULT_TARGET_STORAGE_KEY, targetId);
+    }
+
+    openVaultLocation.mutate({ target: targetId });
+  };
 
   return (
     <div className={`${dragClassName} relative z-[70] flex h-14 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}>
-      <h1 className="mr-auto text-lg font-semibold tracking-normal text-zinc-950">全部资产</h1>
+      <h1 className="mr-auto text-[15px] font-semibold tracking-normal text-zinc-950">全部资产</h1>
       <div className="window-no-drag relative z-[80] flex items-center gap-2.5 pointer-events-auto">
         <Button
           size="sm"
           variant={filterActive ? "secondary" : "ghost"}
           aria-controls="asset-filter-panel"
           aria-expanded={filterOpen}
-          className={`window-no-drag h-7 min-h-0 gap-1.5 rounded-lg px-2.5 text-[11.5px] ${
+          className={`${smallButtonClassName} ${
             filterActive
               ? "border border-blue-200 bg-blue-50 text-blue-700"
               : "border border-zinc-200 bg-white text-zinc-600"
           }`}
           onPress={onToggleFilter}
         >
-          <Filter size={14} />
+          <Filter className={HEADER_ICON_CLASS_NAME} />
           筛选
           {activeFilterCount > 0 ? (
             <span className="ml-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-blue-600 px-1 text-[9px] font-bold leading-none text-white">
@@ -1339,18 +1545,101 @@ function AssetBoardHeader({
             </span>
           ) : null}
           <ChevronDown
-            size={13}
-            className={`transition-transform duration-200 ${filterOpen ? "rotate-180" : ""}`}
+            className={`${HEADER_ICON_CLASS_NAME} transition-transform duration-200 ${
+              filterOpen ? "rotate-180" : ""
+            }`}
           />
         </Button>
+        {vaultAvailable ? (
+          <div className="window-no-drag inline-flex h-6 overflow-hidden rounded-lg border border-zinc-200 bg-white text-zinc-600 shadow-[0_1px_1px_rgba(24,24,27,0.03)]">
+            <button
+              type="button"
+              className="window-no-drag inline-grid h-6 w-7 place-items-center border-r border-zinc-200 transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-45"
+              aria-label={`用 ${preferredOpenTarget.label} 打开资产库`}
+              disabled={openVaultLocation.isPending}
+              onClick={() => openVaultWithTarget(preferredOpenTarget.id, false)}
+            >
+              <PreferredOpenIcon aria-hidden="true" className={`${HEADER_ICON_CLASS_NAME} text-zinc-600`} />
+            </button>
+            <Dropdown isOpen={openWithMenuOpen} onOpenChange={setOpenWithMenuOpen}>
+              <Dropdown.Trigger
+                className="window-no-drag inline-grid h-6 w-6 place-items-center outline-none transition-colors hover:bg-zinc-50"
+                aria-label="选择打开方式"
+              >
+                <ChevronDown
+                  className={`${HEADER_ICON_CLASS_NAME} transition-transform duration-200 ${
+                    openWithMenuOpen ? "rotate-180" : ""
+                  }`}
+                />
+              </Dropdown.Trigger>
+              <Dropdown.Popover
+                className="z-[120] overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-[0_14px_34px_rgba(20,18,16,0.14),0_2px_7px_rgba(20,18,16,0.07)]"
+                offset={6}
+                placement="bottom end"
+              >
+                <Dropdown.Menu
+                  aria-label="打开资产库"
+                  className="min-w-36 p-0 outline-none"
+                  disabledKeys={
+                    openVaultLocation.isPending
+                      ? OPEN_VAULT_TARGETS.map((target) => target.id)
+                      : []
+                  }
+                  onAction={(key) => openVaultWithTarget(key as OpenVaultTarget, true)}
+                >
+                  {OPEN_VAULT_TARGETS.map((target) => {
+                    const Icon = target.icon;
+
+                    return (
+                      <Dropdown.Item
+                        key={target.id}
+                        id={target.id}
+                        textValue={target.label}
+                        className={[
+                          "flex h-7 cursor-default items-center gap-2 rounded-lg px-2",
+                          "text-[12.5px] font-medium text-zinc-700 outline-none transition-colors",
+                          "data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100",
+                          "data-[disabled]:opacity-45",
+                        ].join(" ")}
+                      >
+                        <Icon aria-hidden="true" className={`${HEADER_ICON_CLASS_NAME} text-zinc-500`} />
+                        <Label className="cursor-default text-[12.5px] font-medium text-inherit">
+                          {target.label}
+                        </Label>
+                      </Dropdown.Item>
+                    );
+                  })}
+                </Dropdown.Menu>
+                {openVaultLocation.error ? (
+                  <div className="mt-1 border-t border-zinc-100 px-2 py-1.5 text-[10.5px] leading-4 text-red-600">
+                    {openVaultLocation.error.message}
+                  </div>
+                ) : null}
+              </Dropdown.Popover>
+            </Dropdown>
+          </div>
+        ) : (
+          <span
+            className={`${smallButtonClassName} inline-flex cursor-default items-center border border-zinc-200 bg-white text-zinc-300`}
+            title="还没有选择资产库"
+          >
+            <FolderOpen className={HEADER_ICON_CLASS_NAME} />
+            <ChevronDown className={HEADER_ICON_CLASS_NAME} />
+          </span>
+        )}
         <Button
           size="sm"
-          variant="primary"
-          className="window-no-drag h-7 min-h-0 gap-1.5 rounded-lg px-2.5 text-[11.5px] font-semibold"
-          onPress={() => {}}
+          variant={terminalOpen ? "secondary" : "ghost"}
+          isDisabled={!terminalAvailable}
+          aria-label={terminalAvailable ? "打开终端侧栏" : "当前平台暂不支持终端侧栏"}
+          className={`window-no-drag h-6 min-h-0 rounded-lg border px-2 text-[11px] ${
+            terminalOpen
+              ? "border-zinc-300 bg-zinc-100 text-zinc-900"
+              : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+          }`}
+          onPress={onToggleTerminal}
         >
-          <Plus size={14} />
-          新建
+          <PanelRightOpen className={HEADER_ICON_CLASS_NAME} />
         </Button>
       </div>
     </div>
@@ -1708,26 +1997,22 @@ const MasonryCard = React.memo(function MasonryCard({ data }: { index: number; d
 function AssetBoard({
   assetItems,
   tagOptions,
-  vaultName,
+  vaultAvailable,
+  terminalAvailable,
+  terminalOpen,
   loading,
-  importing,
-  reconciling,
-  conflictCount,
   errorMessage,
-  onImportVault,
-  onReconcileVault,
+  onToggleTerminal,
   dragEnabled = true,
 }: {
   assetItems: Asset[];
   tagOptions: SidebarTag[];
-  vaultName?: string;
+  vaultAvailable: boolean;
+  terminalAvailable: boolean;
+  terminalOpen: boolean;
   loading: boolean;
-  importing: boolean;
-  reconciling: boolean;
-  conflictCount: number;
   errorMessage?: string;
-  onImportVault: () => void;
-  onReconcileVault: () => void;
+  onToggleTerminal: () => void;
   dragEnabled?: boolean;
 }) {
   const scrollViewportRef = useRef<HTMLDivElement>(null);
@@ -1833,7 +2118,11 @@ function AssetBoard({
           <AssetBoardHeader
             filterOpen={filterOpen}
             activeFilterCount={activeFilterCount}
+            vaultAvailable={vaultAvailable}
+            terminalAvailable={terminalAvailable}
+            terminalOpen={terminalOpen}
             onToggleFilter={() => setFilterOpen((open) => !open)}
+            onToggleTerminal={onToggleTerminal}
             dragEnabled={dragEnabled}
           />
           <AssetFilterPanel
@@ -1851,38 +2140,6 @@ function AssetBoard({
         resultCount={filteredAssetItems.length}
         totalCount={assetItems.length}
       />
-      <div className="flex shrink-0 items-center gap-2 border-b border-zinc-100 px-6 py-2">
-        <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">
-          {vaultName ? `当前资产库：${vaultName}` : "还没有选择资产库"}
-        </span>
-        {conflictCount > 0 ? (
-          <Chip size="sm" className="bg-amber-50 text-xs text-amber-700">
-            {conflictCount} 个待确认冲突
-          </Chip>
-        ) : null}
-        {vaultName ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 px-2 text-xs"
-            isDisabled={reconciling}
-            onPress={onReconcileVault}
-          >
-            <Archive size={14} />
-            {reconciling ? "同步中" : "同步"}
-          </Button>
-        ) : null}
-        <Button
-          size="sm"
-          variant="secondary"
-          className="h-7 px-2 text-xs"
-          isDisabled={importing}
-          onPress={onImportVault}
-        >
-          <FolderKanban size={14} />
-          {importing ? "索引中" : "选择文件夹"}
-        </Button>
-      </div>
       {errorMessage ? (
         <div className="shrink-0 border-b border-red-100 bg-red-50 px-6 py-2 text-xs text-red-700">
           {errorMessage}
@@ -1912,6 +2169,224 @@ function AssetBoard({
         )}
       </ScrollArea>
     </main>
+  );
+}
+
+function writeTerminalSystemMessage(terminal: XTermTerminal, message: string) {
+  terminal.write(`\r\n[post] ${message}\r\n`);
+}
+
+function getTerminalErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
+const ASSET_TERMINAL_THEME = {
+  background: "#ffffff",
+  foreground: "#24292f",
+  cursor: "#24292f",
+  cursorAccent: "#ffffff",
+  selectionBackground: "#dbeafe",
+  selectionInactiveBackground: "#eef2ff",
+  scrollbarSliderBackground: "rgba(36, 41, 47, 0.12)",
+  scrollbarSliderHoverBackground: "rgba(36, 41, 47, 0.24)",
+  scrollbarSliderActiveBackground: "rgba(36, 41, 47, 0.34)",
+  black: "#24292f",
+  red: "#ff2d2d",
+  green: "#16a34a",
+  yellow: "#f59f00",
+  blue: "#2488ff",
+  magenta: "#8b5cf6",
+  cyan: "#0891b2",
+  white: "#eaeef2",
+  brightBlack: "#6e7781",
+  brightRed: "#ff2d2d",
+  brightGreen: "#13b84a",
+  brightYellow: "#f5a400",
+  brightBlue: "#2f96ff",
+  brightMagenta: "#8b5cf6",
+  brightCyan: "#06b6d4",
+  brightWhite: "#ffffff",
+};
+
+function AssetTerminalPanel({
+  dragEnabled = true,
+  onHide,
+}: {
+  dragEnabled?: boolean;
+  onHide: () => void;
+}) {
+  const terminalHostRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<XTermTerminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const host = terminalHostRef.current;
+    if (!host) {
+      return;
+    }
+
+    let disposed = false;
+    const terminal = new XTermTerminal({
+      cursorBlink: true,
+      cursorStyle: "bar",
+      cursorWidth: 1,
+      fontFamily: '"JetBrains Mono", "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace',
+      fontSize: 10,
+      fontWeight: 400,
+      fontWeightBold: 700,
+      letterSpacing: 0,
+      lineHeight: 1.24,
+      scrollback: 5000,
+      theme: ASSET_TERMINAL_THEME,
+    });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(host);
+    terminalRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+    writeTerminalSystemMessage(terminal, "Starting terminal...");
+
+    const fitAndResize = () => {
+      resizeFrameRef.current = null;
+      if (disposed) {
+        return;
+      }
+
+      try {
+        fitAddon.fit();
+      } catch {
+        return;
+      }
+
+      const sessionId = sessionIdRef.current;
+      if (!sessionId || terminal.cols <= 0 || terminal.rows <= 0) {
+        return;
+      }
+
+      void window.api.terminal.resize({
+        sessionId,
+        cols: terminal.cols,
+        rows: terminal.rows,
+      }).catch(() => undefined);
+    };
+
+    const scheduleFitAndResize = () => {
+      if (resizeFrameRef.current !== null) {
+        return;
+      }
+      resizeFrameRef.current = window.requestAnimationFrame(fitAndResize);
+    };
+
+    const resizeObserver = new ResizeObserver(scheduleFitAndResize);
+    resizeObserver.observe(host);
+
+    const inputDisposable = terminal.onData((data) => {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) {
+        return;
+      }
+
+      void window.api.terminal.write({ sessionId, data }).catch((error) => {
+        writeTerminalSystemMessage(terminal, getTerminalErrorMessage(error, "Terminal write failed"));
+      });
+    });
+
+    const unsubscribeData = window.api.terminal.onData((event) => {
+      if (event.sessionId !== sessionIdRef.current) {
+        return;
+      }
+      terminal.write(event.data);
+    });
+
+    const unsubscribeExit = window.api.terminal.onExit((event) => {
+      if (event.sessionId !== sessionIdRef.current) {
+        return;
+      }
+      const details = [
+        typeof event.exitCode === "number" ? `code ${event.exitCode}` : null,
+        event.signal ? `signal ${event.signal}` : null,
+      ].filter(Boolean).join(", ");
+      writeTerminalSystemMessage(terminal, details ? `Process exited (${details})` : "Process exited");
+    });
+
+    const startFrame = window.requestAnimationFrame(() => {
+      try {
+        fitAddon.fit();
+      } catch {
+        // The host can briefly report zero size while the side panel is mounting.
+      }
+
+      void window.api.terminal.start({ cols: terminal.cols, rows: terminal.rows })
+        .then((snapshot) => {
+          if (disposed) {
+            return;
+          }
+
+          sessionIdRef.current = snapshot.sessionId;
+          terminal.clear();
+          terminal.write("\u001bc");
+          if (snapshot.history) {
+            terminal.write(snapshot.history);
+          }
+          scheduleFitAndResize();
+          window.requestAnimationFrame(() => terminal.focus());
+        })
+        .catch((error) => {
+          if (disposed) {
+            return;
+          }
+          const message = getTerminalErrorMessage(error, "Terminal failed to start");
+          terminal.clear();
+          terminal.write("\u001bc");
+          writeTerminalSystemMessage(terminal, message);
+        });
+    });
+
+    return () => {
+      disposed = true;
+      window.cancelAnimationFrame(startFrame);
+      if (resizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeFrameRef.current);
+      }
+      resizeObserver.disconnect();
+      unsubscribeData();
+      unsubscribeExit();
+      inputDisposable.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+      terminal.dispose();
+    };
+  }, []);
+
+  const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
+
+  return (
+    <aside className="flex h-full min-w-0 flex-col border-l border-zinc-100 bg-white">
+      <div className={`${dragClassName} flex h-14 shrink-0 items-center gap-2 border-b border-zinc-100 px-3`}>
+        <SquareTerminal size={14} className="shrink-0 text-zinc-500" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-semibold text-zinc-900">Terminal</div>
+        </div>
+        <div className="window-no-drag flex items-center gap-1">
+          <button
+            type="button"
+            className="grid h-6 w-6 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
+            title="隐藏终端侧栏"
+            onClick={onHide}
+          >
+            <X size={13} />
+          </button>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden bg-white p-1">
+        <div
+          ref={terminalHostRef}
+          className="h-full min-h-0 overflow-hidden rounded-sm bg-white p-1 [&_.xterm]:h-full [&_.xterm-screen]:!bg-white [&_.xterm-viewport]:!bg-white"
+        />
+      </div>
+    </aside>
   );
 }
 
@@ -2150,23 +2625,9 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   const activeAsset = assetId ? assetItems.find((asset) => asset.id === assetId) : undefined;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
   const sidebarCollapseIntentRef = useRef<"collapsed" | "expanded" | null>(null);
-  const importVault = useMutation(
-    trpc.assets.selectFolderAndScan.mutationOptions({
-      onSuccess: async () => {
-        await queryClient.invalidateQueries(trpc.assets.list.queryFilter());
-        await queryClient.invalidateQueries(trpc.assets.vaults.queryFilter());
-      },
-    }),
-  );
-  const reconcileVault = useMutation(
-    trpc.assets.reconcile.mutationOptions({
-      onSuccess: async () => {
-        await queryClient.invalidateQueries(trpc.assets.list.queryFilter());
-      },
-    }),
-  );
   const addTag = useMutation(
     trpc.assets.addTag.mutationOptions({
       onSuccess: async () => {
@@ -2225,6 +2686,8 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   }, []);
 
   const backgroundWindowDragEnabled = !(sidebarCollapsed && sidebarPreviewOpen);
+  const vaultAvailable = Boolean(assetsQuery.data?.vault);
+  const terminalAvailable = vaultAvailable && isMacWindow();
 
   return (
       <div className="relative h-full min-h-0 overflow-hidden text-zinc-950">
@@ -2342,24 +2805,27 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
               assetItems={assetItems}
               tagOptions={assetsQuery.data?.tags ?? []}
               dragEnabled={backgroundWindowDragEnabled}
-              vaultName={assetsQuery.data?.vault?.name}
+              vaultAvailable={vaultAvailable}
+              terminalAvailable={terminalAvailable}
+              terminalOpen={terminalOpen}
+              onToggleTerminal={() => setTerminalOpen((open) => !open)}
               loading={assetsQuery.isLoading}
-              importing={importVault.isPending}
-              reconciling={reconcileVault.isPending}
-              conflictCount={assetsQuery.data?.conflictCount ?? 0}
-              errorMessage={
-                importVault.error?.message ?? reconcileVault.error?.message ?? assetsQuery.error?.message
-              }
-              onImportVault={() => importVault.mutate()}
-              onReconcileVault={() => {
-                const vaultId = assetsQuery.data?.vault?.id;
-                if (vaultId) {
-                  reconcileVault.mutate({ vaultId });
-                }
-              }}
+              errorMessage={assetsQuery.error?.message}
             />
           )}
         </ResizablePanel>
+
+        {!activeAsset && terminalOpen ? (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel id="asset-terminal" defaultSize={30} minSize={20} maxSize={48}>
+              <AssetTerminalPanel
+                dragEnabled={backgroundWindowDragEnabled}
+                onHide={() => setTerminalOpen(false)}
+              />
+            </ResizablePanel>
+          </>
+        ) : null}
 
         {activeAsset ? (
           <>

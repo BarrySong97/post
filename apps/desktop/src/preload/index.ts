@@ -1,6 +1,17 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
 
+type TerminalDataEvent = {
+  sessionId: string;
+  data: string;
+};
+
+type TerminalExitEvent = {
+  sessionId: string;
+  exitCode: number;
+  signal: number | string | null;
+};
+
 const api = {
   platform: {
     isMac: process.platform === "darwin",
@@ -13,6 +24,36 @@ const api = {
     trafficLightsVisible?: boolean;
     trafficLightPosition?: { x: number; y: number } | null;
   }) => ipcRenderer.invoke("window:set-controls-state", state) as Promise<void>,
+  terminal: {
+    start: (input?: { cols?: number; rows?: number }) =>
+      ipcRenderer.invoke("terminal:start", input) as Promise<{
+        sessionId: string;
+        cwd: string;
+        pid: number;
+        status: "running" | "exited";
+        history: string;
+      }>,
+    write: (input: { sessionId: string; data: string }) =>
+      ipcRenderer.invoke("terminal:write", input) as Promise<void>,
+    resize: (input: { sessionId: string; cols: number; rows: number }) =>
+      ipcRenderer.invoke("terminal:resize", input) as Promise<void>,
+    close: (input: { sessionId: string }) =>
+      ipcRenderer.invoke("terminal:close", input) as Promise<void>,
+    onData: (callback: (event: TerminalDataEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: TerminalDataEvent) => {
+        callback(payload);
+      };
+      ipcRenderer.on("terminal:data", listener);
+      return () => ipcRenderer.off("terminal:data", listener);
+    },
+    onExit: (callback: (event: TerminalExitEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: TerminalExitEvent) => {
+        callback(payload);
+      };
+      ipcRenderer.on("terminal:exit", listener);
+      return () => ipcRenderer.off("terminal:exit", listener);
+    },
+  },
   trpcRequest: (request: { type: string; path: string; input: unknown }) =>
     ipcRenderer.invoke("trpc:request", request) as Promise<unknown>,
 };

@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import { shell } from "electron";
 import { TRPCError } from "@trpc/server";
@@ -22,6 +24,7 @@ const importPathInput = z.object({
 });
 
 const THUMBNAIL_AUTO_PREWARM_COOLDOWN_MS = 5 * 60 * 1000;
+const execFileAsync = promisify(execFile);
 
 export const assetsRouter = router({
   vaults: publicProcedure.query(() => {
@@ -78,6 +81,24 @@ export const assetsRouter = router({
       events: result.events,
     };
   }),
+
+  activateVault: publicProcedure
+    .input(z.object({ vaultId: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const vault = getVaultOrThrow(input.vaultId);
+      const now = new Date();
+
+      getDatabase()
+        .update(schema.vaults)
+        .set({ lastOpenedAt: now, updatedAt: now })
+        .where(eq(schema.vaults.id, vault.id))
+        .run();
+
+      return {
+        vaultId: vault.id,
+        rootPath: vault.rootPath,
+      };
+    }),
 
   reconcile: publicProcedure
     .input(z.object({ vaultId: z.string().min(1) }))
@@ -156,6 +177,28 @@ export const assetsRouter = router({
     return { absolutePath };
   }),
 
+  openVaultLocation: publicProcedure
+    .input(z.object({ target: z.enum(["vscode", "cursor", "zed", "finder"]) }))
+    .mutation(async ({ input }) => {
+      const vault = getRequestedOrActiveVault(undefined);
+      if (!vault) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "No active vault selected" });
+      }
+
+      if (input.target === "finder") {
+        const error = await shell.openPath(vault.rootPath);
+        if (error) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error });
+        }
+
+        return { rootPath: vault.rootPath, target: input.target };
+      }
+
+      await openVaultInEditor(input.target, vault.rootPath);
+
+      return { rootPath: vault.rootPath, target: input.target };
+    }),
+
   ensureThumbnails: publicProcedure
     .input(
       z.object({
@@ -214,9 +257,63 @@ export const assetsRouter = router({
     }),
 });
 
+type VaultEditorTarget = "vscode" | "cursor" | "zed";
+
+const VAULT_EDITOR_TARGETS = {
+  vscode: {
+    label: "VS Code",
+    appName: "Visual Studio Code",
+    commands: ["code"],
+  },
+  cursor: {
+    label: "Cursor",
+    appName: "Cursor",
+    commands: ["cursor"],
+  },
+  zed: {
+    label: "Zed",
+    appName: "Zed",
+    commands: ["zed", "zeditor"],
+  },
+} satisfies Record<VaultEditorTarget, { label: string; appName: string; commands: string[] }>;
+
+async function openVaultInEditor(target: VaultEditorTarget, rootPath: string) {
+  const editor = VAULT_EDITOR_TARGETS[target];
+  const errors: string[] = [];
+
+  for (const command of editor.commands) {
+    try {
+      await execFileAsync(command, [rootPath], { timeout: 5000 });
+      return;
+    } catch (error) {
+      errors.push(`${command}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  try {
+    await execFileAsync("open", ["-a", editor.appName, rootPath], { timeout: 5000 });
+    return;
+  } catch (error) {
+    errors.push(`open -a ${editor.appName}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  throw new TRPCError({
+    code: "INTERNAL_SERVER_ERROR",
+    message: `Could not open ${editor.label}. Install its CLI (${editor.commands.join(" or ")}) or the macOS app.`,
+    cause: errors.join("\n"),
+  });
+}
+
 function getOrCreateVaultId(rootPath: string, name?: string) {
   const existing = getDatabase().select().from(schema.vaults).where(eq(schema.vaults.rootPath, rootPath)).get();
   if (existing) {
+    const now = new Date();
+    getDatabase()
+      .update(schema.vaults)
+      .set({ lastOpenedAt: now, updatedAt: now })
+      .where(eq(schema.vaults.id, existing.id))
+      .run();
+
     return existing.id;
   }
 

@@ -8,6 +8,7 @@ import { and, eq } from "drizzle-orm";
 
 import { getDatabase, getDatabasePath, initDatabase } from "./db";
 import { getThumbnailCacheRoot } from "./indexer";
+import { registerTerminalHandlers } from "./terminal";
 import { appRouter } from "./trpc/router";
 
 protocol.registerSchemesAsPrivileged([
@@ -230,6 +231,7 @@ app.whenReady().then(() => {
   });
   registerTRPCHandler();
   registerAssetProtocol();
+  registerTerminalHandlers();
 
   createWindow();
 });

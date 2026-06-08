@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Popover } from "@heroui/react";
 
 import { trpc, type RouterOutputs } from "@/lib/trpc";
@@ -42,16 +42,43 @@ export function AppShell({ children }: { children: ReactNode }) {
 function GlobalStatusLine() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [folderOpen, setFolderOpen] = useState(false);
   const [dismissed, setDismissed] = useState(() => new Set<string>());
   const [now, setNow] = useState(() => Date.now());
   const completedFirstSeen = useRef(new Map<string, number>());
   const completedInvalidatedIds = useRef(new Set<string>());
   const lastThumbnailProgressInvalidation = useRef({ taskId: "", progress: 0 });
+  const invalidateVaultState = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries(trpc.assets.list.queryFilter()),
+      queryClient.invalidateQueries(trpc.assets.vaults.queryFilter()),
+      queryClient.invalidateQueries(trpc.tasks.snapshot.queryFilter()),
+    ]);
+  };
+  const vaultsQuery = useQuery(trpc.assets.vaults.queryOptions());
+  const selectFolder = useMutation(
+    trpc.assets.selectFolderAndScan.mutationOptions({
+      onSuccess: invalidateVaultState,
+    }),
+  );
+  const activateVault = useMutation(
+    trpc.assets.activateVault.mutationOptions({
+      onSuccess: async () => {
+        setFolderOpen(false);
+        await invalidateVaultState();
+      },
+    }),
+  );
+  const reconcileVault = useMutation(
+    trpc.assets.reconcile.mutationOptions({
+      onSuccess: invalidateVaultState,
+    }),
+  );
   const tasksQuery = useQuery({
     ...trpc.tasks.snapshot.queryOptions(),
     refetchInterval: (query) => {
       const snapshot = query.state.data as TaskSnapshot | undefined;
-      return hasVisibleTaskActivity(snapshot) ? 1000 : 7000;
+      return selectFolder.isPending || reconcileVault.isPending || hasVisibleTaskActivity(snapshot) ? 1000 : 7000;
     },
     refetchOnWindowFocus: true,
   });
@@ -152,10 +179,24 @@ function GlobalStatusLine() {
   const others = Math.max(0, live.length - shown);
   const hasPop = live.length > 0;
   const appVersion = snapshot?.appVersion ?? "0.0.0";
-  const vaultName = snapshot?.activeVault?.name ?? null;
-  const vaultPath = snapshot?.activeVault?.rootPath ?? null;
+  const activeVault = snapshot?.activeVault ?? null;
+  const vaultName = activeVault?.name ?? null;
+  const vaultPath = activeVault?.rootPath ?? null;
+  const syncRunning = reconcileVault.isPending || running.some((task) => task.type === "reconcile" || task.type === "indexing");
+  const canSync = Boolean(activeVault) && !syncRunning;
   const dismissTask = (id: string) => {
     setDismissed((current) => new Set(current).add(id));
+  };
+  const chooseFolder = () => {
+    setFolderOpen(false);
+    selectFolder.mutate();
+  };
+  const syncVault = () => {
+    if (!activeVault || syncRunning) {
+      return;
+    }
+
+    reconcileVault.mutate({ vaultId: activeVault.id });
   };
   const statusTrigger = kind ? (
     <PFPill
@@ -189,16 +230,75 @@ function GlobalStatusLine() {
           <span className="pf-ver">v{appVersion}</span>
         </div>
         <span className="pf-sep" />
-        <div
-          className={`pf-folder ${vaultName ? "" : "pf-folder--empty"}`}
-          title={vaultName ? (vaultPath ?? vaultName) : "未关联资产库"}
-        >
-          <span className="pf-folder-ico"><PFFolderIco /></span>
-          <span className="pf-folder-name">{vaultName ?? "No folder"}</span>
-        </div>
+        <Popover isOpen={folderOpen} onOpenChange={setFolderOpen}>
+          <Popover.Trigger className="pf-folder-trigger">
+            <span
+              className={`pf-folder ${vaultName ? "" : "pf-folder--empty"}`}
+              title={vaultName ? (vaultPath ?? vaultName) : "未关联资产库"}
+            >
+              <span className="pf-folder-ico"><PFFolderIco /></span>
+              <span className="pf-folder-name">{vaultName ?? "No folder"}</span>
+            </span>
+          </Popover.Trigger>
+          <Popover.Content className="pf-menu-content" offset={7} placement="top start">
+            <Popover.Dialog className="pf-menu-dialog">
+              <div className="pf-folder-menu">
+                <div className="pf-menu-head">资产库</div>
+                <div className="pf-menu-list">
+                  {(vaultsQuery.data ?? []).map((vault) => (
+                    <button
+                      key={vault.id}
+                      type="button"
+                      className={`pf-menu-item ${activeVault?.id === vault.id ? "is-active" : ""}`}
+                      onClick={() => {
+                        if (activeVault?.id === vault.id) {
+                          setFolderOpen(false);
+                          return;
+                        }
+
+                        activateVault.mutate({ vaultId: vault.id });
+                      }}
+                    >
+                      <span className="pf-menu-item-main">
+                        <span className="pf-menu-item-name">{vault.name}</span>
+                        <span className="pf-menu-item-path">{vault.rootPath}</span>
+                      </span>
+                      {activeVault?.id === vault.id ? <PFCheck s={12} /> : null}
+                    </button>
+                  ))}
+                  {vaultsQuery.data?.length === 0 ? (
+                    <div className="pf-menu-empty">还没有资产库</div>
+                  ) : null}
+                </div>
+                <div className="pf-menu-actions">
+                  <button
+                    type="button"
+                    className="pf-menu-action"
+                    disabled={selectFolder.isPending}
+                    onClick={chooseFolder}
+                  >
+                    {selectFolder.isPending ? "索引中" : "选择其他文件夹"}
+                  </button>
+                </div>
+              </div>
+            </Popover.Dialog>
+          </Popover.Content>
+        </Popover>
       </div>
 
       <div className="pf-foot-right">
+        {activeVault ? (
+          <button
+            type="button"
+            className={`pf-sync ${syncRunning ? "is-running" : ""}`}
+            disabled={!canSync}
+            onClick={syncVault}
+            title={syncRunning ? "正在同步" : "点击重新同步"}
+          >
+            <span className={syncRunning ? "pf-spin pf-spin--sync" : "pf-dot pf-dot--good"} />
+            <span>{syncRunning ? "同步中" : "已同步完成"}</span>
+          </button>
+        ) : null}
         {hasPop ? (
           <Popover isOpen={open} onOpenChange={setOpen}>
             <Popover.Trigger className="pf-popover-trigger">
@@ -492,7 +592,13 @@ function injectFooterCSS() {
 .pf-folder--empty .pf-folder-ico{ opacity:.7; }
 .pf-folder--empty .pf-folder-name{ color:var(--faint,#b6b6b2); font-weight:400; }
 .pf-foot-right{ margin-left:auto; display:flex; align-items:center; position:relative; }
+.pf-folder-trigger{ display:flex; min-width:0; outline:none; }
 .pf-popover-trigger{ display:flex; align-items:center; outline:none; }
+.pf-sync{ display:flex; align-items:center; gap:6px; border:0; background:transparent; cursor:pointer;
+  font:inherit; color:var(--text,#1b1b1a); border-radius:99px; padding:3px 7px; line-height:1; margin-right:6px; }
+.pf-sync:hover{ background:var(--panel-2,#f4f4f2); }
+.pf-sync:disabled{ cursor:default; opacity:.72; }
+.pf-sync.is-running:hover{ background:transparent; }
 .pf-idle{ display:flex; align-items:center; gap:6px; color:var(--faint,#b6b6b2); font-size:11.5px; padding:3px 4px; }
 .pf-idle svg{ color:var(--good,oklch(0.62 0.14 150)); opacity:.85; }
 .pf-pill{ display:flex; align-items:center; gap:7px; border:0; background:transparent; cursor:pointer;
@@ -517,9 +623,30 @@ function injectFooterCSS() {
 .pf-spin{ width:12px; height:12px; border-radius:50%; flex:none;
   border:1.6px solid color-mix(in oklch, var(--accent,oklch(0.55 0.13 256)), transparent 74%);
   border-top-color:var(--accent,oklch(0.55 0.13 256)); animation:pf-spin .8s linear infinite; }
+.pf-spin.pf-spin--sync{ width:10px; height:10px; border-width:1.4px; }
 @keyframes pf-spin{ to{ transform:rotate(360deg); } }
 .pf-pop-content{ z-index:120 !important; padding:0 !important; border:0 !important; background:transparent !important; box-shadow:none !important; overflow:visible !important; }
 .pf-pop-dialog{ outline:none; }
+.pf-menu-content{ z-index:120 !important; padding:0 !important; border:0 !important; background:transparent !important; box-shadow:none !important; overflow:visible !important; }
+.pf-menu-dialog{ outline:none; }
+.pf-folder-menu{ width:300px; overflow:hidden; border:1px solid var(--border,#ececea); border-radius:13px;
+  background:var(--card,#fff); box-shadow:0 16px 40px rgba(20,18,16,.20), 0 2px 8px rgba(20,18,16,.10); animation:pf-pop-in .15s ease-out; }
+.pf-menu-head{ padding:12px 14px 8px; color:var(--text,#1b1b1a); font-size:12px; font-weight:680; }
+.pf-menu-list{ max-height:260px; overflow:auto; padding:0 7px 6px; }
+.pf-menu-item{ display:flex; width:100%; align-items:center; gap:10px; border:0; border-radius:9px; background:transparent;
+  padding:7px 8px; text-align:left; cursor:pointer; color:var(--text,#1b1b1a); font:inherit; }
+.pf-menu-item:hover{ background:var(--panel-2,#f4f4f2); }
+.pf-menu-item.is-active{ background:var(--panel-2,#f4f4f2); }
+.pf-menu-item-main{ min-width:0; flex:1; display:flex; flex-direction:column; gap:2px; }
+.pf-menu-item-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:560; color:var(--text,#1b1b1a); }
+.pf-menu-item-path{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10.5px; color:var(--faint,#b6b6b2); }
+.pf-menu-item svg{ flex:none; color:var(--good,oklch(0.62 0.14 150)); }
+.pf-menu-empty{ padding:10px 8px 12px; color:var(--faint,#b6b6b2); font-size:11px; }
+.pf-menu-actions{ border-top:1px solid var(--border-soft,#f3f3f1); padding:7px; }
+.pf-menu-action{ width:100%; border:0; border-radius:9px; background:transparent; cursor:pointer; padding:7px 8px;
+  text-align:left; color:var(--accent,oklch(0.55 0.13 256)); font:inherit; font-weight:560; }
+.pf-menu-action:hover{ background:var(--panel-2,#f4f4f2); }
+.pf-menu-action:disabled{ cursor:default; opacity:.58; }
 .pf-pop{ width:300px;
   background:var(--card,#fff); border:1px solid var(--border,#ececea); border-radius:13px;
   box-shadow:0 16px 40px rgba(20,18,16,.20), 0 2px 8px rgba(20,18,16,.10); overflow:hidden; animation:pf-pop-in .15s ease-out; }

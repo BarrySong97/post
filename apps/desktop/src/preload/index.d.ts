@@ -1,5 +1,24 @@
 import type { ElectronAPI } from "@electron-toolkit/preload";
 
+type TerminalSnapshot = {
+  sessionId: string;
+  cwd: string;
+  pid: number;
+  status: "running" | "exited";
+  history: string;
+};
+
+type TerminalDataEvent = {
+  sessionId: string;
+  data: string;
+};
+
+type TerminalExitEvent = {
+  sessionId: string;
+  exitCode: number;
+  signal: number | string | null;
+};
+
 declare global {
   interface Window {
     electron: ElectronAPI;
@@ -15,6 +34,14 @@ declare global {
         trafficLightsVisible?: boolean;
         trafficLightPosition?: { x: number; y: number } | null;
       }) => Promise<void>;
+      terminal: {
+        start: (input?: { cols?: number; rows?: number }) => Promise<TerminalSnapshot>;
+        write: (input: { sessionId: string; data: string }) => Promise<void>;
+        resize: (input: { sessionId: string; cols: number; rows: number }) => Promise<void>;
+        close: (input: { sessionId: string }) => Promise<void>;
+        onData: (callback: (event: TerminalDataEvent) => void) => () => void;
+        onExit: (callback: (event: TerminalExitEvent) => void) => () => void;
+      };
       trpcRequest: (request: {
         type: string;
         path: string;

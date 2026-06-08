@@ -12,6 +12,7 @@ extraResources:
     to: post-indexer
 asarUnpack:
   - "**/*.node"
+  - "node_modules/node-pty/**"
 npmRebuild: true
 mac:
   target:
