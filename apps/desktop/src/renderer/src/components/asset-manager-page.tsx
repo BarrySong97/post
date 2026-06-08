@@ -2151,6 +2151,7 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false);
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
+  const sidebarCollapseIntentRef = useRef<"collapsed" | "expanded" | null>(null);
   const importVault = useMutation(
     trpc.assets.selectFolderAndScan.mutationOptions({
       onSuccess: async () => {
@@ -2176,15 +2177,17 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
 
   const handleToggleSidebar = () => {
     if (sidebarCollapsed || sidebarPanelRef.current?.isCollapsed()) {
-      sidebarPanelRef.current?.expand();
-      setSidebarCollapsed(false);
+      sidebarCollapseIntentRef.current = "expanded";
       setSidebarPreviewOpen(false);
+      setSidebarCollapsed(false);
+      sidebarPanelRef.current?.expand();
       return;
     }
 
-    sidebarPanelRef.current?.collapse();
-    setSidebarCollapsed(true);
+    sidebarCollapseIntentRef.current = "collapsed";
     setSidebarPreviewOpen(false);
+    setSidebarCollapsed(true);
+    sidebarPanelRef.current?.collapse();
   };
 
   useEffect(() => {
@@ -2278,7 +2281,24 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
           collapsible
           collapsedSize={0}
           onResize={(size) => {
-            const nextCollapsed = size.asPercentage === 0;
+            const nextCollapsed = size.asPercentage <= 0.01;
+
+            if (sidebarCollapseIntentRef.current === "collapsed") {
+              setSidebarCollapsed(true);
+              if (nextCollapsed) {
+                sidebarCollapseIntentRef.current = null;
+              }
+              return;
+            }
+
+            if (sidebarCollapseIntentRef.current === "expanded") {
+              setSidebarCollapsed(false);
+              if (!nextCollapsed) {
+                sidebarCollapseIntentRef.current = null;
+              }
+              return;
+            }
+
             setSidebarCollapsed(nextCollapsed);
             if (!nextCollapsed) {
               setSidebarPreviewOpen(false);
