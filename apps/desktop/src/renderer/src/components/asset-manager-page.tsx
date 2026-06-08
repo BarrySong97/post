@@ -8,7 +8,7 @@ import React, {
   type ReactNode,
   type SVGProps,
 } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { DragDropProvider, type DragEndEvent } from "@dnd-kit/react";
 import { isSortable, useSortable } from "@dnd-kit/react/sortable";
 import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
@@ -33,7 +33,6 @@ import {
   Globe,
   Image as ImageIcon,
   Inbox,
-  Info,
   Link as LinkIcon,
   MoreHorizontal,
   PanelLeftOpen,
@@ -44,7 +43,6 @@ import {
   Plus,
   ShieldCheck,
   SquareTerminal,
-  Tags,
   Trash2,
   Video,
   X,
@@ -537,14 +535,6 @@ function getKindMeta(kind: AssetKind) {
   return map[kind];
 }
 
-function getStatusLabel(status: AssetStatus) {
-  return {
-    inbox: "待整理",
-    organized: "已整理",
-    draft: "草稿",
-    published: "已发布",
-  }[status];
-}
 
 type AssetTypeFilter = "markdown" | "image" | "video" | "link" | "file";
 type AssetFilterMatch = "and" | "or";
@@ -697,22 +687,6 @@ function filterAssets(assetItems: readonly Asset[], filters: AssetFilterState) {
   });
 }
 
-function SourceBadge({ asset }: { asset: Asset }) {
-  const label = {
-    vault: "Vault",
-    external_file: "外部路径",
-    url: "链接",
-  }[asset.sourceType];
-
-  return (
-    <Chip
-      size="sm"
-      className="border border-zinc-200 bg-white/75 text-[11px] text-zinc-600"
-    >
-      {label}
-    </Chip>
-  );
-}
 
 function TagPill({ name }: { name: string }) {
   return (
@@ -1522,7 +1496,7 @@ function AssetBoardHeader({
   };
 
   return (
-    <div className={`${dragClassName} relative z-[70] flex h-14 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}>
+    <div className={`${dragClassName} relative z-[75] flex h-14 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}>
       <h1 className="mr-auto text-[15px] font-semibold tracking-normal text-zinc-950">全部资产</h1>
       <div className="window-no-drag relative z-[80] flex items-center gap-2.5 pointer-events-auto">
         <Button
@@ -2390,232 +2364,331 @@ function AssetTerminalPanel({
   );
 }
 
+// ---- detail page helpers ----
+
+function getDetailPrimaryAction(asset: Asset): { label: string; icon: React.ReactNode } {
+  switch (asset.kind) {
+    case "markdown": return { label: "编辑", icon: <Pencil size={12} /> };
+    case "image":    return { label: "在外部编辑器打开", icon: <ExternalLink size={12} /> };
+    case "video":    return { label: "在播放器打开", icon: <ExternalLink size={12} /> };
+    case "web":
+    case "link":     return { label: "访问原网页", icon: <ExternalLink size={12} /> };
+    default:         return { label: "用默认应用打开", icon: <ExternalLink size={12} /> };
+  }
+}
+
+function DetailSideMetaList({ list }: { list: [string, string][] }) {
+  return (
+    <div className="flex flex-col">
+      {list.map(([k, v], i) => (
+        <div key={i} className="flex justify-between border-t border-zinc-100 py-2 text-[12.5px]">
+          <span className="text-zinc-500">{k}</span>
+          <span className="font-medium text-zinc-800">{v}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DocPreviewSkeleton({ fileExt }: { fileExt?: string }) {
+  const ext = (fileExt ?? "FILE").toUpperCase();
+  const extColorMap: Record<string, string> = {
+    PDF: "oklch(0.55 0.18 25)",
+    CSV: "oklch(0.50 0.16 148)",
+    XLS: "oklch(0.50 0.16 148)",
+    XLSX: "oklch(0.50 0.16 148)",
+    DOCX: "oklch(0.48 0.16 230)",
+    DOC: "oklch(0.48 0.16 230)",
+  };
+  const extColor = extColorMap[ext] ?? "oklch(0.50 0.08 250)";
+  return (
+    <div className="overflow-hidden rounded-[13px] border border-zinc-200 shadow-sm">
+      <div className="bg-zinc-100 px-[30px] pb-0 pt-[30px]">
+        <div className="rounded-t-md border border-zinc-200/60 bg-white px-10 pb-10 pt-8" style={{ boxShadow: "0 -8px 24px rgba(20,18,16,.06)" }}>
+          <div className="mb-5 flex items-center gap-2.5">
+            <span className="rounded-[5px] px-[7px] py-[3px] font-mono text-[10.5px] font-semibold tracking-wider text-white" style={{ background: extColor }}>
+              {ext}
+            </span>
+            <div className="h-3 w-3/5 rounded-sm bg-gradient-to-r from-zinc-200 to-transparent" />
+          </div>
+          <div className="flex flex-col gap-2.5">
+            {[96, 90, 99, 72].map((w, i) => (
+              <div key={i} className="h-2 rounded-sm bg-zinc-100" style={{ width: `${w}%` }} />
+            ))}
+          </div>
+          <div className="my-5 flex h-28 items-end gap-2.5 rounded-lg border border-zinc-100 bg-zinc-50 p-3.5">
+            {[42, 58, 50, 71, 64, 88, 80].map((h, i) => (
+              <div
+                key={i}
+                className="flex-1 rounded-t-sm"
+                style={{
+                  height: `${h}%`,
+                  background: i === 6
+                    ? "oklch(0.55 0.13 256)"
+                    : "color-mix(in oklch, oklch(0.55 0.13 256), transparent 55%)",
+                }}
+              />
+            ))}
+          </div>
+          <div className="flex flex-col gap-2.5">
+            {[99, 94, 86, 97, 60].map((w, i) => (
+              <div key={i} className="h-2 rounded-sm bg-zinc-100" style={{ width: `${w}%` }} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MarkdownDetailBody({ asset }: { asset: Asset }) {
+  return (
+    <article className="max-w-[680px]">
+      <p className="whitespace-pre-line text-[16px] leading-[1.78] text-zinc-800">
+        {asset.body}
+      </p>
+    </article>
+  );
+}
+
+function ImageDetailBody({ asset }: { asset: Asset }) {
+  const dims =
+    asset.imageWidth && asset.imageHeight
+      ? `${asset.imageWidth} × ${asset.imageHeight}`
+      : undefined;
+  const ext = (asset.fileExt ?? "").toUpperCase() || "IMG";
+  const metaList: [string, string][] = [
+    ["来源", asset.source.split(" / ")[0] ?? "—"],
+    ...(dims ? ([["尺寸", dims]] as [string, string][]) : []),
+    ["格式", ext],
+    ["采集", asset.time],
+  ];
+  return (
+    <div className="flex gap-6">
+      <div className="min-w-0 flex-1">
+        <div className="overflow-hidden rounded-[13px] border border-zinc-200 shadow-sm">
+          <VisualBlock asset={asset} />
+        </div>
+      </div>
+      <div className="w-[248px] shrink-0">
+        <DetailSideMetaList list={metaList} />
+      </div>
+    </div>
+  );
+}
+
+function VideoDetailBody({ asset }: { asset: Asset }) {
+  return (
+    <div className="max-w-[780px]">
+      <div className="overflow-hidden rounded-[13px] border border-zinc-200 shadow-sm">
+        <VisualBlock asset={asset} />
+      </div>
+    </div>
+  );
+}
+
+function LinkDetailBody({ asset, onOpen }: { asset: Asset; onOpen: () => void }) {
+  const metaList: [string, string][] = [
+    ...(asset.domain ? ([["域名", asset.domain]] as [string, string][]) : []),
+    ["快照", "整页已缓存"],
+    ["采集", asset.time],
+  ];
+  return (
+    <div className="flex gap-6">
+      <div className="min-w-0 flex-1">
+        <div className="max-w-[660px] overflow-hidden rounded-[13px] border border-zinc-200 bg-white shadow-sm">
+          <VisualBlock asset={asset} />
+          <div className="flex items-center gap-2.5 border-t border-zinc-100 px-3.5 py-3">
+            <Globe size={14} className="shrink-0 text-zinc-500" />
+            <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-zinc-500">
+              <b className="font-semibold text-zinc-900">{asset.domain}</b>
+              {asset.url && asset.domain ? asset.url.replace(asset.domain, "") : (asset.url ?? "")}
+            </span>
+            <button type="button" className="shrink-0 text-[11.5px] font-semibold text-blue-600" onClick={onOpen}>
+              ↗ 打开
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="w-[248px] shrink-0">
+        <button
+          type="button"
+          className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-blue-600 px-4 py-[11px] text-[13px] font-semibold text-white shadow-sm"
+          onClick={onOpen}
+        >
+          <ExternalLink size={14} />
+          访问原网页
+        </button>
+        <div className="mt-5">
+          <span className="mb-2.5 block text-[10.5px] font-semibold uppercase tracking-[.06em] text-zinc-400">
+            网页信息
+          </span>
+          <DetailSideMetaList list={metaList} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FileDetailBody({
+  asset,
+  onOpen,
+  onShowInFinder,
+}: {
+  asset: Asset;
+  onOpen: () => void;
+  onShowInFinder: () => void;
+}) {
+  const [fmt, ...rest] = asset.meta.split(" · ");
+  const metaList: [string, string][] = [
+    ["格式", fmt ?? "—"],
+    ["大小", rest.join(" · ") || "—"],
+    ["位置", asset.sourceType === "vault" ? "Vault 内" : "外部路径"],
+    ["修改", asset.time],
+  ];
+  return (
+    <div className="flex gap-6">
+      <div className="min-w-0 flex-1">
+        <DocPreviewSkeleton fileExt={asset.fileExt} />
+      </div>
+      <div className="w-[248px] shrink-0">
+        <button
+          type="button"
+          className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-blue-600 px-4 py-[11px] text-[13px] font-semibold text-white shadow-sm"
+          onClick={onOpen}
+        >
+          <ExternalLink size={14} />
+          用默认应用打开
+        </button>
+        <button
+          type="button"
+          className="mt-2 flex w-full items-center justify-center rounded-[10px] border border-zinc-200 bg-white px-4 py-[10px] text-[13px] text-zinc-900"
+          onClick={onShowInFinder}
+        >
+          在访达中显示
+        </button>
+        {asset.body ? (
+          <p className="mt-3.5 rounded-[11px] border border-zinc-100 bg-zinc-50 px-4 py-3.5 text-[13.5px] leading-[1.7] text-zinc-700">
+            {asset.body}
+          </p>
+        ) : null}
+        <div className="mt-5">
+          <span className="mb-2.5 block text-[10.5px] font-semibold uppercase tracking-[.06em] text-zinc-400">
+            文件信息
+          </span>
+          <DetailSideMetaList list={metaList} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AssetDetail({ asset, dragEnabled = true }: { asset: Asset; dragEnabled?: boolean }) {
-  const { label, icon: Icon } = getKindMeta(asset.kind);
-  const hasVisual = asset.kind === "image" || asset.kind === "video";
-  const isLinkAsset = asset.kind === "web" || asset.kind === "link";
+  const { label } = getKindMeta(asset.kind);
   const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
+  const openFileMutation = useMutation(trpc.assets.openFile.mutationOptions());
+  const openVaultLocationMutation = useMutation(trpc.assets.openVaultLocation.mutationOptions());
+  const primaryAction = getDetailPrimaryAction(asset);
+
+  function handlePrimaryAction() {
+    openFileMutation.mutate({ id: asset.id });
+  }
 
   return (
     <main className="flex h-full min-w-0 flex-col bg-white">
-      <div className={`${dragClassName} border-b border-zinc-100 px-7 pb-4 pt-16`}>
-        <div className="flex items-center gap-2 text-sm text-zinc-500">
+      {/* ── Top bar: breadcrumb + actions on one line ── */}
+      <div className={`${dragClassName} relative z-[75] flex h-14 shrink-0 items-center gap-2 border-b border-zinc-100 bg-white px-6`}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="window-no-drag h-7 gap-1 px-2 text-[12.5px] font-semibold text-zinc-800"
+          onPress={() => { window.location.hash = "/"; }}
+        >
+          <ArrowLeft size={13} />
+          返回
+        </Button>
+        <span className="text-xs text-zinc-400">全部资产 / {asset.tag}</span>
+        <div className="flex-1" />
+        <div className="window-no-drag flex items-center gap-2">
           <Button
             size="sm"
-            variant="ghost"
-            className="window-no-drag h-8 px-2"
-            onPress={() => {
-              window.location.hash = "/";
-            }}
+            className="h-7 gap-1.5 px-3 text-xs font-semibold"
+            onPress={handlePrimaryAction}
           >
-            <ArrowLeft size={16} />
-            返回
+            {primaryAction.icon}
+            {primaryAction.label}
           </Button>
-          <span>全部资产</span>
-          <span>/</span>
-          <span>{asset.tag}</span>
-        </div>
-        <div className="mt-4 flex flex-wrap items-start gap-3">
-          <Chip className="border border-zinc-200 bg-white font-mono text-xs text-zinc-500">
-            <Icon size={14} />
-            {label}
-          </Chip>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-semibold tracking-normal text-zinc-950">{asset.title}</h1>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <TagPill name={asset.tag} />
-              <SourceBadge asset={asset} />
-              <Chip size="sm" className="bg-zinc-100 text-xs text-zinc-600">
-                {asset.meta}
-              </Chip>
-              {asset.privacy === "private" ? (
-                <Chip size="sm" className="bg-amber-50 text-xs text-amber-700">
-                  <ShieldCheck size={12} />
-                  禁止外发
-                </Chip>
-              ) : null}
-            </div>
-          </div>
-          <Button isIconOnly aria-label="更多资产操作" variant="secondary" className="window-no-drag">
-            <MoreHorizontal size={17} />
+          <Button
+            isIconOnly
+            size="sm"
+            variant="secondary"
+            aria-label="更多操作"
+            className="h-7 w-7 min-h-0"
+          >
+            <MoreHorizontal size={14} />
           </Button>
         </div>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1" viewportClassName="px-10 py-8">
-        <article className="mx-auto max-w-3xl space-y-8">
-          {hasVisual ? (
-            <div className="overflow-hidden rounded-lg">
-              <VisualBlock asset={{ ...asset, height: "tall" }} />
-            </div>
-          ) : null}
+      {/* ── Sub-header: kind badge + title + meta + tags ── */}
+      <div className="shrink-0 border-b border-zinc-100 px-10 pb-5 pt-6">
+        {/* kind badge + title */}
+        <div className="flex items-start gap-2.5">
+          <span className="mt-[7px] shrink-0 rounded border border-zinc-200 px-1 py-px font-mono text-[8.5px] font-semibold uppercase tracking-wider text-zinc-400">
+            {label}
+          </span>
+          <h1 className="max-w-[760px] text-[25px] font-bold leading-[1.28] tracking-[0.005em] text-zinc-950">
+            {asset.title}
+          </h1>
+        </div>
+        {/* meta row */}
+        <div className="mt-3.5 flex flex-wrap items-center gap-[9px] text-xs text-zinc-500">
+          <span>{asset.source.split(" / ")[0]}</span>
+          <span className="opacity-60">·</span>
+          <span>{asset.time}</span>
+          <span className="opacity-60">·</span>
+          <span>{asset.meta}</span>
+          <span className="opacity-60">·</span>
+          <span className="text-zinc-400">只读预览</span>
+        </div>
+        {/* tags row */}
+        <div className="mt-3.5 flex flex-wrap items-center gap-2">
+          <TagPill name={asset.tag} />
+          <button
+            type="button"
+            className="flex h-6 w-6 items-center justify-center rounded-[7px] border border-dashed border-zinc-200 text-zinc-400 hover:border-blue-200 hover:text-blue-500"
+          >
+            <Plus size={13} />
+          </button>
+        </div>
+      </div>
 
-          <section className="space-y-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-zinc-950">
-              <FileText size={16} className="text-blue-600" />
-              内容预览
-            </div>
-
-            {isLinkAsset ? (
-              <div className="space-y-4">
-                <div className="border-y border-zinc-200 py-5">
-                  <div className="flex items-center gap-2 text-sm font-medium text-zinc-900">
-                    <Globe size={16} />
-                    {asset.source}
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-zinc-600">
-                    第一版链接资产只保存 URL、标题、备注、标签和关系，不做网页正文归档。
-                  </p>
-                </div>
-                <Button variant="secondary">
-                  <LinkIcon size={16} />
-                  打开原链接
-                </Button>
-              </div>
-            ) : (
-              <p className="whitespace-pre-line text-[15px] leading-8 text-zinc-700">
-                {asset.body}
-              </p>
-            )}
-          </section>
-
-          {asset.body && hasVisual ? (
-            <section className="space-y-3 border-t border-zinc-100 pt-6">
-              <h2 className="text-sm font-semibold text-zinc-950">备注</h2>
-              <p className="whitespace-pre-line text-[15px] leading-8 text-zinc-700">
-                {asset.body}
-              </p>
-            </section>
-          ) : null}
-        </article>
+      {/* ── Body ── */}
+      <ScrollArea className="min-h-0 flex-1" viewportClassName="px-10 py-7">
+        {asset.kind === "markdown" && <MarkdownDetailBody asset={asset} />}
+        {asset.kind === "image" && <ImageDetailBody asset={asset} />}
+        {asset.kind === "video" && <VideoDetailBody asset={asset} />}
+        {(asset.kind === "web" || asset.kind === "link") && (
+          <LinkDetailBody asset={asset} onOpen={handlePrimaryAction} />
+        )}
+        {asset.kind === "file" && (
+          <FileDetailBody
+            asset={asset}
+            onOpen={handlePrimaryAction}
+            onShowInFinder={() => openVaultLocationMutation.mutate({ target: "finder" })}
+          />
+        )}
       </ScrollArea>
     </main>
   );
 }
 
-function InspectorSection({
-  title,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  icon: typeof Info;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="border-b border-zinc-200 px-5 py-4">
-      <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-zinc-950">
-        <Icon size={16} className="text-blue-600" />
-        {title}
-      </div>
-      {children}
-    </section>
-  );
-}
 
-function AssetInspector({
-  asset,
-  allAssets,
-  onAddTag,
-  dragEnabled = true,
-}: {
-  asset: Asset;
-  allAssets: Asset[];
-  onAddTag: (assetId: string, name: string) => void;
-  dragEnabled?: boolean;
-}) {
-  const relatedAssets = allAssets.filter((item) => asset.related.includes(item.id));
-  const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
-
-  return (
-    <aside className="flex h-full w-full flex-col border-l border-zinc-200 bg-zinc-50/70">
-      <div className={`${dragClassName} flex items-center gap-2 border-b border-zinc-200 px-5 py-4`}>
-        <Info size={17} className="text-blue-600" />
-        <span className="font-semibold text-zinc-950">资产信息</span>
-        <Chip size="sm" className="ml-auto bg-white text-xs text-zinc-500">
-          {getStatusLabel(asset.status)}
-        </Chip>
-      </div>
-
-      <ScrollArea className="min-h-0 flex-1">
-        <InspectorSection title="元数据" icon={Info}>
-          <dl className="space-y-2 text-sm">
-            {[
-              ["来源", asset.source],
-              ["类型", asset.meta],
-              ["状态", getStatusLabel(asset.status)],
-              ["隐私", asset.privacy === "private" ? "私密，禁止外发" : "普通资产"],
-              ["更新时间", asset.time],
-            ].map(([key, value]) => (
-              <div key={key} className="grid grid-cols-[58px_minmax(0,1fr)] gap-2">
-                <dt className="text-zinc-400">{key}</dt>
-                <dd className="min-w-0 truncate text-zinc-700">{value}</dd>
-              </div>
-            ))}
-          </dl>
-        </InspectorSection>
-
-        <InspectorSection title="关系与标签" icon={Tags}>
-          <div className="flex flex-wrap gap-2">
-            <TagPill name={asset.tag} />
-            {asset.collection ? (
-              <Chip size="sm" className="bg-blue-50 text-xs text-blue-700">
-                <FolderKanban size={12} />
-                {asset.collection}
-              </Chip>
-            ) : null}
-            <button
-              type="button"
-              className="inline-flex h-6 items-center gap-1.5 rounded-full border border-dashed border-zinc-200 bg-white px-2 text-xs text-zinc-400 transition-colors hover:border-blue-200 hover:text-blue-600"
-              onClick={() => {
-                const name = window.prompt("输入标签名称");
-                if (name?.trim()) {
-                  onAddTag(asset.id, name.trim());
-                }
-              }}
-            >
-              <Plus size={12} />
-              添加标签
-            </button>
-          </div>
-
-          <div className="mt-4 space-y-2">
-            {relatedAssets.map((related) => {
-              const RelatedIcon = getKindMeta(related.kind).icon;
-
-              return (
-                <button
-                  key={related.id}
-                  type="button"
-                  className="flex w-full items-center gap-3 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-left text-sm hover:border-blue-200 hover:bg-blue-50/40"
-                  onClick={() => {
-                    window.location.hash = `/assets/${related.id}`;
-                  }}
-                >
-                  <RelatedIcon size={16} className="shrink-0 text-zinc-400" />
-                  <span className="min-w-0 flex-1 truncate font-medium text-zinc-800">{related.title}</span>
-                  <span className="shrink-0 text-xs text-zinc-400">{related.tag}</span>
-                </button>
-              );
-            })}
-          </div>
-        </InspectorSection>
-
-      </ScrollArea>
-    </aside>
-  );
-}
-
-function getMainDefaultSize(activeAsset: Asset | undefined, sidebarCollapsed: boolean) {
-  if (!activeAsset) {
-    return sidebarCollapsed ? 100 : 80;
-  }
-
-  return sidebarCollapsed ? 80 : 60;
+function getMainDefaultSize(_activeAsset: Asset | undefined, sidebarCollapsed: boolean) {
+  return sidebarCollapsed ? 100 : 80;
 }
 
 export function AssetManagerPage({ assetId }: { assetId?: string }) {
-  const queryClient = useQueryClient();
   const assetsQuery = useQuery(trpc.assets.list.queryOptions());
   const indexedAssets = useMemo(
     () => assetsQuery.data?.assets.map(mapIndexedAsset) ?? [],
@@ -2623,18 +2696,13 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   );
   const assetItems = indexedAssets;
   const activeAsset = assetId ? assetItems.find((asset) => asset.id === assetId) : undefined;
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("post.assetManager.sidebarCollapsed") === "true",
+  );
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
   const sidebarCollapseIntentRef = useRef<"collapsed" | "expanded" | null>(null);
-  const addTag = useMutation(
-    trpc.assets.addTag.mutationOptions({
-      onSuccess: async () => {
-        await queryClient.invalidateQueries(trpc.assets.list.queryFilter());
-      },
-    }),
-  );
 
   const handleToggleSidebar = () => {
     if (sidebarCollapsed || sidebarPanelRef.current?.isCollapsed()) {
@@ -2654,6 +2722,10 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   useEffect(() => {
     syncWindowControlsWithSidebar(!sidebarCollapsed || sidebarPreviewOpen);
   }, [sidebarCollapsed, sidebarPreviewOpen]);
+
+  useEffect(() => {
+    localStorage.setItem("post.assetManager.sidebarCollapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     if (!sidebarCollapsed || !sidebarPreviewOpen) {
@@ -2694,7 +2766,7 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
         {sidebarCollapsed && !sidebarPreviewOpen ? (
           <div
             aria-hidden="true"
-            className="window-drag absolute left-6 right-48 top-0 z-[74] h-14"
+            className="window-drag pointer-events-none absolute left-6 right-48 top-0 z-[74] h-14"
           />
         ) : null}
         {sidebarCollapsed ? <SidebarEdgeHotspot onOpen={() => setSidebarPreviewOpen(true)} /> : null}
@@ -2730,10 +2802,11 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
         ) : null}
         {sidebarCollapsed && sidebarPreviewOpen ? <FloatingSidebarDragOverlay /> : null}
         <ResizablePanelGroup
-          id={activeAsset ? "asset-detail-layout" : "asset-board-layout"}
+          id="asset-layout"
           direction="horizontal"
           className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
           resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
+          defaultLayout={sidebarCollapsed ? { sidebar: 0, main: 100 } : undefined}
         >
         <ResizablePanel
           panelRef={sidebarPanelRef}
@@ -2827,19 +2900,6 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
           </>
         ) : null}
 
-        {activeAsset ? (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel id="inspector" defaultSize={20} minSize={18} maxSize={32}>
-              <AssetInspector
-                asset={activeAsset}
-                allAssets={assetItems}
-                dragEnabled={backgroundWindowDragEnabled}
-                onAddTag={(targetAssetId, name) => addTag.mutate({ assetId: targetAssetId, name })}
-              />
-            </ResizablePanel>
-          </>
-        ) : null}
         </ResizablePanelGroup>
       </div>
   );
