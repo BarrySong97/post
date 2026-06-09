@@ -26,7 +26,9 @@ import {
   Archive,
   ArrowLeft,
   Calendar,
+  Check,
   ChevronDown,
+  Copy,
   ExternalLink,
   FileSpreadsheet,
   FileText,
@@ -2890,6 +2892,8 @@ function AssetDetail({
   const openFileMutation = useMutation(trpc.assets.openFile.mutationOptions());
   const openVaultLocationMutation = useMutation(trpc.assets.openVaultLocation.mutationOptions());
   const openAssetInEditorMutation = useMutation(trpc.assets.openAssetInEditor.mutationOptions());
+  const copyAssetPathMutation = useMutation(trpc.assets.copyAssetPath.mutationOptions());
+  const [pathCopied, setPathCopied] = useState(false);
   const [openWithMenuOpen, setOpenWithMenuOpen] = useState(false);
   const [preferredOpenTargetId, setPreferredOpenTargetId] = useState<OpenVaultTarget>(() => {
     const stored = window.localStorage.getItem(OPEN_VAULT_TARGET_STORAGE_KEY);
@@ -2980,6 +2984,30 @@ function AssetDetail({
               </Dropdown.Popover>
             </Dropdown>
           </div>
+          {/* Copy path button */}
+          <Button
+            size="sm"
+            isIconOnly
+            aria-label="复制文件路径"
+            className="window-no-drag h-6 min-h-0 rounded-lg border border-zinc-200 bg-white px-2 text-[11px] text-zinc-600 hover:bg-zinc-50"
+            onPress={() => {
+              copyAssetPathMutation.mutate(
+                { id: asset.id },
+                {
+                  onSuccess: () => {
+                    setPathCopied(true);
+                    setTimeout(() => setPathCopied(false), 1500);
+                  },
+                },
+              );
+            }}
+          >
+            {pathCopied ? (
+              <Check className={HEADER_ICON_CLASS_NAME} />
+            ) : (
+              <Copy className={HEADER_ICON_CLASS_NAME} />
+            )}
+          </Button>
           {/* Terminal button */}
           <Button
             size="sm"

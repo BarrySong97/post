@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { shell } from "electron";
+import { clipboard, shell } from "electron";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { z } from "zod";
@@ -257,6 +257,18 @@ export const assetsRouter = router({
       await openVaultInEditor(input.target, row.vault.rootPath, filePath);
 
       return { filePath, target: input.target };
+    }),
+
+  copyAssetPath: publicProcedure
+    .input(z.object({ id: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const row = getAssetRows(undefined, input.id)[0];
+      if (!row) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
+      }
+      const filePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
+      clipboard.writeText(filePath);
+      return { path: filePath };
     }),
 
   ensureThumbnails: publicProcedure
