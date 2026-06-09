@@ -35,6 +35,7 @@
     "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "catalog:",
     "drizzle-orm": "catalog:",
+    "gray-matter": "^4.0.3",
     "lucide-react": "catalog:",
     "masonic": "^4.1.0",
     "motion": "^12.40.0",

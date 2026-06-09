@@ -22,8 +22,10 @@ import { Terminal as XTermTerminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
+  AlignLeft,
   Archive,
   ArrowLeft,
+  Calendar,
   ChevronDown,
   ExternalLink,
   FileSpreadsheet,
@@ -33,6 +35,7 @@ import {
   FolderOpen,
   FolderKanban,
   Globe,
+  Hash,
   Image as ImageIcon,
   Inbox,
   Link as LinkIcon,
@@ -45,6 +48,7 @@ import {
   ShieldCheck,
   SquareTerminal,
   Trash2,
+  User,
   Video,
   X,
 } from "lucide-react";
@@ -70,6 +74,7 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
+import matter from "gray-matter";
 
 type AssetKind = "markdown" | "image" | "video" | "link" | "web" | "file";
 type AssetStatus = "inbox" | "organized" | "draft" | "published";
@@ -2496,45 +2501,189 @@ function DocPreviewSkeleton({ fileExt }: { fileExt?: string }) {
   );
 }
 
+function getFrontmatterIcon(key: string, value: unknown) {
+  const k = key.toLowerCase();
+  if (k === "source" || k === "url" || k === "link" || k === "href") return LinkIcon;
+  if (k === "author" || k === "authors" || k === "creator" || k === "by") return User;
+  if (k === "tags" || k === "categories" || k === "labels" || k === "keywords") return Hash;
+  if (
+    k === "published" ||
+    k === "date" ||
+    k === "created" ||
+    k === "updated" ||
+    k === "modified" ||
+    k.endsWith("_at") ||
+    k.endsWith("_date")
+  )
+    return Calendar;
+  if (Array.isArray(value)) return Hash;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) return Calendar;
+  return AlignLeft;
+}
+
+function FrontmatterFieldValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="italic text-zinc-400">—</span>;
+    const isTagLike =
+      fieldKey.toLowerCase() === "tags" ||
+      fieldKey.toLowerCase() === "categories" ||
+      fieldKey.toLowerCase() === "labels" ||
+      fieldKey.toLowerCase() === "keywords";
+    return (
+      <div className="flex flex-wrap gap-1">
+        {value.map((v, i) => (
+          <span
+            key={i}
+            className="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[12px] font-medium text-zinc-600"
+          >
+            {isTagLike ? "#" : ""}
+            {typeof v === "string" ? v : String(v)}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  if (typeof value === "string") {
+    if (/^https?:\/\//.test(value)) {
+      return (
+        <a
+          href={value}
+          className="break-all text-blue-500 hover:text-blue-600 hover:underline"
+          target="_blank"
+          rel="noreferrer"
+        >
+          {value}
+        </a>
+      );
+    }
+    if (/^\[\[.*\]\]$/.test(value.trim())) {
+      return (
+        <span className="inline-flex items-center rounded border border-sky-200 bg-sky-50 px-1.5 py-0.5 text-[12px] font-medium text-sky-600">
+          {value}
+        </span>
+      );
+    }
+    if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+      return (
+        <span className="flex items-center gap-1.5 text-zinc-700">
+          <Calendar size={12} className="shrink-0 text-zinc-400" />
+          {value}
+        </span>
+      );
+    }
+    return <span className="whitespace-pre-wrap text-zinc-700">{value}</span>;
+  }
+
+  if (value === null || value === undefined) return <span className="italic text-zinc-400">—</span>;
+  return <span className="text-zinc-700">{String(value)}</span>;
+}
+
+function FrontmatterPanel({ data }: { data: Record<string, unknown> }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const entries = Object.entries(data);
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="mb-8 overflow-hidden rounded-xl border border-zinc-200 text-[13px]">
+      <button
+        type="button"
+        className="flex w-full items-center gap-1.5 border-b border-zinc-100 bg-zinc-50/60 px-4 py-2.5 text-left hover:bg-zinc-100/50"
+        onClick={() => setCollapsed((v) => !v)}
+      >
+        <ChevronDown
+          size={12}
+          className={`shrink-0 text-zinc-400 transition-transform ${collapsed ? "-rotate-90" : ""}`}
+        />
+        <span className="font-medium text-zinc-600">属性</span>
+        <span className="ml-0.5 text-zinc-400">{entries.length}</span>
+        <div className="flex-1" />
+        <span className="text-[12px] text-zinc-300">— YAML frontmatter</span>
+      </button>
+
+      {!collapsed && (
+        <div className="bg-white">
+          {entries.map(([key, value], i) => {
+            const Icon = getFrontmatterIcon(key, value);
+            return (
+              <div
+                key={key}
+                className={`flex items-start gap-3 px-4 py-2 ${i < entries.length - 1 ? "border-b border-zinc-100" : ""}`}
+              >
+                <div className="flex w-4 shrink-0 items-center justify-center pt-[3px]">
+                  <Icon size={13} className="text-zinc-400" />
+                </div>
+                <div className="w-24 shrink-0 pt-[1px] text-zinc-500">{key}</div>
+                <div className="min-w-0 flex-1">
+                  <FrontmatterFieldValue fieldKey={key} value={value} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MarkdownDetailBody({ asset }: { asset: Asset }) {
   const markdownQuery = useQuery(trpc.assets.markdownContent.queryOptions({ id: asset.id }));
-  const content = markdownQuery.data?.content ?? "";
+  const rawContent = markdownQuery.data?.content ?? "";
+
+  const parsed = useMemo(() => {
+    if (!rawContent.trim()) return { data: {} as Record<string, unknown>, content: "" };
+    try {
+      return matter(rawContent) as { data: Record<string, unknown>; content: string };
+    } catch {
+      return { data: {} as Record<string, unknown>, content: rawContent };
+    }
+  }, [rawContent]);
 
   if (markdownQuery.isPending) {
     return (
-      <article className="max-w-[760px]">
+      <div className="max-w-[760px]">
         <div className="space-y-3">
           <div className="h-6 w-2/5 rounded bg-zinc-100" />
           <div className="h-3 w-full rounded bg-zinc-100" />
           <div className="h-3 w-[92%] rounded bg-zinc-100" />
           <div className="h-3 w-[74%] rounded bg-zinc-100" />
         </div>
-      </article>
+      </div>
     );
   }
 
   if (markdownQuery.isError) {
     return (
-      <article className="max-w-[760px] rounded-[12px] border border-red-100 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-700">
+      <div className="max-w-[760px] rounded-[12px] border border-red-100 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-700">
         Markdown 预览读取失败：{markdownQuery.error.message}
-      </article>
+      </div>
     );
   }
 
-  if (!content.trim()) {
+  if (!rawContent.trim()) {
     return (
-      <article className="max-w-[760px] rounded-[12px] border border-zinc-100 bg-zinc-50 px-4 py-3 text-[13px] text-zinc-500">
+      <div className="max-w-[760px] rounded-[12px] border border-zinc-100 bg-zinc-50 px-4 py-3 text-[13px] text-zinc-500">
         这个 Markdown 文件是空的。
-      </article>
+      </div>
     );
   }
+
+  const hasFrontmatter = Object.keys(parsed.data).length > 0;
+  const bodyContent = parsed.content.trim();
 
   return (
-    <article className="max-w-[760px] text-[15px] leading-[1.78] text-zinc-800 [&_a]:font-medium [&_a]:text-blue-600 [&_a:hover]:text-blue-700 [&_blockquote]:my-5 [&_blockquote]:border-l-2 [&_blockquote]:border-zinc-200 [&_blockquote]:pl-4 [&_blockquote]:text-zinc-600 [&_code]:rounded [&_code]:bg-zinc-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.88em] [&_h1]:mb-5 [&_h1]:mt-0 [&_h1]:text-[28px] [&_h1]:font-bold [&_h1]:leading-tight [&_h1]:text-zinc-950 [&_h2]:mb-3 [&_h2]:mt-8 [&_h2]:text-[22px] [&_h2]:font-bold [&_h2]:leading-tight [&_h2]:text-zinc-950 [&_h3]:mb-2.5 [&_h3]:mt-6 [&_h3]:text-[18px] [&_h3]:font-semibold [&_h3]:text-zinc-950 [&_hr]:my-8 [&_hr]:border-zinc-200 [&_img]:my-5 [&_img]:max-w-full [&_img]:rounded-lg [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-4 [&_pre]:my-5 [&_pre]:overflow-x-auto [&_pre]:rounded-[10px] [&_pre]:bg-zinc-950 [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[13px] [&_pre_code]:text-zinc-100 [&_strong]:font-semibold [&_strong]:text-zinc-950 [&_table]:my-5 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-zinc-200 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-zinc-200 [&_th]:bg-zinc-50 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-        {content}
-      </ReactMarkdown>
-    </article>
+    <div className="max-w-[760px]">
+      {hasFrontmatter && <FrontmatterPanel data={parsed.data} />}
+      {bodyContent ? (
+        <article className="text-[15px] leading-[1.78] text-zinc-800 [&_a]:font-medium [&_a]:text-blue-600 [&_a:hover]:text-blue-700 [&_blockquote]:my-5 [&_blockquote]:border-l-2 [&_blockquote]:border-zinc-200 [&_blockquote]:pl-4 [&_blockquote]:text-zinc-600 [&_code]:rounded [&_code]:bg-zinc-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.88em] [&_h1]:mb-5 [&_h1]:mt-0 [&_h1]:text-[28px] [&_h1]:font-bold [&_h1]:leading-tight [&_h1]:text-zinc-950 [&_h2]:mb-3 [&_h2]:mt-8 [&_h2]:text-[22px] [&_h2]:font-bold [&_h2]:leading-tight [&_h2]:text-zinc-950 [&_h3]:mb-2.5 [&_h3]:mt-6 [&_h3]:text-[18px] [&_h3]:font-semibold [&_h3]:text-zinc-950 [&_hr]:my-8 [&_hr]:border-zinc-200 [&_img]:my-5 [&_img]:max-w-full [&_img]:rounded-lg [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-4 [&_pre]:my-5 [&_pre]:overflow-x-auto [&_pre]:rounded-[10px] [&_pre]:bg-zinc-950 [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[13px] [&_pre_code]:text-zinc-100 [&_strong]:font-semibold [&_strong]:text-zinc-950 [&_table]:my-5 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-zinc-200 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-zinc-200 [&_th]:bg-zinc-50 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{bodyContent}</ReactMarkdown>
+        </article>
+      ) : hasFrontmatter ? null : (
+        <div className="rounded-[12px] border border-zinc-100 bg-zinc-50 px-4 py-3 text-[13px] text-zinc-500">
+          这个 Markdown 文件是空的。
+        </div>
+      )}
+    </div>
   );
 }
 
