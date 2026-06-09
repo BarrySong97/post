@@ -2996,7 +2996,7 @@ function AssetDetail({
                 { id: asset.id },
                 {
                   onSuccess: () => {
-                    toast.success("路径已复制", { timeout: 3000 });
+                    toast.success("路径已复制");
                     setPathCopied(true);
                     setTimeout(() => setPathCopied(false), 2000);
                   },
