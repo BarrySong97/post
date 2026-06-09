@@ -74,7 +74,7 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { trpc, type RouterOutputs } from "@/lib/trpc";
-import matter from "gray-matter";
+import { load as yamlLoad } from "js-yaml";
 
 type AssetKind = "markdown" | "image" | "video" | "link" | "web" | "file";
 type AssetStatus = "inbox" | "organized" | "draft" | "published";
@@ -2631,12 +2631,21 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
   const rawContent = markdownQuery.data?.content ?? "";
 
   const parsed = useMemo(() => {
-    if (!rawContent.trim()) return { data: {} as Record<string, unknown>, content: "" };
+    const empty = { data: {} as Record<string, unknown>, content: rawContent };
+    if (!rawContent.trimStart().startsWith("---")) return empty;
+    const end = rawContent.indexOf("\n---", 3);
+    if (end === -1) return empty;
+    const yamlBlock = rawContent.slice(3, end).trim();
+    const body = rawContent.slice(end + 4).replace(/^\r?\n/, "");
     try {
-      return matter(rawContent) as { data: Record<string, unknown>; content: string };
+      const data = yamlLoad(yamlBlock);
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        return { data: data as Record<string, unknown>, content: body };
+      }
     } catch {
-      return { data: {} as Record<string, unknown>, content: rawContent };
+      // malformed YAML — show as plain content
     }
+    return empty;
   }, [rawContent]);
 
   if (markdownQuery.isPending) {
