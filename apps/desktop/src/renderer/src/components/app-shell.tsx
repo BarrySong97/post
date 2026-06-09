@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Popover } from "@heroui/react";
+import { Popover, ToastProvider } from "@heroui/react";
 
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
@@ -33,6 +33,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden text-zinc-950">
+      <ToastProvider placement="top" />
       <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
       <GlobalStatusLine />
     </div>

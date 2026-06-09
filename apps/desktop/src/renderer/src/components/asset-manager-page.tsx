@@ -26,7 +26,6 @@ import {
   Archive,
   ArrowLeft,
   Calendar,
-  Check,
   ChevronDown,
   Copy,
   ExternalLink,
@@ -66,6 +65,7 @@ import {
   Tag,
   TagGroup,
   Tabs,
+  toast,
 } from "@heroui/react";
 
 import type { PanelImperativeHandle } from "react-resizable-panels";
@@ -2893,7 +2893,6 @@ function AssetDetail({
   const openVaultLocationMutation = useMutation(trpc.assets.openVaultLocation.mutationOptions());
   const openAssetInEditorMutation = useMutation(trpc.assets.openAssetInEditor.mutationOptions());
   const copyAssetPathMutation = useMutation(trpc.assets.copyAssetPath.mutationOptions());
-  const [pathCopied, setPathCopied] = useState(false);
   const [openWithMenuOpen, setOpenWithMenuOpen] = useState(false);
   const [preferredOpenTargetId, setPreferredOpenTargetId] = useState<OpenVaultTarget>(() => {
     const stored = window.localStorage.getItem(OPEN_VAULT_TARGET_STORAGE_KEY);
@@ -2993,20 +2992,11 @@ function AssetDetail({
             onPress={() => {
               copyAssetPathMutation.mutate(
                 { id: asset.id },
-                {
-                  onSuccess: () => {
-                    setPathCopied(true);
-                    setTimeout(() => setPathCopied(false), 1500);
-                  },
-                },
+                { onSuccess: () => toast.success("路径已复制") },
               );
             }}
           >
-            {pathCopied ? (
-              <Check className={HEADER_ICON_CLASS_NAME} />
-            ) : (
-              <Copy className={HEADER_ICON_CLASS_NAME} />
-            )}
+            <Copy className={HEADER_ICON_CLASS_NAME} />
           </Button>
           {/* Terminal button */}
           <Button
