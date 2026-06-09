@@ -26,6 +26,7 @@ import {
   Archive,
   ArrowLeft,
   Calendar,
+  Check,
   ChevronDown,
   Copy,
   ExternalLink,
@@ -2893,6 +2894,7 @@ function AssetDetail({
   const openVaultLocationMutation = useMutation(trpc.assets.openVaultLocation.mutationOptions());
   const openAssetInEditorMutation = useMutation(trpc.assets.openAssetInEditor.mutationOptions());
   const copyAssetPathMutation = useMutation(trpc.assets.copyAssetPath.mutationOptions());
+  const [pathCopied, setPathCopied] = useState(false);
   const [openWithMenuOpen, setOpenWithMenuOpen] = useState(false);
   const [preferredOpenTargetId, setPreferredOpenTargetId] = useState<OpenVaultTarget>(() => {
     const stored = window.localStorage.getItem(OPEN_VAULT_TARGET_STORAGE_KEY);
@@ -2992,11 +2994,21 @@ function AssetDetail({
             onPress={() => {
               copyAssetPathMutation.mutate(
                 { id: asset.id },
-                { onSuccess: () => toast.success("路径已复制") },
+                {
+                  onSuccess: () => {
+                    toast.success("路径已复制", { timeout: 3000 });
+                    setPathCopied(true);
+                    setTimeout(() => setPathCopied(false), 2000);
+                  },
+                },
               );
             }}
           >
-            <Copy className={HEADER_ICON_CLASS_NAME} />
+            {pathCopied ? (
+              <Check className={HEADER_ICON_CLASS_NAME} />
+            ) : (
+              <Copy className={HEADER_ICON_CLASS_NAME} />
+            )}
           </Button>
           {/* Terminal button */}
           <Button
