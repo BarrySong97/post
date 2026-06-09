@@ -15,6 +15,8 @@ import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
 import { arrayMove } from "@dnd-kit/helpers";
 import { AnimatePresence, motion } from "motion/react";
 import { useMasonry, usePositioner, useResizeObserver as useMasonryResizeObserver } from "masonic";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -34,7 +36,6 @@ import {
   Image as ImageIcon,
   Inbox,
   Link as LinkIcon,
-  MoreHorizontal,
   PanelLeftOpen,
   PanelLeftClose,
   PanelRightOpen,
@@ -2431,17 +2432,6 @@ function AssetTerminalPanel({
 
 // ---- detail page helpers ----
 
-function getDetailPrimaryAction(asset: Asset): { label: string; icon: React.ReactNode } {
-  switch (asset.kind) {
-    case "markdown": return { label: "编辑", icon: <Pencil size={12} /> };
-    case "image":    return { label: "在外部编辑器打开", icon: <ExternalLink size={12} /> };
-    case "video":    return { label: "在播放器打开", icon: <ExternalLink size={12} /> };
-    case "web":
-    case "link":     return { label: "访问原网页", icon: <ExternalLink size={12} /> };
-    default:         return { label: "用默认应用打开", icon: <ExternalLink size={12} /> };
-  }
-}
-
 function DetailSideMetaList({ list }: { list: [string, string][] }) {
   return (
     <div className="flex flex-col">
@@ -2507,11 +2497,43 @@ function DocPreviewSkeleton({ fileExt }: { fileExt?: string }) {
 }
 
 function MarkdownDetailBody({ asset }: { asset: Asset }) {
+  const markdownQuery = useQuery(trpc.assets.markdownContent.queryOptions({ id: asset.id }));
+  const content = markdownQuery.data?.content ?? "";
+
+  if (markdownQuery.isPending) {
+    return (
+      <article className="max-w-[760px]">
+        <div className="space-y-3">
+          <div className="h-6 w-2/5 rounded bg-zinc-100" />
+          <div className="h-3 w-full rounded bg-zinc-100" />
+          <div className="h-3 w-[92%] rounded bg-zinc-100" />
+          <div className="h-3 w-[74%] rounded bg-zinc-100" />
+        </div>
+      </article>
+    );
+  }
+
+  if (markdownQuery.isError) {
+    return (
+      <article className="max-w-[760px] rounded-[12px] border border-red-100 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-700">
+        Markdown 预览读取失败：{markdownQuery.error.message}
+      </article>
+    );
+  }
+
+  if (!content.trim()) {
+    return (
+      <article className="max-w-[760px] rounded-[12px] border border-zinc-100 bg-zinc-50 px-4 py-3 text-[13px] text-zinc-500">
+        这个 Markdown 文件是空的。
+      </article>
+    );
+  }
+
   return (
-    <article className="max-w-[680px]">
-      <p className="whitespace-pre-line text-[16px] leading-[1.78] text-zinc-800">
-        {asset.body}
-      </p>
+    <article className="max-w-[760px] text-[15px] leading-[1.78] text-zinc-800 [&_a]:font-medium [&_a]:text-blue-600 [&_a:hover]:text-blue-700 [&_blockquote]:my-5 [&_blockquote]:border-l-2 [&_blockquote]:border-zinc-200 [&_blockquote]:pl-4 [&_blockquote]:text-zinc-600 [&_code]:rounded [&_code]:bg-zinc-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.88em] [&_h1]:mb-5 [&_h1]:mt-0 [&_h1]:text-[28px] [&_h1]:font-bold [&_h1]:leading-tight [&_h1]:text-zinc-950 [&_h2]:mb-3 [&_h2]:mt-8 [&_h2]:text-[22px] [&_h2]:font-bold [&_h2]:leading-tight [&_h2]:text-zinc-950 [&_h3]:mb-2.5 [&_h3]:mt-6 [&_h3]:text-[18px] [&_h3]:font-semibold [&_h3]:text-zinc-950 [&_hr]:my-8 [&_hr]:border-zinc-200 [&_img]:my-5 [&_img]:max-w-full [&_img]:rounded-lg [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-4 [&_pre]:my-5 [&_pre]:overflow-x-auto [&_pre]:rounded-[10px] [&_pre]:bg-zinc-950 [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[13px] [&_pre_code]:text-zinc-100 [&_strong]:font-semibold [&_strong]:text-zinc-950 [&_table]:my-5 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-zinc-200 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-zinc-200 [&_th]:bg-zinc-50 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {content}
+      </ReactMarkdown>
     </article>
   );
 }
@@ -2648,16 +2670,48 @@ function FileDetailBody({
   );
 }
 
-function AssetDetail({ asset, dragEnabled = true }: { asset: Asset; dragEnabled?: boolean }) {
+function AssetDetail({
+  asset,
+  dragEnabled = true,
+  terminalAvailable,
+  terminalOpen,
+  onToggleTerminal,
+}: {
+  asset: Asset;
+  dragEnabled?: boolean;
+  terminalAvailable: boolean;
+  terminalOpen: boolean;
+  onToggleTerminal: () => void;
+}) {
   const { label } = getKindMeta(asset.kind);
   const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
   const openFileMutation = useMutation(trpc.assets.openFile.mutationOptions());
   const openVaultLocationMutation = useMutation(trpc.assets.openVaultLocation.mutationOptions());
-  const primaryAction = getDetailPrimaryAction(asset);
+  const openAssetInEditorMutation = useMutation(trpc.assets.openAssetInEditor.mutationOptions());
+  const [openWithMenuOpen, setOpenWithMenuOpen] = useState(false);
+  const [preferredOpenTargetId, setPreferredOpenTargetId] = useState<OpenVaultTarget>(() => {
+    const stored = window.localStorage.getItem(OPEN_VAULT_TARGET_STORAGE_KEY);
+    return isOpenVaultTarget(stored) ? stored : DEFAULT_OPEN_VAULT_TARGET.id;
+  });
+  const preferredOpenTarget = getOpenVaultTarget(preferredOpenTargetId);
+  const PreferredOpenIcon = preferredOpenTarget.icon;
 
-  function handlePrimaryAction() {
-    openFileMutation.mutate({ id: asset.id });
-  }
+  // text/file assets → open specific file in editor; media/link → open vault root
+  const shouldOpenFileInEditor = asset.kind === "markdown" || asset.kind === "file";
+
+  const openVaultWithTarget = (targetId: OpenVaultTarget, persistTarget: boolean) => {
+    if (persistTarget) {
+      setPreferredOpenTargetId(targetId);
+      window.localStorage.setItem(OPEN_VAULT_TARGET_STORAGE_KEY, targetId);
+    }
+    if (targetId === "finder") {
+      openVaultLocationMutation.mutate({ target: "finder" });
+    } else if (shouldOpenFileInEditor) {
+      openAssetInEditorMutation.mutate({ id: asset.id, target: targetId });
+    } else {
+      openVaultLocationMutation.mutate({ target: targetId });
+    }
+  };
 
   return (
     <main className="flex h-full min-w-0 flex-col bg-white">
@@ -2675,22 +2729,69 @@ function AssetDetail({ asset, dragEnabled = true }: { asset: Asset; dragEnabled?
         <span className="text-xs text-zinc-400">全部资产 / {asset.tag}</span>
         <div className="flex-1" />
         <div className="window-no-drag flex items-center gap-2">
+          {/* Editor split button — same as board header */}
+          <div className="inline-flex h-6 overflow-hidden rounded-lg border border-zinc-200 bg-white text-zinc-600 shadow-[0_1px_1px_rgba(24,24,27,0.03)]">
+            <button
+              type="button"
+              className="inline-grid h-6 w-7 place-items-center border-r border-zinc-200 transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-45"
+              aria-label={`用 ${preferredOpenTarget.label} 打开资产库`}
+              disabled={openVaultLocationMutation.isPending}
+              onClick={() => openVaultWithTarget(preferredOpenTarget.id, false)}
+            >
+              <PreferredOpenIcon aria-hidden="true" className={HEADER_ICON_CLASS_NAME} />
+            </button>
+            <Dropdown isOpen={openWithMenuOpen} onOpenChange={setOpenWithMenuOpen}>
+              <Dropdown.Trigger
+                className="inline-grid h-6 w-6 place-items-center outline-none transition-colors hover:bg-zinc-50"
+                aria-label="选择打开方式"
+              >
+                <ChevronDown
+                  className={`${HEADER_ICON_CLASS_NAME} transition-transform duration-200 ${openWithMenuOpen ? "rotate-180" : ""}`}
+                />
+              </Dropdown.Trigger>
+              <Dropdown.Popover
+                className="z-[120] overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-[0_14px_34px_rgba(20,18,16,0.14),0_2px_7px_rgba(20,18,16,0.07)]"
+                offset={6}
+                placement="bottom end"
+              >
+                <Dropdown.Menu
+                  aria-label="打开资产库"
+                  className="min-w-36 p-0 outline-none"
+                  disabledKeys={openVaultLocationMutation.isPending ? OPEN_VAULT_TARGETS.map((t) => t.id) : []}
+                  onAction={(key) => openVaultWithTarget(key as OpenVaultTarget, true)}
+                >
+                  {OPEN_VAULT_TARGETS.map((target) => {
+                    const Icon = target.icon;
+                    return (
+                      <Dropdown.Item
+                        key={target.id}
+                        id={target.id}
+                        textValue={target.label}
+                        className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100 data-[disabled]:opacity-45"
+                      >
+                        <Icon aria-hidden="true" className={`${HEADER_ICON_CLASS_NAME} text-zinc-500`} />
+                        <Label className="cursor-default text-[12.5px] font-medium text-inherit">{target.label}</Label>
+                      </Dropdown.Item>
+                    );
+                  })}
+                </Dropdown.Menu>
+              </Dropdown.Popover>
+            </Dropdown>
+          </div>
+          {/* Terminal button */}
           <Button
             size="sm"
-            className="h-7 gap-1.5 px-3 text-xs font-semibold"
-            onPress={handlePrimaryAction}
-          >
-            {primaryAction.icon}
-            {primaryAction.label}
-          </Button>
-          <Button
             isIconOnly
-            size="sm"
-            variant="secondary"
-            aria-label="更多操作"
-            className="h-7 w-7 min-h-0"
+            isDisabled={!terminalAvailable}
+            aria-label={terminalAvailable ? "打开终端侧栏" : "当前平台暂不支持终端侧栏"}
+            className={`window-no-drag h-6 min-h-0 rounded-lg border px-2 text-[11px] ${
+              terminalOpen
+                ? "border-zinc-300 bg-zinc-100 text-zinc-900"
+                : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+            }`}
+            onPress={onToggleTerminal}
           >
-            <MoreHorizontal size={14} />
+            <PanelRightOpen className={HEADER_ICON_CLASS_NAME} />
           </Button>
         </div>
       </div>
@@ -2734,12 +2835,12 @@ function AssetDetail({ asset, dragEnabled = true }: { asset: Asset; dragEnabled?
         {asset.kind === "image" && <ImageDetailBody asset={asset} />}
         {asset.kind === "video" && <VideoDetailBody asset={asset} />}
         {(asset.kind === "web" || asset.kind === "link") && (
-          <LinkDetailBody asset={asset} onOpen={handlePrimaryAction} />
+          <LinkDetailBody asset={asset} onOpen={() => openFileMutation.mutate({ id: asset.id })} />
         )}
         {asset.kind === "file" && (
           <FileDetailBody
             asset={asset}
-            onOpen={handlePrimaryAction}
+            onOpen={() => openFileMutation.mutate({ id: asset.id })}
             onShowInFinder={() => openVaultLocationMutation.mutate({ target: "finder" })}
           />
         )}
@@ -2937,7 +3038,13 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
           className="relative z-[60]"
         >
           {activeAsset ? (
-            <AssetDetail asset={activeAsset} dragEnabled={backgroundWindowDragEnabled} />
+            <AssetDetail
+              asset={activeAsset}
+              dragEnabled={backgroundWindowDragEnabled}
+              terminalAvailable={terminalAvailable}
+              terminalOpen={terminalOpen}
+              onToggleTerminal={() => setTerminalOpen((open) => !open)}
+            />
           ) : (
             <AssetBoard
               assetItems={assetItems}

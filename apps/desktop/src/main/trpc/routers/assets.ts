@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -24,6 +25,7 @@ const importPathInput = z.object({
 });
 
 const THUMBNAIL_AUTO_PREWARM_COOLDOWN_MS = 5 * 60 * 1000;
+const MARKDOWN_CONTENT_MAX_BYTES = 5 * 1024 * 1024;
 const execFileAsync = promisify(execFile);
 
 export const assetsRouter = router({
@@ -162,13 +164,48 @@ export const assetsRouter = router({
     return asset;
   }),
 
+  markdownContent: publicProcedure.input(z.object({ id: z.string().min(1) })).query(async ({ input }) => {
+    const row = getAssetRows(undefined, input.id)[0];
+    if (!row) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
+    }
+
+    if (row.asset.kind !== "markdown") {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Asset is not a Markdown file" });
+    }
+
+    if (row.file.sizeBytes > MARKDOWN_CONTENT_MAX_BYTES) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "Markdown file is too large to preview",
+      });
+    }
+
+    const absolutePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
+
+    try {
+      const content = await readFile(absolutePath, "utf8");
+      return {
+        id: row.asset.id,
+        content,
+        relativePath: row.file.relativePath,
+        mtimeMs: row.file.mtimeMs,
+      };
+    } catch (error) {
+      throw new TRPCError({
+        code: "INTERNAL_SERVER_ERROR",
+        message: error instanceof Error ? error.message : "Could not read Markdown file",
+      });
+    }
+  }),
+
   openFile: publicProcedure.input(z.object({ id: z.string().min(1) })).mutation(async ({ input }) => {
     const row = getAssetRows(undefined, input.id)[0];
     if (!row) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
     }
 
-    const absolutePath = path.join(row.vault.rootPath, row.file.relativePath);
+    const absolutePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
     const error = await shell.openPath(absolutePath);
     if (error) {
       throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error });
@@ -197,6 +234,21 @@ export const assetsRouter = router({
       await openVaultInEditor(input.target, vault.rootPath);
 
       return { rootPath: vault.rootPath, target: input.target };
+    }),
+
+  openAssetInEditor: publicProcedure
+    .input(z.object({ id: z.string().min(1), target: z.enum(["vscode", "cursor", "zed"]) }))
+    .mutation(async ({ input }) => {
+      const row = getAssetRows(undefined, input.id)[0];
+      if (!row) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
+      }
+
+      const filePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
+      // Open vault as workspace root + focus the specific file (e.g. `code /vault /vault/file.md`)
+      await openVaultInEditor(input.target, row.vault.rootPath, filePath);
+
+      return { filePath, target: input.target };
     }),
 
   ensureThumbnails: publicProcedure
@@ -277,13 +329,16 @@ const VAULT_EDITOR_TARGETS = {
   },
 } satisfies Record<VaultEditorTarget, { label: string; appName: string; commands: string[] }>;
 
-async function openVaultInEditor(target: VaultEditorTarget, rootPath: string) {
+async function openVaultInEditor(target: VaultEditorTarget, rootPath: string, filePath?: string) {
   const editor = VAULT_EDITOR_TARGETS[target];
   const errors: string[] = [];
+  // When a specific file is given, pass both vault root and file path so the
+  // editor opens the workspace root but focuses/selects the file.
+  const args = filePath ? [rootPath, filePath] : [rootPath];
 
   for (const command of editor.commands) {
     try {
-      await execFileAsync(command, [rootPath], { timeout: 5000 });
+      await execFileAsync(command, args, { timeout: 5000 });
       return;
     } catch (error) {
       errors.push(`${command}: ${error instanceof Error ? error.message : String(error)}`);
@@ -291,6 +346,7 @@ async function openVaultInEditor(target: VaultEditorTarget, rootPath: string) {
   }
 
   try {
+    // `open -a Editor /vault/root` — file path not supported via `open -a`, fall back to vault root only
     await execFileAsync("open", ["-a", editor.appName, rootPath], { timeout: 5000 });
     return;
   } catch (error) {
@@ -374,6 +430,18 @@ function getVaultOrThrow(vaultId: string) {
   }
 
   return vault;
+}
+
+function resolveVaultFilePath(rootPath: string, relativePath: string) {
+  const resolvedRootPath = path.resolve(rootPath);
+  const absolutePath = path.resolve(resolvedRootPath, relativePath);
+  const relativeToRoot = path.relative(resolvedRootPath, absolutePath);
+
+  if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Asset path is outside of the vault" });
+  }
+
+  return absolutePath;
 }
 
 type VaultRecord = ReturnType<typeof getVaultOrThrow>;
