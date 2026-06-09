@@ -2580,49 +2580,59 @@ function FrontmatterFieldValue({ fieldKey, value }: { fieldKey: string; value: u
 }
 
 function FrontmatterPanel({ data }: { data: Record<string, unknown> }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const entries = Object.entries(data);
   if (entries.length === 0) return null;
 
   return (
-    <div className="mb-8 overflow-hidden rounded-xl border border-zinc-200 text-[13px]">
-      <button
-        type="button"
-        className="flex w-full items-center gap-1.5 border-b border-zinc-100 bg-zinc-50/60 px-4 py-2.5 text-left hover:bg-zinc-100/50"
-        onClick={() => setCollapsed((v) => !v)}
-      >
-        <ChevronDown
-          size={12}
-          className={`shrink-0 text-zinc-400 transition-transform ${collapsed ? "-rotate-90" : ""}`}
-        />
-        <span className="font-medium text-zinc-600">属性</span>
-        <span className="ml-0.5 text-zinc-400">{entries.length}</span>
-        <div className="flex-1" />
-        <span className="text-[12px] text-zinc-300">— YAML frontmatter</span>
-      </button>
+    <AccordionRoot
+      hideSeparator
+      expandedKeys={expanded ? ["frontmatter"] : []}
+      onExpandedChange={(keys) => setExpanded(keys.has("frontmatter"))}
+      className="mb-8 overflow-hidden rounded-xl border border-zinc-200 text-[13px]"
+    >
+      <AccordionItem id="frontmatter" className="border-none">
+        {/* Header trigger */}
+        <button
+          type="button"
+          className="flex w-full items-center gap-1.5 border-b border-zinc-100 bg-zinc-50/60 px-4 py-2.5 text-left hover:bg-zinc-100/50"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          <ChevronDown
+            size={12}
+            className={`shrink-0 text-zinc-400 transition-transform ${expanded ? "" : "-rotate-90"}`}
+          />
+          <span className="font-medium text-zinc-600">属性</span>
+          <span className="ml-0.5 text-zinc-400">{entries.length}</span>
+          <div className="flex-1" />
+          <span className="text-[12px] text-zinc-300">— YAML frontmatter</span>
+        </button>
 
-      {!collapsed && (
-        <div className="bg-white">
-          {entries.map(([key, value], i) => {
-            const Icon = getFrontmatterIcon(key, value);
-            return (
-              <div
-                key={key}
-                className={`flex items-start gap-3 px-4 py-2 ${i < entries.length - 1 ? "border-b border-zinc-100" : ""}`}
-              >
-                <div className="flex w-4 shrink-0 items-center justify-center pt-[3px]">
-                  <Icon size={13} className="text-zinc-400" />
-                </div>
-                <div className="w-24 shrink-0 pt-[1px] text-zinc-500">{key}</div>
-                <div className="min-w-0 flex-1">
-                  <FrontmatterFieldValue fieldKey={key} value={value} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+        <AccordionPanel id="frontmatter-panel">
+          <AccordionBody className="p-0">
+            <div className="bg-white">
+              {entries.map(([key, value], i) => {
+                const Icon = getFrontmatterIcon(key, value);
+                return (
+                  <div
+                    key={key}
+                    className={`flex items-start gap-3 px-4 py-2 ${i < entries.length - 1 ? "border-b border-zinc-100" : ""}`}
+                  >
+                    <div className="flex w-4 shrink-0 items-center justify-center pt-[3px]">
+                      <Icon size={13} className="text-zinc-400" />
+                    </div>
+                    <div className="w-24 shrink-0 pt-[1px] text-zinc-500">{key}</div>
+                    <div className="min-w-0 flex-1">
+                      <FrontmatterFieldValue fieldKey={key} value={value} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </AccordionBody>
+        </AccordionPanel>
+      </AccordionItem>
+    </AccordionRoot>
   );
 }
 
