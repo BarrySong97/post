@@ -184,11 +184,12 @@ export const assetsRouter = router({
     const absolutePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
 
     try {
-      const [content, obsidianAttachmentPath] = await Promise.all([
+      const [rawContent, obsidianAttachmentPath] = await Promise.all([
         readFile(absolutePath, "utf8"),
         readObsidianAttachmentPath(row.vault.rootPath),
       ]);
       const fileDir = path.dirname(row.file.relativePath).replace(/^\.$/, "");
+      const content = resolveObsidianEmbeds(rawContent, row.vault.id, fileDir);
       return {
         id: row.asset.id,
         vaultId: row.vault.id,
@@ -437,6 +438,48 @@ function getVaultOrThrow(vaultId: string) {
   }
 
   return vault;
+}
+
+function resolveObsidianEmbeds(content: string, vaultId: string, fileDir: string): string {
+  // Replace ![[filename.ext]] with standard markdown ![](relative-path)
+  // Only handles image/media embeds (extensions that browsers can render)
+  const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp"]);
+  return content.replace(/!\[\[([^\]]+)\]\]/g, (match, inner: string) => {
+    const name = inner.trim();
+    const ext = name.split(".").pop()?.toLowerCase() ?? "";
+    if (!IMAGE_EXTS.has(ext)) return match; // leave non-image embeds as-is
+
+    // Look up file by fileName within this vault
+    const file = getDatabase()
+      .select({ relativePath: schema.assetFiles.relativePath })
+      .from(schema.assetFiles)
+      .where(
+        and(
+          eq(schema.assetFiles.vaultId, vaultId),
+          eq(schema.assetFiles.fileName, name),
+          eq(schema.assetFiles.fileExists, true),
+        ),
+      )
+      .get();
+
+    if (!file) return match; // file not indexed — leave as-is
+
+    // Convert vault-relative path to a path relative to fileDir
+    const fileParts = file.relativePath.split("/");
+    const dirParts = fileDir ? fileDir.split("/") : [];
+    // Build relative path from fileDir to the image file
+    let commonLen = 0;
+    while (
+      commonLen < dirParts.length &&
+      commonLen < fileParts.length - 1 &&
+      dirParts[commonLen] === fileParts[commonLen]
+    ) {
+      commonLen++;
+    }
+    const ups = dirParts.length - commonLen;
+    const rel = [...Array(ups).fill(".."), ...fileParts.slice(commonLen)].join("/");
+    return `![${name}](${rel})`;
+  });
 }
 
 async function readObsidianAttachmentPath(vaultRoot: string): Promise<string | null> {
