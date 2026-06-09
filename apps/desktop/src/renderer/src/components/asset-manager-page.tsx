@@ -85,6 +85,7 @@ type Asset = {
   sourceType: "vault" | "external_file" | "url";
   time: string;
   timestampMs: number;
+  createdTimestampMs: number;
   tag: string;
   collection?: string;
   meta: string;
@@ -467,9 +468,13 @@ function formatAssetTime(value: unknown) {
   }).format(date);
 }
 
-function getAssetTimestampMs(value: unknown) {
+function getAssetTimestampMs(value: unknown, fallbackMs = Date.now()) {
+  if (value === null || value === undefined) {
+    return fallbackMs;
+  }
+
   const date = value instanceof Date ? value : new Date(value as string | number);
-  return Number.isNaN(date.getTime()) ? Date.now() : date.getTime();
+  return Number.isNaN(date.getTime()) ? fallbackMs : date.getTime();
 }
 
 function mapIndexedAsset(asset: IndexedAsset): Asset {
@@ -494,6 +499,8 @@ function mapIndexedAsset(asset: IndexedAsset): Asset {
     file: extension.toUpperCase(),
   } satisfies Record<AssetKind, string>;
 
+  const updatedTimestampMs = getAssetTimestampMs(asset.mtimeMs);
+
   return {
     id: asset.id,
     kind,
@@ -504,7 +511,8 @@ function mapIndexedAsset(asset: IndexedAsset): Asset {
     source: `${asset.vaultName} / ${asset.relativePath}`,
     sourceType: "vault",
     time: formatAssetTime(asset.mtimeMs),
-    timestampMs: getAssetTimestampMs(asset.mtimeMs),
+    timestampMs: updatedTimestampMs,
+    createdTimestampMs: getAssetTimestampMs(asset.ctimeMs, updatedTimestampMs),
     tag,
     meta: `${metaPrefix[kind]} · ${formatBytes(asset.sizeBytes)}`,
     accent: getTagHue(tag),
@@ -540,6 +548,7 @@ type AssetTypeFilter = "markdown" | "image" | "video" | "link" | "file";
 type AssetFilterMatch = "and" | "or";
 type AssetTimeFilter = "any" | "today" | "week" | "m30" | "custom";
 type AssetStatusFilter = "any" | "inbox" | "draft" | "published";
+type AssetSortOrder = "updated_desc" | "updated_asc" | "created_desc" | "created_asc";
 
 type AssetFilterState = {
   types: AssetTypeFilter[];
@@ -548,6 +557,7 @@ type AssetFilterState = {
   match: AssetFilterMatch;
   time: AssetTimeFilter;
   status: AssetStatusFilter;
+  sort: AssetSortOrder;
 };
 
 const ASSET_TYPE_FILTERS = [
@@ -578,6 +588,13 @@ const STATUS_FILTERS = [
   { value: "published", label: "已发布" },
 ] satisfies Array<{ value: AssetStatusFilter; label: string }>;
 
+const SORT_OPTIONS = [
+  { value: "updated_desc", label: "更新时间 · 降序" },
+  { value: "updated_asc", label: "更新时间 · 升序" },
+  { value: "created_desc", label: "创建时间 · 降序" },
+  { value: "created_asc", label: "创建时间 · 升序" },
+] satisfies Array<{ value: AssetSortOrder; label: string }>;
+
 const TYPE_FILTER_LABELS = Object.fromEntries(
   ASSET_TYPE_FILTERS.map((item) => [item.value, item.label]),
 ) as Record<AssetTypeFilter, string>;
@@ -587,6 +604,9 @@ const TIME_FILTER_LABELS = Object.fromEntries(
 const STATUS_FILTER_LABELS = Object.fromEntries(
   STATUS_FILTERS.map((item) => [item.value, item.label]),
 ) as Record<AssetStatusFilter, string>;
+const SORT_OPTION_LABELS = Object.fromEntries(
+  SORT_OPTIONS.map((item) => [item.value, item.label]),
+) as Record<AssetSortOrder, string>;
 
 function getDefaultAssetFilters(): AssetFilterState {
   return getEmptyAssetFilters();
@@ -600,6 +620,7 @@ function getEmptyAssetFilters(match: AssetFilterMatch = "and"): AssetFilterState
     match,
     time: "any",
     status: "any",
+    sort: "updated_desc",
   };
 }
 
@@ -609,7 +630,8 @@ function getActiveFilterCount(filters: AssetFilterState) {
     filters.tags.length +
     filters.sources.length +
     (filters.time !== "any" ? 1 : 0) +
-    (filters.status !== "any" ? 1 : 0)
+    (filters.status !== "any" ? 1 : 0) +
+    (filters.sort !== "updated_desc" ? 1 : 0)
   );
 }
 
@@ -685,6 +707,31 @@ function filterAssets(assetItems: readonly Asset[], filters: AssetFilterState) {
     const matches = predicates.map((predicate) => predicate(asset));
     return filters.match === "and" ? matches.every(Boolean) : matches.some(Boolean);
   });
+}
+
+function compareAssetTitles(a: Asset, b: Asset) {
+  return a.title.localeCompare(b.title, "zh-Hans-CN");
+}
+
+function sortAssets(assetItems: readonly Asset[], sort: AssetSortOrder) {
+  const [field, direction] = sort.split("_") as ["updated" | "created", "asc" | "desc"];
+  const multiplier = direction === "asc" ? 1 : -1;
+
+  return [...assetItems].sort((a, b) => {
+    const aTimestamp = field === "created" ? a.createdTimestampMs : a.timestampMs;
+    const bTimestamp = field === "created" ? b.createdTimestampMs : b.timestampMs;
+    const timestampDelta = aTimestamp - bTimestamp;
+
+    if (timestampDelta !== 0) {
+      return timestampDelta * multiplier;
+    }
+
+    return compareAssetTitles(a, b);
+  });
+}
+
+function filterAndSortAssets(assetItems: readonly Asset[], filters: AssetFilterState) {
+  return sortAssets(filterAssets(assetItems, filters), filters.sort);
 }
 
 
@@ -1639,7 +1686,7 @@ function FilterSegment<T extends string>({ options, value, onChange }: FilterSeg
             <Tabs.Tab
               key={option.value}
               id={option.value}
-              className="h-6 w-auto rounded-md px-2.5 text-[11.5px] font-medium text-zinc-500 data-[selected=true]:text-zinc-950"
+              className="h-5 w-auto whitespace-nowrap rounded-md px-2 text-[10.5px] font-medium text-zinc-500 data-[selected=true]:text-zinc-950"
             >
               <Tabs.Indicator className="rounded-md bg-white shadow-[0_1px_2px_rgba(20,18,14,0.06)]" />
               {option.label}
@@ -1686,17 +1733,17 @@ function AssetFilterTagGroup<T extends string>({
       }}
       className="gap-0"
     >
-      <TagGroup.List className="flex flex-wrap gap-1.5">
+      <TagGroup.List className="flex flex-wrap gap-1">
         {options.map(({ value, label: optionLabel, icon: Icon, dotHue }) => (
           <Tag
             key={value}
             id={value}
-            className="h-6 min-h-0 cursor-default gap-1.5 rounded-full bg-zinc-100 px-2.5 py-0 text-[11.5px] font-medium text-zinc-500 transition-colors hover:bg-zinc-200/70 hover:text-zinc-700 data-[selected=true]:bg-blue-50 data-[selected=true]:font-semibold data-[selected=true]:text-blue-700 data-[selected=true]:shadow-[inset_0_0_0_1px_rgba(37,99,235,0.24)]"
+            className="h-5 min-h-0 cursor-default gap-1 rounded-full bg-zinc-100 px-2 py-0 text-[10.5px] font-medium text-zinc-500 transition-colors hover:bg-zinc-200/70 hover:text-zinc-700 data-[selected=true]:bg-blue-50 data-[selected=true]:font-semibold data-[selected=true]:text-blue-700 data-[selected=true]:shadow-[inset_0_0_0_1px_rgba(37,99,235,0.24)]"
           >
-            {Icon ? <Icon size={12} /> : null}
+            {Icon ? <Icon size={11} /> : null}
             {dotHue !== undefined ? (
               <span
-                className="h-[7px] w-[7px] rounded-full"
+                className="h-1.5 w-1.5 rounded-full"
                 style={{ background: `oklch(0.6 0.14 ${dotHue})` }}
               />
             ) : null}
@@ -1777,22 +1824,29 @@ function AssetFilterPanel({
           />
         </AssetFilterField>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <AssetFilterField label="时间" wide={false}>
-            <FilterSegment
-              options={TIME_FILTERS}
-              value={filters.time}
-              onChange={(time) => onFiltersChange((current) => ({ ...current, time }))}
-            />
-          </AssetFilterField>
-          <AssetFilterField label="状态" wide={false}>
-            <FilterSegment
-              options={STATUS_FILTERS}
-              value={filters.status}
-              onChange={(status) => onFiltersChange((current) => ({ ...current, status }))}
-            />
-          </AssetFilterField>
-        </div>
+        <AssetFilterField label="时间">
+          <FilterSegment
+            options={TIME_FILTERS}
+            value={filters.time}
+            onChange={(time) => onFiltersChange((current) => ({ ...current, time }))}
+          />
+        </AssetFilterField>
+
+        <AssetFilterField label="状态">
+          <FilterSegment
+            options={STATUS_FILTERS}
+            value={filters.status}
+            onChange={(status) => onFiltersChange((current) => ({ ...current, status }))}
+          />
+        </AssetFilterField>
+
+        <AssetFilterField label="排序">
+          <FilterSegment
+            options={SORT_OPTIONS}
+            value={filters.sort}
+            onChange={(sort) => onFiltersChange((current) => ({ ...current, sort }))}
+          />
+        </AssetFilterField>
 
         <div className="flex items-center border-t border-zinc-100 pt-2.5">
           <Button
@@ -1831,7 +1885,7 @@ function AssetFilterPanel({
 type ActiveFilterChip = {
   key: string;
   label: string;
-  group: "type" | "tag" | "source" | "time" | "status";
+  group: "type" | "tag" | "source" | "time" | "status" | "sort";
   value?: string;
   hue?: number;
 };
@@ -1869,6 +1923,13 @@ function getActiveFilterChips(filters: AssetFilterState): ActiveFilterChip[] {
         key: "status",
         label: STATUS_FILTER_LABELS[filters.status],
         group: "status" as const,
+      }]
+      : []),
+    ...(filters.sort !== "updated_desc"
+      ? [{
+        key: "sort",
+        label: SORT_OPTION_LABELS[filters.sort],
+        group: "sort" as const,
       }]
       : []),
   ];
@@ -1916,6 +1977,10 @@ function AssetActiveFilterSummary({
 
         if (chip.group === "time") {
           return { ...nextFilters, time: "any" };
+        }
+
+        if (chip.group === "sort") {
+          return { ...nextFilters, sort: "updated_desc" };
         }
 
         return { ...nextFilters, status: "any" };
@@ -2005,7 +2070,7 @@ function AssetBoard({
     [assetItems],
   );
   const filteredAssetItems = useMemo(
-    () => filterAssets(assetItems, filters),
+    () => filterAndSortAssets(assetItems, filters),
     [assetItems, filters],
   );
 
