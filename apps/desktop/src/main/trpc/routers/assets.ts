@@ -441,33 +441,22 @@ function getVaultOrThrow(vaultId: string) {
 }
 
 function resolveObsidianEmbeds(content: string, vaultId: string, fileDir: string): string {
-  // Replace ![[filename.ext]] with standard markdown ![](relative-path)
-  // Only handles image/media embeds (extensions that browsers can render)
   const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp"]);
   return content.replace(/!\[\[([^\]]+)\]\]/g, (match, inner: string) => {
     const name = inner.trim();
     const ext = name.split(".").pop()?.toLowerCase() ?? "";
-    if (!IMAGE_EXTS.has(ext)) return match; // leave non-image embeds as-is
+    if (!IMAGE_EXTS.has(ext)) return match;
 
-    // Look up file by fileName within this vault
     const file = getDatabase()
       .select({ relativePath: schema.assetFiles.relativePath })
       .from(schema.assetFiles)
-      .where(
-        and(
-          eq(schema.assetFiles.vaultId, vaultId),
-          eq(schema.assetFiles.fileName, name),
-          eq(schema.assetFiles.fileExists, true),
-        ),
-      )
+      .where(and(eq(schema.assetFiles.vaultId, vaultId), eq(schema.assetFiles.fileName, name)))
       .get();
 
-    if (!file) return match; // file not indexed — leave as-is
+    if (!file) return match;
 
-    // Convert vault-relative path to a path relative to fileDir
     const fileParts = file.relativePath.split("/");
     const dirParts = fileDir ? fileDir.split("/") : [];
-    // Build relative path from fileDir to the image file
     let commonLen = 0;
     while (
       commonLen < dirParts.length &&
