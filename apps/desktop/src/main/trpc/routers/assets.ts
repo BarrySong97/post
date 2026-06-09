@@ -184,9 +184,16 @@ export const assetsRouter = router({
     const absolutePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
 
     try {
-      const content = await readFile(absolutePath, "utf8");
+      const [content, obsidianAttachmentPath] = await Promise.all([
+        readFile(absolutePath, "utf8"),
+        readObsidianAttachmentPath(row.vault.rootPath),
+      ]);
+      const fileDir = path.dirname(row.file.relativePath).replace(/^\.$/, "");
       return {
         id: row.asset.id,
+        vaultId: row.vault.id,
+        fileDir,
+        obsidianAttachmentPath,
         content,
         relativePath: row.file.relativePath,
         mtimeMs: row.file.mtimeMs,
@@ -430,6 +437,16 @@ function getVaultOrThrow(vaultId: string) {
   }
 
   return vault;
+}
+
+async function readObsidianAttachmentPath(vaultRoot: string): Promise<string | null> {
+  try {
+    const raw = await readFile(path.join(vaultRoot, ".obsidian", "app.json"), "utf8");
+    const config = JSON.parse(raw) as Record<string, unknown>;
+    return typeof config.attachmentFolderPath === "string" ? config.attachmentFolderPath : null;
+  } catch {
+    return null;
+  }
 }
 
 function resolveVaultFilePath(rootPath: string, relativePath: string) {

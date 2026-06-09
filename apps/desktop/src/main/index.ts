@@ -156,6 +156,37 @@ function registerAssetProtocol(): void {
         return;
       }
 
+      if (url.hostname === "vault") {
+        // URL format: post-file://vault/{vaultId}/{encoded/relative/path}
+        const parts = url.pathname.replace(/^\/+/, "").split("/");
+        const vaultId = decodeURIComponent(parts[0] ?? "");
+        const relPath = parts
+          .slice(1)
+          .map((p) => decodeURIComponent(p))
+          .join(path.sep);
+
+        const vault = getDatabase()
+          .select({ rootPath: schema.vaults.rootPath })
+          .from(schema.vaults)
+          .where(eq(schema.vaults.id, vaultId))
+          .get();
+
+        if (!vault) {
+          callback({ error: -6 });
+          return;
+        }
+
+        const vaultRoot = path.resolve(vault.rootPath);
+        const absolutePath = path.resolve(vaultRoot, relPath);
+        if (absolutePath !== vaultRoot && !absolutePath.startsWith(`${vaultRoot}${path.sep}`)) {
+          callback({ error: -10 });
+          return;
+        }
+
+        callback({ path: absolutePath });
+        return;
+      }
+
       callback({ error: -6 });
     } catch (error) {
       console.error("Failed to serve asset file", error);
