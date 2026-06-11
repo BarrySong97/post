@@ -10,6 +10,12 @@ extraResources:
     to: drizzle
   - from: ../../target/release/post-indexer
     to: post-indexer
+  - from: resources/ffmpeg
+    to: ffmpeg
+    filter:
+      - ffmpeg
+      - ffmpeg.exe
+      - LICENSE*
 asarUnpack:
   - "**/*.node"
   - "node_modules/node-pty/**"

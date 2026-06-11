@@ -13,13 +13,16 @@
     "db:generate": "pnpm -F @post/db db:generate",
     "db:migrate": "pnpm -F @post/db db:migrate",
     "db:studio": "pnpm -F @post/db db:studio",
+    "ffmpeg:prepare": "node scripts/prepare-ffmpeg.mjs",
     "indexer:build": "cargo build -p post-indexer --release",
     "indexer:check": "cargo check -p post-indexer",
     "indexer:test": "cargo test -p post-indexer",
-    "package": "pnpm indexer:build && pnpm -F desktop package",
+    "package": "pnpm ffmpeg:prepare && pnpm indexer:build && pnpm -F desktop package",
+    "dist": "pnpm ffmpeg:prepare && pnpm indexer:build && pnpm -F desktop dist",
     "rebuild:electron": "node_modules/.pnpm/node_modules/.bin/electron-rebuild -f -w better-sqlite3"
   },
   "devDependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "turbo": "^2.8.12",
     "typescript": "catalog:"
   },

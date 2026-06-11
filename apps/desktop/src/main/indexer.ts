@@ -68,7 +68,7 @@ export async function runIndexer(
     const child = spawn(executable, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: getIndexerEnv(),
     });
     const events: IndexerEvent[] = [];
     const stderr: string[] = [];
@@ -124,7 +124,7 @@ export function startIndexerWatchDaemon(
   const child = spawn(executable, args, {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
-    env: process.env,
+    env: getIndexerEnv(),
   });
   const stderr: string[] = [];
   let stdoutBuffer = "";
@@ -195,6 +195,30 @@ function parseIndexerEvent(line: string): IndexerEvent | null {
   } catch {
     return null;
   }
+}
+
+function getIndexerEnv(): NodeJS.ProcessEnv {
+  const bundledFfmpegPath = resolveBundledFfmpegPath();
+
+  return {
+    ...process.env,
+    POST_INDEXER_ALLOW_SYSTEM_FFMPEG: is.dev ? "1" : "0",
+    ...(bundledFfmpegPath && !process.env.POST_FFMPEG_PATH
+      ? { POST_FFMPEG_PATH: bundledFfmpegPath }
+      : {}),
+  };
+}
+
+function resolveBundledFfmpegPath(): string | undefined {
+  const binaryName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const candidates = is.dev
+    ? [
+        path.resolve(process.cwd(), "resources", "ffmpeg", binaryName),
+        path.resolve(process.cwd(), "apps", "desktop", "resources", "ffmpeg", binaryName),
+      ]
+    : [path.join(process.resourcesPath, "ffmpeg", binaryName)];
+
+  return candidates.find((candidate) => existsSync(candidate));
 }
 
 function resolveIndexerInvocation(
