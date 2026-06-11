@@ -66,8 +66,8 @@ import {
   Tag,
   TagGroup,
   Tabs,
-  toast,
 } from "@heroui/react";
+import { toast } from "@/lib/toast";
 
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import {

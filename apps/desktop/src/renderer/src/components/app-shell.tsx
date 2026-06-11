@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Popover, ToastProvider } from "@heroui/react";
+import { Popover } from "@heroui/react";
+import { AnimatePresence, motion } from "motion/react";
+import { CheckCircle2, Info, TriangleAlert, X, XCircle } from "lucide-react";
+import { getToastSnapshot, subscribeToasts, toast, type ToastItem } from "@/lib/toast";
 
 import { trpc, type RouterOutputs } from "@/lib/trpc";
 
@@ -32,12 +35,86 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <div className="flex h-screen min-h-0 flex-col overflow-hidden text-zinc-950">
-      <ToastProvider placement="top" />
-      <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
-      <GlobalStatusLine />
+    <>
+      <GlobalToasts />
+      <div className="flex h-screen min-h-0 flex-col overflow-hidden text-zinc-950">
+        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+        <GlobalStatusLine />
+      </div>
+    </>
+  );
+}
+
+function GlobalToasts() {
+  const toasts = useSyncExternalStore(subscribeToasts, getToastSnapshot, getToastSnapshot);
+
+  return (
+    <div className="pointer-events-none fixed left-1/2 top-4 z-[200] flex w-[min(92vw,420px)] -translate-x-1/2 flex-col items-center gap-2">
+      <AnimatePresence initial={false}>
+        {toasts.map((item) => (
+          <GlobalToast key={item.id} item={item} />
+        ))}
+      </AnimatePresence>
     </div>
   );
+}
+
+function GlobalToast({ item }: { item: ToastItem }) {
+  const Icon = getToastIcon(item.variant);
+
+  return (
+    <motion.div
+      role="status"
+      layout
+      initial={{ opacity: 0, y: -10, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8, scale: 0.98 }}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+      className="pointer-events-auto flex min-h-11 w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-[13px] text-zinc-800 shadow-[0_14px_34px_rgba(20,18,16,0.14),0_2px_7px_rgba(20,18,16,0.07)]"
+    >
+      <Icon aria-hidden="true" className={getToastIconClassName(item.variant)} size={15} />
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-semibold leading-5">{item.title}</div>
+        {item.description ? (
+          <div className="truncate text-[12px] font-medium leading-4 text-zinc-500">{item.description}</div>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        aria-label="关闭通知"
+        className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
+        onClick={() => toast.close(item.id)}
+      >
+        <X aria-hidden="true" size={13} />
+      </button>
+    </motion.div>
+  );
+}
+
+function getToastIcon(variant: ToastItem["variant"]) {
+  if (variant === "success") {
+    return CheckCircle2;
+  }
+  if (variant === "danger") {
+    return XCircle;
+  }
+  if (variant === "warning") {
+    return TriangleAlert;
+  }
+  return Info;
+}
+
+function getToastIconClassName(variant: ToastItem["variant"]) {
+  if (variant === "success") {
+    return "shrink-0 text-emerald-600";
+  }
+  if (variant === "danger") {
+    return "shrink-0 text-red-600";
+  }
+  if (variant === "warning") {
+    return "shrink-0 text-amber-600";
+  }
+  return "shrink-0 text-blue-600";
 }
 
 function GlobalStatusLine() {
