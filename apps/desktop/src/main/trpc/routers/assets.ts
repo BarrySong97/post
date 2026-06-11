@@ -546,6 +546,7 @@ function hasThumbnailWork(vault: VaultRecord) {
       quickFingerprint: schema.assetFiles.quickFingerprint,
       cacheStatus: schema.imageCache.status,
       thumbnailPath: schema.imageCache.thumbnailPath,
+      errorMessage: schema.imageCache.errorMessage,
       sourceSizeBytes: schema.imageCache.sourceSizeBytes,
       sourceMtimeMs: schema.imageCache.sourceMtimeMs,
       sourceQuickFingerprint: schema.imageCache.sourceQuickFingerprint,
@@ -555,7 +556,7 @@ function hasThumbnailWork(vault: VaultRecord) {
     .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
     .where(and(
       eq(schema.assets.vaultId, vault.id),
-      eq(schema.assets.kind, "image"),
+      inArray(schema.assets.kind, ["image", "video"]),
       isNull(schema.assets.deletedAt),
       eq(schema.assetFiles.fileExists, true),
     ))
@@ -572,7 +573,7 @@ function hasThumbnailWork(vault: VaultRecord) {
       && row.sourceQuickFingerprint === row.quickFingerprint;
 
     if (row.cacheStatus === "failed") {
-      return !sourceMatches;
+      return !sourceMatches || isRetryableThumbnailFailure(row.errorMessage);
     }
 
     return (
@@ -581,6 +582,11 @@ function hasThumbnailWork(vault: VaultRecord) {
       || !existsSync(row.thumbnailPath)
     );
   });
+}
+
+function isRetryableThumbnailFailure(errorMessage: string | null) {
+  const normalized = errorMessage?.toLowerCase() ?? "";
+  return normalized.includes("ffmpeg") || normalized.includes("post_ffmpeg_path");
 }
 
 function getTimestampMs(value: Date | number | null) {

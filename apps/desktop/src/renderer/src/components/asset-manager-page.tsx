@@ -496,7 +496,7 @@ function mapIndexedAsset(asset: IndexedAsset): Asset {
   const usesOriginalAsThumbnail = kind === "image" && extension.toLowerCase() === "svg";
   const thumbnailUrl = usesOriginalAsThumbnail
     ? mediaUrl
-    : kind === "image" && asset.image?.status === "ready" && asset.image.thumbnailPath
+    : (kind === "image" || kind === "video") && asset.image?.status === "ready" && asset.image.thumbnailPath
       ? `post-file://thumb/${encodeURIComponent(asset.id)}/${encodeURIComponent(asset.fileName)}.jpg`
       : undefined;
   const metaPrefix = {
@@ -525,7 +525,7 @@ function mapIndexedAsset(asset: IndexedAsset): Asset {
     tag,
     meta: `${metaPrefix[kind]} · ${formatBytes(asset.sizeBytes)}`,
     accent: getTagHue(tag),
-    height: kind === "image" ? "medium" : "short",
+    height: kind === "image" || kind === "video" ? "medium" : "short",
     mediaUrl,
     thumbnailUrl,
     thumbnailStatus: asset.image?.status ?? (usesOriginalAsThumbnail ? "ready" : null),
@@ -983,7 +983,16 @@ function VisualBlock({ asset }: { asset: Asset }) {
   if (asset.kind === "video") {
     return (
       <div className={`relative ${heightCls} overflow-hidden border-b border-zinc-100`} style={{ background: grad }}>
-        <Hatch />
+        {asset.thumbnailUrl ? (
+          <img
+            src={asset.thumbnailUrl}
+            alt={asset.title}
+            className="absolute inset-0 h-full w-full object-cover"
+            draggable={false}
+          />
+        ) : (
+          <Hatch />
+        )}
         <div className="absolute inset-0 flex items-center justify-center">
           <span className="grid h-11 w-11 place-items-center rounded-full bg-zinc-950/50 text-white shadow-lg backdrop-blur-sm">
             <Play size={18} fill="currentColor" />
@@ -1081,7 +1090,8 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
   const heightCls = { short: "h-32", medium: "h-44", tall: "h-72" }[asset.height ?? "medium"];
   const isVideo = asset.kind === "video";
   const Icon = asset.kind === "image" ? ImageIcon : asset.kind === "video" ? Play : LinkIcon;
-  const imageAspectRatio = asset.kind === "image" && asset.imageWidth && asset.imageHeight
+  const hasMediaThumbnail = (asset.kind === "image" || asset.kind === "video") && asset.thumbnailUrl;
+  const imageAspectRatio = hasMediaThumbnail && asset.imageWidth && asset.imageHeight
     ? `${asset.imageWidth} / ${asset.imageHeight}`
     : undefined;
 
@@ -1096,7 +1106,7 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
         `,
       }}
     >
-      {asset.kind === "image" && asset.thumbnailUrl ? (
+      {hasMediaThumbnail ? (
         <img
           src={asset.thumbnailUrl}
           alt={asset.title}

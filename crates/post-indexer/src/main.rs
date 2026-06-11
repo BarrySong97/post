@@ -11,7 +11,9 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use image::{GenericImageView, ImageReader, codecs::jpeg::JpegEncoder, imageops::FilterType};
+use image::{
+    DynamicImage, GenericImageView, ImageReader, codecs::jpeg::JpegEncoder, imageops::FilterType,
+};
 use notify::{Config as NotifyConfig, Event as NotifyEvent, PollWatcher, RecursiveMode, Watcher};
 
 const INDEXER_VERSION: &str = "post-indexer/0.1.0";
@@ -164,6 +166,7 @@ enum WatchDaemonMessage {
 struct ThumbnailTarget {
     asset_id: String,
     file_id: String,
+    kind: String,
     relative_path: String,
     extension: Option<String>,
     size_bytes: u64,
@@ -171,6 +174,7 @@ struct ThumbnailTarget {
     quick_fingerprint: String,
     cache_status: Option<String>,
     cached_thumbnail_path: Option<String>,
+    cached_error_message: Option<String>,
     cached_source_size_bytes: Option<u64>,
     cached_source_mtime_ms: Option<i64>,
     cached_source_quick_fingerprint: Option<String>,
@@ -579,14 +583,14 @@ fn run_refresh_paths(config: &Config) -> Result<(), String> {
         .iter()
         .filter(|path| !moved_sources.contains(&path.to_ascii_lowercase()))
         .count();
-    let image_asset_ids = refresh
+    let thumbnail_asset_ids = refresh
         .entries
         .iter()
-        .filter(|entry| entry.kind == "image")
+        .filter(|entry| supports_thumbnail_generation_for_kind(&entry.kind))
         .map(|entry| entry.asset_id.clone())
         .collect::<HashSet<_>>();
-    let mut image_asset_ids = image_asset_ids.into_iter().collect::<Vec<_>>();
-    image_asset_ids.sort();
+    let mut thumbnail_asset_ids = thumbnail_asset_ids.into_iter().collect::<Vec<_>>();
+    thumbnail_asset_ids.sort();
     let completed_at = now_ms();
 
     complete_sync_run(
@@ -611,8 +615,12 @@ fn run_refresh_paths(config: &Config) -> Result<(), String> {
                 JsonValue::Number(write_result.link_refresh_count as i64),
             ),
             (
+                "thumbnailAssetIds",
+                JsonValue::Raw(json_array(&thumbnail_asset_ids)),
+            ),
+            (
                 "imageAssetIds",
-                JsonValue::Raw(json_array(&image_asset_ids)),
+                JsonValue::Raw(json_array(&thumbnail_asset_ids)),
             ),
             ("durationMs", JsonValue::Number(completed_at - started_at)),
         ],
@@ -1418,6 +1426,7 @@ fn load_thumbnail_targets(config: &Config) -> Result<Vec<ThumbnailTarget>, Strin
 SELECT
   af.asset_id,
   af.id,
+  a.kind,
   af.relative_path,
   COALESCE(af.extension, ''),
   af.size_bytes,
@@ -1425,6 +1434,7 @@ SELECT
   COALESCE(af.quick_fingerprint, ''),
   COALESCE(ic.status, ''),
   COALESCE(ic.thumbnail_path, ''),
+  COALESCE(ic.error_message, ''),
   COALESCE(ic.source_size_bytes, -1),
   COALESCE(ic.source_mtime_ms, -1),
   COALESCE(ic.source_quick_fingerprint, '')
@@ -1433,7 +1443,7 @@ INNER JOIN assets a ON a.id = af.asset_id
 LEFT JOIN image_cache ic ON ic.asset_id = af.asset_id
 WHERE af.vault_id = {}
   AND af.file_exists = 1
-  AND a.kind = 'image'
+  AND a.kind IN ('image', 'video')
   {asset_filter}
 ORDER BY af.mtime_ms DESC
 {limit_clause};\n",
@@ -1444,7 +1454,7 @@ ORDER BY af.mtime_ms DESC
 
     for line in output.lines().filter(|line| !line.trim().is_empty()) {
         let columns: Vec<_> = line.split('\t').collect();
-        if columns.len() != 12 {
+        if columns.len() != 14 {
             return Err(format!(
                 "unexpected sqlite row while loading thumbnail targets: {line}"
             ));
@@ -1453,16 +1463,18 @@ ORDER BY af.mtime_ms DESC
         targets.push(ThumbnailTarget {
             asset_id: columns[0].to_string(),
             file_id: columns[1].to_string(),
-            relative_path: columns[2].to_string(),
-            extension: none_if_empty(columns[3]),
-            size_bytes: parse_u64(columns[4], "size_bytes")?,
-            mtime_ms: parse_i64(columns[5], "mtime_ms")?,
-            quick_fingerprint: columns[6].to_string(),
-            cache_status: none_if_empty(columns[7]),
-            cached_thumbnail_path: none_if_empty(columns[8]),
-            cached_source_size_bytes: parse_optional_u64(columns[9])?,
-            cached_source_mtime_ms: parse_optional_i64(columns[10])?,
-            cached_source_quick_fingerprint: none_if_empty(columns[11]),
+            kind: columns[2].to_string(),
+            relative_path: columns[3].to_string(),
+            extension: none_if_empty(columns[4]),
+            size_bytes: parse_u64(columns[5], "size_bytes")?,
+            mtime_ms: parse_i64(columns[6], "mtime_ms")?,
+            quick_fingerprint: columns[7].to_string(),
+            cache_status: none_if_empty(columns[8]),
+            cached_thumbnail_path: none_if_empty(columns[9]),
+            cached_error_message: none_if_empty(columns[10]),
+            cached_source_size_bytes: parse_optional_u64(columns[11])?,
+            cached_source_mtime_ms: parse_optional_i64(columns[12])?,
+            cached_source_quick_fingerprint: none_if_empty(columns[13]),
         });
     }
 
@@ -1497,9 +1509,17 @@ fn thumbnail_source_matches(target: &ThumbnailTarget) -> bool {
 fn thumbnail_generation_needed(target: &ThumbnailTarget) -> bool {
     match target.cache_status.as_deref() {
         Some("ready") => !thumbnail_cache_matches(target),
-        Some("failed") => !thumbnail_source_matches(target),
+        Some("failed") => {
+            !thumbnail_source_matches(target)
+                || thumbnail_failure_is_retryable(target.cached_error_message.as_deref())
+        }
         _ => true,
     }
+}
+
+fn thumbnail_failure_is_retryable(error_message: Option<&str>) -> bool {
+    let message = error_message.unwrap_or("").to_ascii_lowercase();
+    message.contains("ffmpeg") || message.contains("post_ffmpeg_path")
 }
 
 fn generate_thumbnail(
@@ -1507,25 +1527,64 @@ fn generate_thumbnail(
     target: &ThumbnailTarget,
     thumbnail_root: &Path,
 ) -> Result<GeneratedThumbnail, String> {
-    if !is_supported_thumbnail_extension(target.extension.as_deref()) {
+    let source_path = config.root_path.join(&target.relative_path);
+
+    match target.kind.as_str() {
+        "image" => generate_image_thumbnail(config, target, thumbnail_root, &source_path),
+        "video" => generate_video_thumbnail(config, target, thumbnail_root, &source_path),
+        kind => Err(format!("unsupported asset kind for thumbnail: {kind}")),
+    }
+}
+
+fn generate_image_thumbnail(
+    config: &Config,
+    target: &ThumbnailTarget,
+    thumbnail_root: &Path,
+    source_path: &Path,
+) -> Result<GeneratedThumbnail, String> {
+    if !is_supported_image_thumbnail_extension(target.extension.as_deref()) {
         return Err(format!(
             "unsupported image format for thumbnail: {}",
             target.extension.as_deref().unwrap_or("unknown")
         ));
     }
 
-    let source_path = config.root_path.join(&target.relative_path);
-    let image = ImageReader::open(&source_path)
-        .map_err(|error| format!("failed to open image {}: {error}", source_path.display()))?
-        .with_guessed_format()
-        .map_err(|error| {
-            format!(
-                "failed to detect image format {}: {error}",
-                source_path.display()
-            )
-        })?
-        .decode()
-        .map_err(|error| format!("failed to decode image {}: {error}", source_path.display()))?;
+    let image = decode_image_file(source_path, "image")?;
+    persist_thumbnail_from_image(config, target, thumbnail_root, image)
+}
+
+fn generate_video_thumbnail(
+    config: &Config,
+    target: &ThumbnailTarget,
+    thumbnail_root: &Path,
+    source_path: &Path,
+) -> Result<GeneratedThumbnail, String> {
+    if !is_supported_video_thumbnail_extension(target.extension.as_deref()) {
+        return Err(format!(
+            "unsupported video format for thumbnail: {}",
+            target.extension.as_deref().unwrap_or("unknown")
+        ));
+    }
+
+    let vault_dir = ensure_thumbnail_vault_dir(thumbnail_root, &config.vault_id)?;
+    let frame_path = vault_dir.join(format!(
+        "{}-{:016x}.frame.jpg",
+        target.asset_id,
+        stable_hash(&target.quick_fingerprint)
+    ));
+    extract_video_frame_with_ffmpeg(source_path, &frame_path)?;
+    let frame = decode_image_file(&frame_path, "video frame");
+    let _ = fs::remove_file(&frame_path);
+
+    persist_thumbnail_from_image(config, target, thumbnail_root, frame?)
+}
+
+fn persist_thumbnail_from_image(
+    config: &Config,
+    target: &ThumbnailTarget,
+    thumbnail_root: &Path,
+    image: DynamicImage,
+) -> Result<GeneratedThumbnail, String> {
     let (source_width, source_height) = image.dimensions();
     let thumbnail = image.resize(
         THUMBNAIL_LONG_EDGE,
@@ -1535,13 +1594,7 @@ fn generate_thumbnail(
     let rgb = thumbnail.to_rgb8();
     let (thumbnail_width, thumbnail_height) = rgb.dimensions();
 
-    let vault_dir = thumbnail_root.join(&config.vault_id);
-    fs::create_dir_all(&vault_dir).map_err(|error| {
-        format!(
-            "failed to create thumbnail dir {}: {error}",
-            vault_dir.display()
-        )
-    })?;
+    let vault_dir = ensure_thumbnail_vault_dir(thumbnail_root, &config.vault_id)?;
     let thumbnail_path = vault_dir.join(format!(
         "{}-{:016x}.jpg",
         target.asset_id,
@@ -1586,10 +1639,143 @@ fn generate_thumbnail(
     })
 }
 
-fn is_supported_thumbnail_extension(extension: Option<&str>) -> bool {
+fn ensure_thumbnail_vault_dir(thumbnail_root: &Path, vault_id: &str) -> Result<PathBuf, String> {
+    let vault_dir = thumbnail_root.join(vault_id);
+    fs::create_dir_all(&vault_dir).map_err(|error| {
+        format!(
+            "failed to create thumbnail dir {}: {error}",
+            vault_dir.display()
+        )
+    })?;
+    Ok(vault_dir)
+}
+
+fn decode_image_file(path: &Path, label: &str) -> Result<DynamicImage, String> {
+    ImageReader::open(path)
+        .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?
+        .with_guessed_format()
+        .map_err(|error| {
+            format!(
+                "failed to detect {label} format {}: {error}",
+                path.display()
+            )
+        })?
+        .decode()
+        .map_err(|error| format!("failed to decode {label} {}: {error}", path.display()))
+}
+
+fn extract_video_frame_with_ffmpeg(source_path: &Path, frame_path: &Path) -> Result<(), String> {
+    let mut failures = Vec::new();
+
+    for ffmpeg_path in ffmpeg_candidates() {
+        let output = Command::new(&ffmpeg_path)
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .arg("-y")
+            .arg("-i")
+            .arg(source_path)
+            .arg("-map")
+            .arg("0:v:0")
+            .arg("-frames:v")
+            .arg("1")
+            .arg("-q:v")
+            .arg("3")
+            .arg(frame_path)
+            .output();
+
+        match output {
+            Ok(output) if output.status.success() && frame_path.is_file() => return Ok(()),
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                failures.push(format!(
+                    "{}: {}",
+                    ffmpeg_path.display(),
+                    if stderr.is_empty() {
+                        output.status.to_string()
+                    } else {
+                        stderr
+                    }
+                ));
+                let _ = fs::remove_file(frame_path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                failures.push(format!("{}: not found", ffmpeg_path.display()));
+            }
+            Err(error) => {
+                failures.push(format!("{}: {error}", ffmpeg_path.display()));
+            }
+        }
+    }
+
+    Err(format!(
+        "failed to extract video frame with ffmpeg; bundle ffmpeg with the app resources or set POST_FFMPEG_PATH ({})",
+        failures.join("; ")
+    ))
+}
+
+fn ffmpeg_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(path) = env::var("POST_FFMPEG_PATH") {
+        if !path.trim().is_empty() {
+            candidates.push(PathBuf::from(path));
+        }
+    }
+
+    if let Ok(executable) = env::current_exe() {
+        if let Some(executable_dir) = executable.parent() {
+            let binary_name = ffmpeg_binary_name();
+            candidates.push(executable_dir.join("ffmpeg").join(binary_name));
+            candidates.push(executable_dir.join("bin").join(binary_name));
+            candidates.push(executable_dir.join(binary_name));
+        }
+    }
+
+    if allow_system_ffmpeg() {
+        candidates.push(PathBuf::from("ffmpeg"));
+    }
+    dedupe_paths(candidates)
+}
+
+fn allow_system_ffmpeg() -> bool {
+    matches!(
+        env::var("POST_INDEXER_ALLOW_SYSTEM_FFMPEG").ok().as_deref(),
+        Some("1" | "true" | "yes")
+    )
+}
+
+fn ffmpeg_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    }
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path.to_string_lossy().to_string()))
+        .collect()
+}
+
+fn supports_thumbnail_generation_for_kind(kind: &str) -> bool {
+    matches!(kind, "image" | "video")
+}
+
+fn is_supported_image_thumbnail_extension(extension: Option<&str>) -> bool {
     matches!(
         extension.unwrap_or(""),
         "bmp" | "gif" | "ico" | "jpg" | "jpeg" | "png" | "tif" | "tiff" | "webp"
+    )
+}
+
+fn is_supported_video_thumbnail_extension(extension: Option<&str>) -> bool {
+    matches!(
+        extension.unwrap_or(""),
+        "3g2" | "3gp" | "avi" | "m4v" | "mkv" | "mov" | "mp4" | "mpeg" | "mpg" | "webm"
     )
 }
 
@@ -3022,7 +3208,7 @@ fn kind_for_extension(extension: Option<&str>) -> &'static str {
     match extension.unwrap_or("") {
         "md" | "markdown" => "markdown",
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "heic" | "svg" => "image",
-        "mp4" | "mov" | "mkv" | "webm" | "avi" => "video",
+        "3g2" | "3gp" | "avi" | "m4v" | "mkv" | "mov" | "mp4" | "mpeg" | "mpg" | "webm" => "video",
         "mp3" | "wav" | "m4a" | "flac" | "aac" | "ogg" => "audio",
         "pdf" => "pdf",
         "doc" | "docx" | "rtf" | "txt" => "document",

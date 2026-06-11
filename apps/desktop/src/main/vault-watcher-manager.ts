@@ -295,7 +295,10 @@ class VaultWatcherManager {
       const completed = findLastEvent(result.events, "completed");
       const filesSeen = typeof completed?.filesSeen === "number" ? completed.filesSeen : state.filesSeen;
       const filesMissing = typeof completed?.filesMissing === "number" ? completed.filesMissing : state.filesMissing;
-      this.queueThumbnailGeneration(scope, parseStringArray(completed?.imageAssetIds));
+      this.queueThumbnailGeneration(
+        scope,
+        parseStringArray(completed?.thumbnailAssetIds ?? completed?.imageAssetIds),
+      );
       backgroundTaskManager.completeTask(
         task.id,
         `Synced ${filesSeen + filesMissing} changes from ${changeCount} events`,

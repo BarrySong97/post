@@ -96,7 +96,7 @@ function applyThumbnailEventToTask(
       total: state.requested || undefined,
       label: state.requested > 0
         ? `${current} / ${state.requested}`
-        : `${current} images`,
+        : `${current} thumbnails`,
     },
   });
 }
@@ -110,5 +110,5 @@ function getThumbnailCompletionSummary(state: ThumbnailTaskState) {
     return `Generated ${state.ready} thumbnails · ${state.failed} failed`;
   }
 
-  return `Thumbnails complete · ${state.ready} images`;
+  return `Thumbnails complete · ${state.ready} generated`;
 }
