@@ -3,24 +3,30 @@ use std::{
     env,
     ffi::OsStr,
     fs::{self, File},
-    io::Write,
+    io::{self, BufRead, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use image::{GenericImageView, ImageReader, codecs::jpeg::JpegEncoder, imageops::FilterType};
+use notify::{Config as NotifyConfig, Event as NotifyEvent, PollWatcher, RecursiveMode, Watcher};
 
 const INDEXER_VERSION: &str = "post-indexer/0.1.0";
 const PARSER_VERSION: &str = "markdown-links/0.1.0";
 const THUMBNAIL_LONG_EDGE: u32 = 720;
 const THUMBNAIL_JPEG_QUALITY: u8 = 82;
 const THUMBNAIL_DB_FLUSH_BATCH: usize = 8;
+const WATCH_DEBOUNCE_MS: u64 = 250;
+const WATCH_NOTIFY_POLL_MS: u64 = 1_000;
 
 #[derive(Clone, Copy)]
 enum CommandKind {
     Scan,
     Reconcile,
+    Refresh,
     Watch,
     Thumbnails,
 }
@@ -30,6 +36,7 @@ impl CommandKind {
         match value {
             "scan" => Some(Self::Scan),
             "reconcile" => Some(Self::Reconcile),
+            "refresh" => Some(Self::Refresh),
             "watch" => Some(Self::Watch),
             "thumbnails" => Some(Self::Thumbnails),
             _ => None,
@@ -40,6 +47,7 @@ impl CommandKind {
         match self {
             Self::Scan => "initial_import",
             Self::Reconcile => "manual",
+            Self::Refresh => "watcher_event",
             Self::Watch => "watcher_event",
             Self::Thumbnails => "manual",
         }
@@ -49,6 +57,7 @@ impl CommandKind {
         match self {
             Self::Scan => "scan",
             Self::Reconcile => "reconcile",
+            Self::Refresh => "refresh",
             Self::Watch => "watch",
             Self::Thumbnails => "thumbnails",
         }
@@ -62,7 +71,9 @@ struct Config {
     db_path: PathBuf,
     thumbnail_root: Option<PathBuf>,
     asset_ids: Vec<String>,
+    paths: Vec<String>,
     limit: Option<usize>,
+    daemon: bool,
 }
 
 #[derive(Clone)]
@@ -82,6 +93,21 @@ struct FileEntry {
     quick_fingerprint: String,
 }
 
+struct RefreshCollection {
+    entries: Vec<FileEntry>,
+    missing_paths: HashSet<String>,
+}
+
+struct WriteIndexOptions<'a> {
+    mark_missing_unseen: bool,
+    include_existing_lookup: bool,
+    missing_paths: &'a HashSet<String>,
+}
+
+struct WriteIndexResult {
+    link_refresh_count: usize,
+}
+
 #[derive(Clone)]
 struct ExistingFile {
     file_id: String,
@@ -89,6 +115,50 @@ struct ExistingFile {
     relative_path: String,
     quick_fingerprint: Option<String>,
     file_exists: bool,
+}
+
+struct LinkCandidate {
+    source_asset_id: String,
+    target_asset_id: Option<String>,
+    target_ref: String,
+    source_relative_path: String,
+}
+
+#[derive(Clone)]
+enum WatchScopeKind {
+    Vault,
+    Note {
+        asset_id: Option<String>,
+        relative_path: String,
+    },
+}
+
+#[derive(Clone)]
+struct WatchFileState {
+    relative_path: String,
+    size_bytes: u64,
+    mtime_ms: i64,
+    quick_fingerprint: String,
+}
+
+struct WatchChange {
+    kind: &'static str,
+    relative_path: String,
+    previous_relative_path: Option<String>,
+    size_bytes: Option<u64>,
+    mtime_ms: Option<i64>,
+    quick_fingerprint: Option<String>,
+}
+
+enum WatchCommand {
+    SetScope(WatchScopeKind),
+    AuditScope,
+    Shutdown,
+}
+
+enum WatchDaemonMessage {
+    Command(String),
+    FileEvent(Result<NotifyEvent, notify::Error>),
 }
 
 struct ThumbnailTarget {
@@ -150,6 +220,14 @@ fn run() -> Result<(), String> {
         return run_thumbnail_generation(&config);
     }
 
+    if matches!(config.command, CommandKind::Watch) && config.daemon {
+        return run_watch_daemon(&config);
+    }
+
+    if matches!(config.command, CommandKind::Refresh) {
+        return run_refresh_paths(&config);
+    }
+
     let started_at = now_ms();
     let run_id = format!(
         "sync_run_{}_{:x}",
@@ -191,7 +269,18 @@ fn run() -> Result<(), String> {
 
     let mut entries = collect_files(&config, &run_id)?;
     let moved_count = reconcile_entries(&config, &mut entries)?;
-    write_index(&config, &run_id, started_at, &entries)?;
+    let empty_missing_paths = HashSet::new();
+    write_index(
+        &config,
+        &run_id,
+        started_at,
+        &entries,
+        WriteIndexOptions {
+            mark_missing_unseen: true,
+            include_existing_lookup: false,
+            missing_paths: &empty_missing_paths,
+        },
+    )?;
 
     let completed_at = now_ms();
     complete_sync_run(
@@ -201,6 +290,7 @@ fn run() -> Result<(), String> {
         completed_at,
         entries.len() as i64,
         moved_count as i64,
+        0,
     )?;
 
     emit_event(
@@ -232,11 +322,20 @@ fn parse_args(args: Vec<String>) -> Result<Config, String> {
     let mut db_path = None;
     let mut thumbnail_root = None;
     let mut asset_ids = Vec::new();
+    let mut paths = Vec::new();
     let mut limit = None;
+    let mut daemon = false;
     let mut index = 1;
 
     while index < args.len() {
         let flag = &args[index];
+
+        if flag == "--daemon" {
+            daemon = true;
+            index += 1;
+            continue;
+        }
+
         let value = args
             .get(index + 1)
             .ok_or_else(|| format!("missing value for {flag}"))?;
@@ -254,6 +353,18 @@ fn parse_args(args: Vec<String>) -> Result<Config, String> {
                     .map(ToString::to_string)
                     .collect();
             }
+            "--paths" => {
+                paths.extend(
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                        .map(ToString::to_string),
+                );
+            }
+            "--path" => {
+                paths.push(value.clone());
+            }
             "--limit" => {
                 limit = Some(
                     value
@@ -267,6 +378,10 @@ fn parse_args(args: Vec<String>) -> Result<Config, String> {
         index += 2;
     }
 
+    if daemon && !matches!(command, CommandKind::Watch) {
+        return Err("--daemon can only be used with watch".to_string());
+    }
+
     Ok(Config {
         command,
         vault_id: vault_id.ok_or_else(|| "missing --vault-id".to_string())?,
@@ -274,7 +389,9 @@ fn parse_args(args: Vec<String>) -> Result<Config, String> {
         db_path: db_path.ok_or_else(|| "missing --db-path".to_string())?,
         thumbnail_root,
         asset_ids,
+        paths,
         limit,
+        daemon,
     })
 }
 
@@ -286,11 +403,14 @@ post-indexer
 Usage:
   post-indexer scan --vault-id <id> --root-path <path> --db-path <path>
   post-indexer reconcile --vault-id <id> --root-path <path> --db-path <path>
-  post-indexer watch --vault-id <id> --root-path <path> --db-path <path>
+  post-indexer refresh --vault-id <id> --root-path <path> --db-path <path> --paths <relative,path>
+  post-indexer watch --vault-id <id> --root-path <path> --db-path <path> [--daemon]
   post-indexer thumbnails --vault-id <id> --root-path <path> --db-path <path> --thumbnail-root <path> [--asset-ids <id,id>] [--limit <n>]
 
-The first version treats watch as a snapshot scan entrypoint. A persistent
-file-system watcher can replace it without changing the NDJSON contract."
+Without --daemon, watch runs a snapshot scan for watcher-triggered sync.
+Refresh updates only the provided vault-relative paths.
+With --daemon, watch keeps running, reads scope commands from stdin, and emits
+watcher events as NDJSON."
     );
 }
 
@@ -324,52 +444,7 @@ fn collect_files(config: &Config, run_id: &str) -> Result<Vec<FileEntry>, String
                 continue;
             }
 
-            let relative_path = relative_path(&config.root_path, &path)?;
-            let extension = path
-                .extension()
-                .and_then(OsStr::to_str)
-                .map(|value| value.to_ascii_lowercase());
-            let kind = kind_for_extension(extension.as_deref()).to_string();
-            let file_name = path
-                .file_name()
-                .and_then(OsStr::to_str)
-                .ok_or_else(|| format!("file name is not valid UTF-8: {}", path.display()))?
-                .to_string();
-            let title = path
-                .file_stem()
-                .and_then(OsStr::to_str)
-                .unwrap_or(&file_name)
-                .to_string();
-            let mtime_ms = metadata.modified().ok().map(system_time_ms).unwrap_or(0);
-            let ctime_ms = metadata.created().ok().map(system_time_ms);
-            let quick_fingerprint = format!(
-                "{}:{}:{}",
-                metadata.len(),
-                mtime_ms,
-                extension.as_deref().unwrap_or("")
-            );
-            let asset_id =
-                deterministic_id("asset", &format!("{}\0{}", config.vault_id, relative_path));
-            let file_id = deterministic_id(
-                "asset_file",
-                &format!("{}\0{}", config.vault_id, relative_path),
-            );
-
-            entries.push(FileEntry {
-                asset_id,
-                file_id,
-                moved_from: None,
-                conflict_candidates: Vec::new(),
-                relative_path,
-                file_name,
-                extension,
-                kind,
-                title,
-                size_bytes: metadata.len(),
-                mtime_ms,
-                ctime_ms,
-                quick_fingerprint,
-            });
+            entries.push(file_entry_from_metadata(config, &path, &metadata)?);
 
             if entries.len() % 500 == 0 {
                 emit_event(
@@ -396,6 +471,809 @@ fn collect_files(config: &Config, run_id: &str) -> Result<Vec<FileEntry>, String
     );
 
     Ok(entries)
+}
+
+fn file_entry_from_metadata(
+    config: &Config,
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<FileEntry, String> {
+    let relative_path = relative_path(&config.root_path, path)?;
+    let extension = path
+        .extension()
+        .and_then(OsStr::to_str)
+        .map(|value| value.to_ascii_lowercase());
+    let kind = kind_for_extension(extension.as_deref()).to_string();
+    let file_name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or_else(|| format!("file name is not valid UTF-8: {}", path.display()))?
+        .to_string();
+    let title = path
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .unwrap_or(&file_name)
+        .to_string();
+    let mtime_ms = metadata.modified().ok().map(system_time_ms).unwrap_or(0);
+    let ctime_ms = metadata.created().ok().map(system_time_ms);
+    let quick_fingerprint = format!(
+        "{}:{}:{}",
+        metadata.len(),
+        mtime_ms,
+        extension.as_deref().unwrap_or("")
+    );
+    let asset_id = deterministic_id("asset", &format!("{}\0{}", config.vault_id, relative_path));
+    let file_id = deterministic_id(
+        "asset_file",
+        &format!("{}\0{}", config.vault_id, relative_path),
+    );
+
+    Ok(FileEntry {
+        asset_id,
+        file_id,
+        moved_from: None,
+        conflict_candidates: Vec::new(),
+        relative_path,
+        file_name,
+        extension,
+        kind,
+        title,
+        size_bytes: metadata.len(),
+        mtime_ms,
+        ctime_ms,
+        quick_fingerprint,
+    })
+}
+
+fn run_refresh_paths(config: &Config) -> Result<(), String> {
+    let started_at = now_ms();
+    let run_id = format!(
+        "sync_run_{}_{:x}",
+        started_at,
+        stable_hash(&format!(
+            "{}:{}:{}:{}",
+            config.vault_id,
+            config.root_path.display(),
+            config.command.as_str(),
+            config.paths.join("\0")
+        ))
+    );
+
+    start_sync_run(config, &run_id, started_at)?;
+    emit_event(
+        "started",
+        &[
+            ("runId", JsonValue::String(run_id.clone())),
+            (
+                "command",
+                JsonValue::String(config.command.as_str().to_string()),
+            ),
+            ("vaultId", JsonValue::String(config.vault_id.clone())),
+            ("paths", JsonValue::Number(config.paths.len() as i64)),
+        ],
+    );
+
+    let mut refresh = collect_refresh_entries(config, &run_id)?;
+    let moved_count =
+        reconcile_refresh_entries(config, &mut refresh.entries, &refresh.missing_paths)?;
+    let write_result = write_index(
+        config,
+        &run_id,
+        started_at,
+        &refresh.entries,
+        WriteIndexOptions {
+            mark_missing_unseen: false,
+            include_existing_lookup: true,
+            missing_paths: &refresh.missing_paths,
+        },
+    )?;
+
+    let moved_sources = refresh
+        .entries
+        .iter()
+        .filter_map(|entry| entry.moved_from.as_deref())
+        .map(|path| path.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let missing_count = refresh
+        .missing_paths
+        .iter()
+        .filter(|path| !moved_sources.contains(&path.to_ascii_lowercase()))
+        .count();
+    let image_asset_ids = refresh
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == "image")
+        .map(|entry| entry.asset_id.clone())
+        .collect::<HashSet<_>>();
+    let mut image_asset_ids = image_asset_ids.into_iter().collect::<Vec<_>>();
+    image_asset_ids.sort();
+    let completed_at = now_ms();
+
+    complete_sync_run(
+        config,
+        &run_id,
+        started_at,
+        completed_at,
+        refresh.entries.len() as i64,
+        moved_count as i64,
+        missing_count as i64,
+    )?;
+
+    emit_event(
+        "completed",
+        &[
+            ("runId", JsonValue::String(run_id)),
+            ("filesSeen", JsonValue::Number(refresh.entries.len() as i64)),
+            ("filesMoved", JsonValue::Number(moved_count as i64)),
+            ("filesMissing", JsonValue::Number(missing_count as i64)),
+            (
+                "linksRefreshed",
+                JsonValue::Number(write_result.link_refresh_count as i64),
+            ),
+            (
+                "imageAssetIds",
+                JsonValue::Raw(json_array(&image_asset_ids)),
+            ),
+            ("durationMs", JsonValue::Number(completed_at - started_at)),
+        ],
+    );
+
+    Ok(())
+}
+
+fn collect_refresh_entries(config: &Config, run_id: &str) -> Result<RefreshCollection, String> {
+    if config.paths.is_empty() {
+        return Err("refresh requires --paths or --path".to_string());
+    }
+
+    let mut seen_paths = HashSet::new();
+    let mut entries = Vec::new();
+    let mut missing_paths = HashSet::new();
+
+    for raw_path in &config.paths {
+        let Some(relative_path) = normalize_refresh_path(raw_path)? else {
+            continue;
+        };
+        if !seen_paths.insert(relative_path.to_ascii_lowercase()) {
+            continue;
+        }
+
+        let absolute_path = config.root_path.join(&relative_path);
+        match fs::metadata(&absolute_path) {
+            Ok(metadata) if metadata.is_file() => {
+                entries.push(file_entry_from_metadata(config, &absolute_path, &metadata)?);
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                missing_paths.insert(relative_path);
+            }
+            Err(error) => {
+                return Err(format!(
+                    "failed to stat refresh path {}: {error}",
+                    absolute_path.display()
+                ));
+            }
+        }
+    }
+
+    entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+
+    emit_event(
+        "progress",
+        &[
+            ("runId", JsonValue::String(run_id.to_string())),
+            ("phase", JsonValue::String("refresh_collected".to_string())),
+            ("filesSeen", JsonValue::Number(entries.len() as i64)),
+            (
+                "filesMissing",
+                JsonValue::Number(missing_paths.len() as i64),
+            ),
+        ],
+    );
+
+    Ok(RefreshCollection {
+        entries,
+        missing_paths,
+    })
+}
+
+fn normalize_refresh_path(raw_path: &str) -> Result<Option<String>, String> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    validate_relative_watch_path(trimmed)?;
+    let relative_path = normalize_relative_path(Path::new(trimmed));
+    if relative_path.is_empty() || should_skip_relative_path(&relative_path) {
+        return Ok(None);
+    }
+
+    Ok(Some(relative_path))
+}
+
+fn run_watch_daemon(config: &Config) -> Result<(), String> {
+    let mut scope = WatchScopeKind::Vault;
+    let mut snapshot = collect_watch_snapshot(config, &scope)?;
+    let (message_tx, message_rx) = mpsc::channel::<WatchDaemonMessage>();
+    let command_tx = message_tx.clone();
+
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            let Ok(line) = line else {
+                break;
+            };
+
+            if command_tx.send(WatchDaemonMessage::Command(line)).is_err() {
+                break;
+            }
+        }
+    });
+
+    let _watcher = start_notify_watcher(config, message_tx)?;
+    let mut pending_event_count = 0usize;
+    let mut flush_deadline: Option<Instant> = None;
+    let mut fallback_deadline =
+        Instant::now() + Duration::from_millis(watch_fallback_audit_ms(&scope));
+
+    emit_watch_status(config, &scope, "watcher_ready", None);
+
+    loop {
+        match message_rx.recv_timeout(next_watch_timeout(flush_deadline, fallback_deadline)) {
+            Ok(WatchDaemonMessage::Command(line)) => match parse_watch_command(&line) {
+                Ok(Some(WatchCommand::SetScope(next_scope))) => {
+                    scope = next_scope;
+                    pending_event_count = 0;
+                    flush_deadline = None;
+                    fallback_deadline =
+                        Instant::now() + Duration::from_millis(watch_fallback_audit_ms(&scope));
+                    match collect_watch_snapshot(config, &scope) {
+                        Ok(next_snapshot) => {
+                            snapshot = next_snapshot;
+                            emit_watch_status(config, &scope, "watcher_ready", None);
+                        }
+                        Err(error) => {
+                            emit_watch_status(config, &scope, "watcher_error", Some(&error))
+                        }
+                    }
+                }
+                Ok(Some(WatchCommand::AuditScope)) => {
+                    pending_event_count = 0;
+                    flush_deadline = None;
+                    flush_watch_changes(config, &scope, &mut snapshot);
+                }
+                Ok(Some(WatchCommand::Shutdown)) => {
+                    emit_watch_status(config, &scope, "watcher_stopped", None);
+                    break;
+                }
+                Ok(None) => {}
+                Err(error) => emit_watch_status(config, &scope, "watcher_error", Some(&error)),
+            },
+            Ok(WatchDaemonMessage::FileEvent(result)) => match result {
+                Ok(event) => {
+                    if should_process_notify_event(config, &scope, &event) {
+                        pending_event_count = pending_event_count.saturating_add(1);
+                        flush_deadline =
+                            Some(Instant::now() + Duration::from_millis(WATCH_DEBOUNCE_MS));
+                    }
+                }
+                Err(error) => {
+                    emit_watch_status(config, &scope, "watcher_error", Some(&error.to_string()));
+                }
+            },
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let now = Instant::now();
+                if pending_event_count > 0
+                    && flush_deadline
+                        .map(|deadline| now >= deadline)
+                        .unwrap_or(false)
+                {
+                    pending_event_count = 0;
+                    flush_deadline = None;
+                    flush_watch_changes(config, &scope, &mut snapshot);
+                    fallback_deadline =
+                        Instant::now() + Duration::from_millis(watch_fallback_audit_ms(&scope));
+                } else if now >= fallback_deadline {
+                    flush_watch_changes(config, &scope, &mut snapshot);
+                    fallback_deadline =
+                        Instant::now() + Duration::from_millis(watch_fallback_audit_ms(&scope));
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                emit_watch_status(config, &scope, "watcher_stopped", None);
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn start_notify_watcher(
+    config: &Config,
+    message_tx: mpsc::Sender<WatchDaemonMessage>,
+) -> Result<PollWatcher, String> {
+    let mut watcher = PollWatcher::new(
+        move |result| {
+            let _ = message_tx.send(WatchDaemonMessage::FileEvent(result));
+        },
+        NotifyConfig::default().with_poll_interval(Duration::from_millis(WATCH_NOTIFY_POLL_MS)),
+    )
+    .map_err(|error| format!("failed to create file watcher: {error}"))?;
+
+    watcher
+        .watch(&config.root_path, RecursiveMode::Recursive)
+        .map_err(|error| {
+            format!(
+                "failed to watch vault root {}: {error}",
+                config.root_path.display()
+            )
+        })?;
+
+    Ok(watcher)
+}
+
+fn flush_watch_changes(
+    config: &Config,
+    scope: &WatchScopeKind,
+    snapshot: &mut HashMap<String, WatchFileState>,
+) {
+    match audit_watch_scope(config, scope, snapshot) {
+        Ok(changes) => emit_watch_changes(config, scope, &changes),
+        Err(error) => emit_watch_status(config, scope, "watcher_error", Some(&error)),
+    }
+}
+
+fn next_watch_timeout(flush_deadline: Option<Instant>, fallback_deadline: Instant) -> Duration {
+    let now = Instant::now();
+    let next_deadline = flush_deadline
+        .filter(|deadline| *deadline < fallback_deadline)
+        .unwrap_or(fallback_deadline);
+
+    next_deadline.saturating_duration_since(now)
+}
+
+fn should_process_notify_event(
+    config: &Config,
+    scope: &WatchScopeKind,
+    event: &NotifyEvent,
+) -> bool {
+    event
+        .paths
+        .iter()
+        .any(|path| is_watch_event_path_relevant(config, scope, path))
+}
+
+fn is_watch_event_path_relevant(config: &Config, scope: &WatchScopeKind, path: &Path) -> bool {
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        config.root_path.join(path)
+    };
+
+    if absolute_path == config.root_path {
+        return matches!(scope, WatchScopeKind::Vault);
+    }
+
+    let Ok(relative_path) = relative_path(&config.root_path, &absolute_path) else {
+        return false;
+    };
+
+    if should_skip_relative_path(&relative_path) {
+        return false;
+    }
+
+    match scope {
+        WatchScopeKind::Vault => true,
+        WatchScopeKind::Note {
+            relative_path: active_relative_path,
+            ..
+        } => relative_path.eq_ignore_ascii_case(active_relative_path),
+    }
+}
+
+fn should_skip_relative_path(relative_path: &str) -> bool {
+    Path::new(relative_path)
+        .components()
+        .any(|component| matches!(component, Component::Normal(part) if should_skip(part)))
+}
+
+fn audit_watch_scope(
+    config: &Config,
+    scope: &WatchScopeKind,
+    snapshot: &mut HashMap<String, WatchFileState>,
+) -> Result<Vec<WatchChange>, String> {
+    let next_snapshot = collect_watch_snapshot(config, scope)?;
+    let changes = diff_watch_snapshots(snapshot, &next_snapshot);
+    *snapshot = next_snapshot;
+    Ok(changes)
+}
+
+fn collect_watch_snapshot(
+    config: &Config,
+    scope: &WatchScopeKind,
+) -> Result<HashMap<String, WatchFileState>, String> {
+    let mut files = HashMap::new();
+
+    match scope {
+        WatchScopeKind::Vault => {
+            let mut stack = vec![config.root_path.clone()];
+
+            while let Some(dir) = stack.pop() {
+                let read_dir = fs::read_dir(&dir).map_err(|error| {
+                    format!("failed to read directory {}: {error}", dir.display())
+                })?;
+
+                for item in read_dir {
+                    let item =
+                        item.map_err(|error| format!("failed to read directory item: {error}"))?;
+                    let path = item.path();
+                    let file_name = item.file_name();
+
+                    if should_skip(&file_name) {
+                        continue;
+                    }
+
+                    let metadata = item
+                        .metadata()
+                        .map_err(|error| format!("failed to stat {}: {error}", path.display()))?;
+
+                    if metadata.is_dir() {
+                        stack.push(path);
+                        continue;
+                    }
+
+                    if metadata.is_file() {
+                        let file = watch_file_state(
+                            config,
+                            &path,
+                            metadata.len(),
+                            metadata.modified().ok(),
+                        )?;
+                        files.insert(file.relative_path.to_ascii_lowercase(), file);
+                    }
+                }
+            }
+        }
+        WatchScopeKind::Note { relative_path, .. } => {
+            validate_relative_watch_path(relative_path)?;
+            let path = config.root_path.join(relative_path);
+
+            if let Ok(metadata) = fs::metadata(&path) {
+                if metadata.is_file() {
+                    let file =
+                        watch_file_state(config, &path, metadata.len(), metadata.modified().ok())?;
+                    files.insert(file.relative_path.to_ascii_lowercase(), file);
+                }
+            }
+        }
+    }
+
+    Ok(files)
+}
+
+fn watch_file_state(
+    config: &Config,
+    path: &Path,
+    size_bytes: u64,
+    modified: Option<SystemTime>,
+) -> Result<WatchFileState, String> {
+    let relative_path = relative_path(&config.root_path, path)?;
+    let extension = path
+        .extension()
+        .and_then(OsStr::to_str)
+        .map(|value| value.to_ascii_lowercase());
+    let mtime_ms = modified.map(system_time_ms).unwrap_or(0);
+    let quick_fingerprint = format!(
+        "{}:{}:{}",
+        size_bytes,
+        mtime_ms,
+        extension.as_deref().unwrap_or("")
+    );
+
+    Ok(WatchFileState {
+        relative_path,
+        size_bytes,
+        mtime_ms,
+        quick_fingerprint,
+    })
+}
+
+fn diff_watch_snapshots(
+    previous: &HashMap<String, WatchFileState>,
+    next: &HashMap<String, WatchFileState>,
+) -> Vec<WatchChange> {
+    let mut changes = Vec::new();
+    let mut created = Vec::new();
+    let mut deleted = Vec::new();
+
+    for (key, next_file) in next {
+        match previous.get(key) {
+            Some(previous_file)
+                if previous_file.quick_fingerprint != next_file.quick_fingerprint =>
+            {
+                changes.push(WatchChange {
+                    kind: "updated",
+                    relative_path: next_file.relative_path.clone(),
+                    previous_relative_path: None,
+                    size_bytes: Some(next_file.size_bytes),
+                    mtime_ms: Some(next_file.mtime_ms),
+                    quick_fingerprint: Some(next_file.quick_fingerprint.clone()),
+                });
+            }
+            Some(_) => {}
+            None => created.push(next_file.clone()),
+        }
+    }
+
+    for (key, previous_file) in previous {
+        if !next.contains_key(key) {
+            deleted.push(previous_file.clone());
+        }
+    }
+
+    let mut moved_deleted_indexes = HashSet::new();
+    for created_file in created {
+        let moved_from = deleted
+            .iter()
+            .enumerate()
+            .find(|(index, deleted_file)| {
+                !moved_deleted_indexes.contains(index)
+                    && deleted_file.quick_fingerprint == created_file.quick_fingerprint
+            })
+            .map(|(index, deleted_file)| (index, deleted_file.relative_path.clone()));
+
+        if let Some((index, previous_relative_path)) = moved_from {
+            moved_deleted_indexes.insert(index);
+            changes.push(WatchChange {
+                kind: "moved",
+                relative_path: created_file.relative_path.clone(),
+                previous_relative_path: Some(previous_relative_path),
+                size_bytes: Some(created_file.size_bytes),
+                mtime_ms: Some(created_file.mtime_ms),
+                quick_fingerprint: Some(created_file.quick_fingerprint.clone()),
+            });
+        } else {
+            changes.push(WatchChange {
+                kind: "created",
+                relative_path: created_file.relative_path.clone(),
+                previous_relative_path: None,
+                size_bytes: Some(created_file.size_bytes),
+                mtime_ms: Some(created_file.mtime_ms),
+                quick_fingerprint: Some(created_file.quick_fingerprint.clone()),
+            });
+        }
+    }
+
+    for (index, deleted_file) in deleted.into_iter().enumerate() {
+        if moved_deleted_indexes.contains(&index) {
+            continue;
+        }
+
+        changes.push(WatchChange {
+            kind: "deleted",
+            relative_path: deleted_file.relative_path,
+            previous_relative_path: None,
+            size_bytes: None,
+            mtime_ms: None,
+            quick_fingerprint: Some(deleted_file.quick_fingerprint),
+        });
+    }
+
+    changes.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    changes
+}
+
+fn emit_watch_status(
+    config: &Config,
+    scope: &WatchScopeKind,
+    event_type: &str,
+    message: Option<&str>,
+) {
+    let mut fields = vec![
+        ("vaultId", JsonValue::String(config.vault_id.clone())),
+        (
+            "rootPath",
+            JsonValue::String(config.root_path.display().to_string()),
+        ),
+        (
+            "scope",
+            JsonValue::String(watch_scope_label(scope).to_string()),
+        ),
+    ];
+
+    if let WatchScopeKind::Note {
+        asset_id,
+        relative_path,
+    } = scope
+    {
+        fields.push(("relativePath", JsonValue::String(relative_path.clone())));
+        if let Some(asset_id) = asset_id {
+            fields.push(("assetId", JsonValue::String(asset_id.clone())));
+        }
+    }
+
+    if let Some(message) = message {
+        fields.push(("message", JsonValue::String(message.to_string())));
+    }
+
+    emit_event(event_type, &fields);
+}
+
+fn emit_watch_changes(config: &Config, scope: &WatchScopeKind, changes: &[WatchChange]) {
+    if changes.is_empty() {
+        return;
+    }
+
+    emit_event(
+        "watcher_changes",
+        &[
+            ("vaultId", JsonValue::String(config.vault_id.clone())),
+            (
+                "scope",
+                JsonValue::String(watch_scope_label(scope).to_string()),
+            ),
+            (
+                "changes",
+                JsonValue::Raw(watch_changes_json(config, changes)),
+            ),
+        ],
+    );
+}
+
+fn watch_changes_json(config: &Config, changes: &[WatchChange]) -> String {
+    let items = changes
+        .iter()
+        .map(|change| {
+            let mut fields = vec![
+                format!("\"kind\":{}", json_quote(change.kind)),
+                format!("\"vaultId\":{}", json_quote(&config.vault_id)),
+                format!("\"relativePath\":{}", json_quote(&change.relative_path)),
+            ];
+
+            if let Some(previous_relative_path) = change.previous_relative_path.as_deref() {
+                fields.push(format!(
+                    "\"previousRelativePath\":{}",
+                    json_quote(previous_relative_path)
+                ));
+            }
+
+            if let Some(size_bytes) = change.size_bytes {
+                fields.push(format!("\"sizeBytes\":{size_bytes}"));
+            }
+
+            if let Some(mtime_ms) = change.mtime_ms {
+                fields.push(format!("\"mtimeMs\":{mtime_ms}"));
+            }
+
+            if let Some(quick_fingerprint) = change.quick_fingerprint.as_deref() {
+                fields.push(format!(
+                    "\"quickFingerprint\":{}",
+                    json_quote(quick_fingerprint)
+                ));
+            }
+
+            format!("{{{}}}", fields.join(","))
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+
+    format!("[{items}]")
+}
+
+fn parse_watch_command(line: &str) -> Result<Option<WatchCommand>, String> {
+    let Some(command) = json_string_field(line, "command") else {
+        return Ok(None);
+    };
+
+    match command.as_str() {
+        "audit_scope" => Ok(Some(WatchCommand::AuditScope)),
+        "shutdown" => Ok(Some(WatchCommand::Shutdown)),
+        "set_scope" => {
+            let scope_type = json_string_field(line, "type")
+                .ok_or_else(|| "set_scope command is missing scope.type".to_string())?;
+
+            match scope_type.as_str() {
+                "vault" => Ok(Some(WatchCommand::SetScope(WatchScopeKind::Vault))),
+                "note" => {
+                    let relative_path = json_string_field(line, "relativePath")
+                        .ok_or_else(|| "note scope is missing relativePath".to_string())?;
+                    validate_relative_watch_path(&relative_path)?;
+                    Ok(Some(WatchCommand::SetScope(WatchScopeKind::Note {
+                        asset_id: json_string_field(line, "assetId"),
+                        relative_path,
+                    })))
+                }
+                _ => Err(format!("unknown watcher scope type: {scope_type}")),
+            }
+        }
+        _ => Err(format!("unknown watcher command: {command}")),
+    }
+}
+
+fn validate_relative_watch_path(relative_path: &str) -> Result<(), String> {
+    let path = Path::new(relative_path);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(format!(
+            "watch path is outside of the vault: {relative_path}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn json_string_field(input: &str, field: &str) -> Option<String> {
+    let key = json_quote(field);
+    let key_index = input.find(&key)?;
+    let after_key = &input[key_index + key.len()..];
+    let colon_index = after_key.find(':')?;
+    let after_colon = after_key[colon_index + 1..].trim_start();
+
+    parse_json_string(after_colon).map(|(value, _)| value)
+}
+
+fn parse_json_string(input: &str) -> Option<(String, usize)> {
+    let mut chars = input.char_indices();
+    let (_, first) = chars.next()?;
+    if first != '"' {
+        return None;
+    }
+
+    let mut value = String::new();
+    let mut escaped = false;
+
+    for (index, character) in chars {
+        if escaped {
+            match character {
+                '"' => value.push('"'),
+                '\\' => value.push('\\'),
+                '/' => value.push('/'),
+                'b' => value.push('\u{0008}'),
+                'f' => value.push('\u{000c}'),
+                'n' => value.push('\n'),
+                'r' => value.push('\r'),
+                't' => value.push('\t'),
+                'u' => {
+                    return None;
+                }
+                other => value.push(other),
+            }
+            escaped = false;
+            continue;
+        }
+
+        if character == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        if character == '"' {
+            return Some((value, index + character.len_utf8()));
+        }
+
+        value.push(character);
+    }
+
+    None
+}
+
+fn watch_scope_label(scope: &WatchScopeKind) -> &'static str {
+    match scope {
+        WatchScopeKind::Vault => "vault",
+        WatchScopeKind::Note { .. } => "note",
+    }
+}
+
+fn watch_fallback_audit_ms(scope: &WatchScopeKind) -> u64 {
+    match scope {
+        WatchScopeKind::Vault => 30_000,
+        WatchScopeKind::Note { .. } => 10_000,
+    }
 }
 
 fn run_thumbnail_generation(config: &Config) -> Result<(), String> {
@@ -772,6 +1650,65 @@ fn reconcile_entries(config: &Config, entries: &mut [FileEntry]) -> Result<usize
     Ok(moved_count)
 }
 
+fn reconcile_refresh_entries(
+    config: &Config,
+    entries: &mut [FileEntry],
+    missing_paths: &HashSet<String>,
+) -> Result<usize, String> {
+    let existing_files = load_existing_files(config)?;
+    let missing_path_keys = missing_paths
+        .iter()
+        .map(|path| path.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let by_path: HashMap<String, ExistingFile> = existing_files
+        .iter()
+        .map(|file| (file.relative_path.to_ascii_lowercase(), file.clone()))
+        .collect();
+    let mut by_refresh_missing_fingerprint = HashMap::<String, Vec<ExistingFile>>::new();
+
+    for file in existing_files {
+        let Some(fingerprint) = file.quick_fingerprint.as_ref() else {
+            continue;
+        };
+
+        if !file.file_exists || missing_path_keys.contains(&file.relative_path.to_ascii_lowercase())
+        {
+            by_refresh_missing_fingerprint
+                .entry(fingerprint.clone())
+                .or_default()
+                .push(file);
+        }
+    }
+
+    let mut moved_count = 0;
+
+    for entry in entries {
+        if let Some(existing) = by_path.get(&entry.relative_path.to_ascii_lowercase()) {
+            entry.asset_id = existing.asset_id.clone();
+            entry.file_id = existing.file_id.clone();
+            continue;
+        }
+
+        let Some(candidates) = by_refresh_missing_fingerprint.get(&entry.quick_fingerprint) else {
+            continue;
+        };
+
+        if let [existing] = candidates.as_slice() {
+            entry.asset_id = existing.asset_id.clone();
+            entry.file_id = existing.file_id.clone();
+            entry.moved_from = Some(existing.relative_path.clone());
+            moved_count += 1;
+        } else if candidates.len() > 1 {
+            entry.conflict_candidates = candidates
+                .iter()
+                .map(|candidate| candidate.relative_path.clone())
+                .collect();
+        }
+    }
+
+    Ok(moved_count)
+}
+
 fn load_existing_files(config: &Config) -> Result<Vec<ExistingFile>, String> {
     let sql = format!(
         "\
@@ -806,48 +1743,494 @@ ORDER BY relative_path;\n",
     Ok(files)
 }
 
+fn load_asset_lookup(
+    config: &Config,
+) -> Result<(HashMap<String, String>, HashMap<String, Vec<String>>), String> {
+    let sql = format!(
+        "\
+SELECT
+  af.asset_id,
+  af.relative_path,
+  af.file_name,
+  COALESCE(mc.title, '')
+FROM asset_files af
+INNER JOIN assets a ON a.id = af.asset_id
+LEFT JOIN markdown_cache mc ON mc.asset_id = af.asset_id
+WHERE af.vault_id = {}
+  AND af.file_exists = 1
+  AND a.deleted_at IS NULL
+ORDER BY af.relative_path;\n",
+        sql_text(&config.vault_id)
+    );
+    let output = query_sqlite(&config.db_path, &sql)?;
+    let mut asset_by_path = HashMap::new();
+    let mut asset_by_basename = HashMap::<String, Vec<String>>::new();
+
+    for line in output.lines().filter(|line| !line.trim().is_empty()) {
+        let columns: Vec<_> = line.split('\t').collect();
+        if columns.len() != 4 {
+            return Err(format!(
+                "unexpected sqlite row while loading asset lookup: {line}"
+            ));
+        }
+
+        add_asset_lookup_entry(
+            &mut asset_by_path,
+            &mut asset_by_basename,
+            columns[1],
+            columns[2],
+            columns[0],
+            none_if_empty(columns[3]).as_deref(),
+        );
+    }
+
+    Ok((asset_by_path, asset_by_basename))
+}
+
+fn load_link_refresh_entries(
+    config: &Config,
+    entries: &[FileEntry],
+    missing_paths: &HashSet<String>,
+    refreshed_markdown_asset_ids: &HashSet<String>,
+) -> Result<Vec<FileEntry>, String> {
+    let mut affected_asset_ids = entries
+        .iter()
+        .map(|entry| entry.asset_id.clone())
+        .collect::<HashSet<_>>();
+    let mut affected_aliases = HashSet::new();
+
+    for entry in entries {
+        let title = if entry.kind == "markdown" {
+            fs::read_to_string(config.root_path.join(&entry.relative_path))
+                .ok()
+                .and_then(|content| markdown_title(&content))
+        } else {
+            None
+        };
+        add_relative_path_link_aliases(
+            &mut affected_aliases,
+            &entry.relative_path,
+            title.as_deref(),
+        );
+    }
+
+    for missing_path in missing_paths {
+        add_relative_path_link_aliases(&mut affected_aliases, missing_path, None);
+    }
+
+    for (asset_id, relative_path, title) in load_existing_aliases_for_paths(config, missing_paths)?
+    {
+        affected_asset_ids.insert(asset_id);
+        add_relative_path_link_aliases(&mut affected_aliases, &relative_path, title.as_deref());
+    }
+
+    let mut source_asset_ids = HashSet::new();
+    for candidate in load_link_candidates(config, &affected_asset_ids)? {
+        if refreshed_markdown_asset_ids.contains(&candidate.source_asset_id) {
+            continue;
+        }
+
+        let targets_affected_asset = candidate
+            .target_asset_id
+            .as_ref()
+            .map(|asset_id| affected_asset_ids.contains(asset_id))
+            .unwrap_or(false);
+        let targets_affected_alias = link_target_intersects_aliases(
+            &candidate.source_relative_path,
+            &candidate.target_ref,
+            &affected_aliases,
+        );
+
+        if targets_affected_asset || targets_affected_alias {
+            source_asset_ids.insert(candidate.source_asset_id);
+        }
+    }
+
+    load_markdown_entries_by_asset_ids(config, &source_asset_ids)
+}
+
+fn load_existing_aliases_for_paths(
+    config: &Config,
+    paths: &HashSet<String>,
+) -> Result<Vec<(String, String, Option<String>)>, String> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut sorted_paths = paths.iter().cloned().collect::<Vec<_>>();
+    sorted_paths.sort();
+    let path_filter = sorted_paths
+        .iter()
+        .map(|path| sql_text(path))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "\
+SELECT
+  af.asset_id,
+  af.relative_path,
+  COALESCE(mc.title, '')
+FROM asset_files af
+LEFT JOIN markdown_cache mc ON mc.asset_id = af.asset_id
+WHERE af.vault_id = {}
+  AND af.relative_path IN ({path_filter})
+ORDER BY af.relative_path;\n",
+        sql_text(&config.vault_id)
+    );
+    let output = query_sqlite(&config.db_path, &sql)?;
+    let mut aliases = Vec::new();
+
+    for line in output.lines().filter(|line| !line.trim().is_empty()) {
+        let columns: Vec<_> = line.split('\t').collect();
+        if columns.len() != 3 {
+            return Err(format!(
+                "unexpected sqlite row while loading path aliases: {line}"
+            ));
+        }
+
+        aliases.push((
+            columns[0].to_string(),
+            columns[1].to_string(),
+            none_if_empty(columns[2]),
+        ));
+    }
+
+    Ok(aliases)
+}
+
+fn load_link_candidates(
+    config: &Config,
+    affected_asset_ids: &HashSet<String>,
+) -> Result<Vec<LinkCandidate>, String> {
+    let target_filter = if affected_asset_ids.is_empty() {
+        "al.target_asset_id IS NULL".to_string()
+    } else {
+        let mut sorted_asset_ids = affected_asset_ids.iter().cloned().collect::<Vec<_>>();
+        sorted_asset_ids.sort();
+        let asset_filter = sorted_asset_ids
+            .iter()
+            .map(|asset_id| sql_text(asset_id))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("(al.target_asset_id IN ({asset_filter}) OR al.target_asset_id IS NULL)")
+    };
+    let sql = format!(
+        "\
+SELECT DISTINCT
+  al.source_asset_id,
+  COALESCE(al.target_asset_id, ''),
+  al.target_ref,
+  af.relative_path
+FROM asset_links al
+INNER JOIN assets a ON a.id = al.source_asset_id
+INNER JOIN asset_files af ON af.asset_id = al.source_asset_id
+WHERE al.vault_id = {}
+  AND al.created_from = 'markdown_parse'
+  AND a.kind = 'markdown'
+  AND a.deleted_at IS NULL
+  AND af.file_exists = 1
+  AND {target_filter}
+ORDER BY af.relative_path;\n",
+        sql_text(&config.vault_id)
+    );
+    let output = query_sqlite(&config.db_path, &sql)?;
+    let mut candidates = Vec::new();
+
+    for line in output.lines().filter(|line| !line.trim().is_empty()) {
+        let columns: Vec<_> = line.split('\t').collect();
+        if columns.len() != 4 {
+            return Err(format!(
+                "unexpected sqlite row while loading link candidates: {line}"
+            ));
+        }
+
+        candidates.push(LinkCandidate {
+            source_asset_id: columns[0].to_string(),
+            target_asset_id: none_if_empty(columns[1]),
+            target_ref: columns[2].to_string(),
+            source_relative_path: columns[3].to_string(),
+        });
+    }
+
+    Ok(candidates)
+}
+
+fn load_markdown_entries_by_asset_ids(
+    config: &Config,
+    asset_ids: &HashSet<String>,
+) -> Result<Vec<FileEntry>, String> {
+    if asset_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut sorted_asset_ids = asset_ids.iter().cloned().collect::<Vec<_>>();
+    sorted_asset_ids.sort();
+    let asset_filter = sorted_asset_ids
+        .iter()
+        .map(|asset_id| sql_text(asset_id))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "\
+SELECT af.id, af.asset_id, af.relative_path
+FROM asset_files af
+INNER JOIN assets a ON a.id = af.asset_id
+WHERE af.vault_id = {}
+  AND af.asset_id IN ({asset_filter})
+  AND af.file_exists = 1
+  AND a.kind = 'markdown'
+  AND a.deleted_at IS NULL
+ORDER BY af.relative_path;\n",
+        sql_text(&config.vault_id)
+    );
+    let output = query_sqlite(&config.db_path, &sql)?;
+    let mut entries = Vec::new();
+
+    for line in output.lines().filter(|line| !line.trim().is_empty()) {
+        let columns: Vec<_> = line.split('\t').collect();
+        if columns.len() != 3 {
+            return Err(format!(
+                "unexpected sqlite row while loading markdown entries: {line}"
+            ));
+        }
+
+        let absolute_path = config.root_path.join(columns[2]);
+        let Ok(metadata) = fs::metadata(&absolute_path) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+
+        let mut entry = file_entry_from_metadata(config, &absolute_path, &metadata)?;
+        entry.file_id = columns[0].to_string();
+        entry.asset_id = columns[1].to_string();
+        entries.push(entry);
+    }
+
+    Ok(entries)
+}
+
+fn add_relative_path_link_aliases(
+    aliases: &mut HashSet<String>,
+    relative_path: &str,
+    title: Option<&str>,
+) {
+    add_link_alias(aliases, relative_path);
+
+    let path = Path::new(relative_path);
+    if let Some(file_name) = path.file_name().and_then(OsStr::to_str) {
+        add_link_alias(aliases, file_name);
+    }
+
+    if path.extension().is_some() {
+        if let Some(stem) = path.file_stem().and_then(OsStr::to_str) {
+            add_link_alias(aliases, stem);
+            let parent = path.parent().unwrap_or_else(|| Path::new(""));
+            let path_without_extension = normalize_relative_path(&parent.join(stem));
+            add_link_alias(aliases, &path_without_extension);
+        }
+    }
+
+    if let Some(title) = title {
+        add_link_alias(aliases, title);
+    }
+}
+
+fn add_link_alias(aliases: &mut HashSet<String>, value: &str) {
+    let alias = value.trim().to_ascii_lowercase();
+    if !alias.is_empty() {
+        aliases.insert(alias);
+    }
+}
+
+fn link_target_intersects_aliases(
+    source_relative_path: &str,
+    target_ref: &str,
+    aliases: &HashSet<String>,
+) -> bool {
+    if aliases.is_empty() {
+        return false;
+    }
+
+    link_target_lookup_keys(source_relative_path, target_ref)
+        .into_iter()
+        .any(|key| aliases.contains(&key))
+}
+
+fn link_target_lookup_keys(source_relative_path: &str, target_ref: &str) -> Vec<String> {
+    let Some(ref_path) = clean_link_target_ref(target_ref) else {
+        return Vec::new();
+    };
+    let mut keys = Vec::new();
+    let ref_path_obj = Path::new(&ref_path);
+
+    if ref_path.contains('/') || ref_path_obj.extension().is_some() {
+        let source_dir = Path::new(source_relative_path)
+            .parent()
+            .unwrap_or_else(|| Path::new(""));
+        push_link_lookup_key(
+            &mut keys,
+            &normalize_relative_path(&source_dir.join(&ref_path)),
+        );
+        push_link_lookup_key(&mut keys, &normalize_relative_path(ref_path_obj));
+
+        if ref_path_obj.extension().is_none() {
+            push_link_lookup_key(
+                &mut keys,
+                &format!(
+                    "{}.md",
+                    normalize_relative_path(&source_dir.join(&ref_path))
+                ),
+            );
+            push_link_lookup_key(
+                &mut keys,
+                &format!("{}.md", normalize_relative_path(ref_path_obj)),
+            );
+        }
+    } else {
+        let basename = ref_path.to_ascii_lowercase();
+        push_link_lookup_key(&mut keys, &basename);
+        push_link_lookup_key(&mut keys, &format!("{basename}.md"));
+    }
+
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn push_link_lookup_key(keys: &mut Vec<String>, key: &str) {
+    let normalized = key.trim().to_ascii_lowercase();
+    if !normalized.is_empty() {
+        keys.push(normalized);
+    }
+}
+
+fn clean_link_target_ref(target_ref: &str) -> Option<String> {
+    let ref_without_alias = target_ref
+        .split_once('|')
+        .map(|(target, _alias)| target)
+        .unwrap_or(target_ref);
+    let ref_path = ref_without_alias
+        .split_once('#')
+        .map(|(target, _subpath)| target)
+        .unwrap_or(ref_without_alias)
+        .trim();
+
+    if ref_path.is_empty() || is_external_url(ref_path) {
+        None
+    } else {
+        Some(ref_path.to_string())
+    }
+}
+
+fn add_asset_lookup_entry(
+    asset_by_path: &mut HashMap<String, String>,
+    asset_by_basename: &mut HashMap<String, Vec<String>>,
+    relative_path: &str,
+    file_name: &str,
+    asset_id: &str,
+    title: Option<&str>,
+) {
+    asset_by_path.insert(relative_path.to_ascii_lowercase(), asset_id.to_string());
+    add_asset_basename_alias(asset_by_basename, file_name, asset_id);
+
+    if let Some(stem) = Path::new(file_name).file_stem().and_then(OsStr::to_str) {
+        add_asset_basename_alias(asset_by_basename, stem, asset_id);
+    }
+
+    if let Some(title) = title {
+        add_asset_basename_alias(asset_by_basename, title, asset_id);
+    }
+}
+
+fn add_asset_basename_alias(
+    asset_by_basename: &mut HashMap<String, Vec<String>>,
+    alias: &str,
+    asset_id: &str,
+) {
+    let key = alias.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return;
+    }
+
+    let ids = asset_by_basename.entry(key).or_default();
+    if !ids.iter().any(|existing| existing == asset_id) {
+        ids.push(asset_id.to_string());
+    }
+}
+
+fn remove_asset_from_lookup(
+    asset_by_path: &mut HashMap<String, String>,
+    asset_by_basename: &mut HashMap<String, Vec<String>>,
+    asset_id: &str,
+) {
+    asset_by_path.retain(|_, existing_asset_id| existing_asset_id != asset_id);
+
+    for ids in asset_by_basename.values_mut() {
+        ids.retain(|existing_asset_id| existing_asset_id != asset_id);
+    }
+    asset_by_basename.retain(|_, ids| !ids.is_empty());
+}
+
 fn write_index(
     config: &Config,
     run_id: &str,
     started_at: i64,
     entries: &[FileEntry],
-) -> Result<(), String> {
+    options: WriteIndexOptions<'_>,
+) -> Result<WriteIndexResult, String> {
     let mut sql = String::from("BEGIN;\n");
-    let mut asset_by_path = HashMap::new();
-    let mut asset_by_basename = HashMap::<String, Vec<String>>::new();
+    let (mut asset_by_path, mut asset_by_basename) = if options.include_existing_lookup {
+        load_asset_lookup(config)?
+    } else {
+        (HashMap::new(), HashMap::new())
+    };
+
+    for missing_path in options.missing_paths {
+        asset_by_path.remove(&missing_path.to_ascii_lowercase());
+    }
+    for (asset_id, _relative_path, _title) in
+        load_existing_aliases_for_paths(config, options.missing_paths)?
+    {
+        remove_asset_from_lookup(&mut asset_by_path, &mut asset_by_basename, &asset_id);
+    }
 
     for entry in entries {
-        asset_by_path.insert(
-            entry.relative_path.to_ascii_lowercase(),
-            entry.asset_id.clone(),
+        remove_asset_from_lookup(&mut asset_by_path, &mut asset_by_basename, &entry.asset_id);
+        add_asset_lookup_entry(
+            &mut asset_by_path,
+            &mut asset_by_basename,
+            &entry.relative_path,
+            &entry.file_name,
+            &entry.asset_id,
+            None,
         );
-        asset_by_basename
-            .entry(entry.file_name.to_ascii_lowercase())
-            .or_default()
-            .push(entry.asset_id.clone());
-
-        if let Some(stem) = Path::new(&entry.file_name)
-            .file_stem()
-            .and_then(OsStr::to_str)
-        {
-            asset_by_basename
-                .entry(stem.to_ascii_lowercase())
-                .or_default()
-                .push(entry.asset_id.clone());
-        }
 
         if entry.kind == "markdown" {
             let markdown_path = config.root_path.join(&entry.relative_path);
             if let Ok(content) = fs::read_to_string(markdown_path) {
                 if let Some(title) = markdown_title(&content) {
-                    asset_by_basename
-                        .entry(title.to_ascii_lowercase())
-                        .or_default()
-                        .push(entry.asset_id.clone());
+                    add_asset_basename_alias(&mut asset_by_basename, &title, &entry.asset_id);
                 }
             }
         }
     }
+    let refreshed_markdown_asset_ids = entries
+        .iter()
+        .filter(|entry| entry.kind == "markdown")
+        .map(|entry| entry.asset_id.clone())
+        .collect::<HashSet<_>>();
+    let link_refresh_entries = if options.include_existing_lookup {
+        load_link_refresh_entries(
+            config,
+            entries,
+            options.missing_paths,
+            &refreshed_markdown_asset_ids,
+        )?
+    } else {
+        Vec::new()
+    };
 
     for entry in entries {
         push_asset_sql(&mut sql, config, entry, started_at);
@@ -889,61 +2272,101 @@ fn write_index(
     }
 
     for entry in entries.iter().filter(|entry| entry.kind == "markdown") {
-        let markdown_path = config.root_path.join(&entry.relative_path);
-        let content = match fs::read_to_string(&markdown_path) {
-            Ok(content) => content,
-            Err(error) => {
-                push_markdown_cache_sql(&mut sql, config, entry, "failed", None, 0, 0, started_at);
-                push_sync_event_sql(
-                    &mut sql,
-                    config,
-                    run_id,
-                    Some(&entry.asset_id),
-                    "updated",
-                    None,
-                    Some(&entry.relative_path),
-                    None,
-                    &format!(
-                        "{{\"phase\":\"markdown_parse\",\"status\":\"failed\",\"message\":{}}}",
-                        json_quote(&error.to_string())
-                    ),
-                    started_at,
-                );
-                continue;
-            }
-        };
-
-        let links = parse_markdown_links(&content);
-        let title = markdown_title(&content).or_else(|| Some(entry.title.clone()));
-        push_markdown_cache_sql(
+        push_markdown_parse_sql(
             &mut sql,
             config,
             entry,
-            "parsed",
-            title.as_deref(),
-            word_count(&content),
-            links.len(),
+            run_id,
             started_at,
+            &asset_by_path,
+            &asset_by_basename,
         );
-        sql.push_str(&format!(
-            "DELETE FROM asset_links WHERE source_asset_id = {} AND created_from = 'markdown_parse';\n",
-            sql_text(&entry.asset_id)
-        ));
-
-        for link in links {
-            let resolved = resolve_link(entry, &link, &asset_by_path, &asset_by_basename);
-            push_asset_link_sql(&mut sql, config, entry, &link, &resolved, started_at);
-        }
     }
 
-    sql.push_str(&format!(
-        "UPDATE asset_files SET file_exists = 0, missing_since = COALESCE(missing_since, {started_at}) WHERE vault_id = {} AND last_seen_at < {started_at} AND file_exists = 1;\n",
-        sql_text(&config.vault_id)
-    ));
+    for entry in &link_refresh_entries {
+        push_markdown_parse_sql(
+            &mut sql,
+            config,
+            entry,
+            run_id,
+            started_at,
+            &asset_by_path,
+            &asset_by_basename,
+        );
+    }
+
+    for missing_path in options.missing_paths {
+        push_missing_file_sql(&mut sql, config, missing_path, started_at);
+    }
+
+    if options.mark_missing_unseen {
+        sql.push_str(&format!(
+            "UPDATE asset_files SET file_exists = 0, missing_since = COALESCE(missing_since, {started_at}) WHERE vault_id = {} AND last_seen_at < {started_at} AND file_exists = 1;\n",
+            sql_text(&config.vault_id)
+        ));
+    }
     sql.push_str("COMMIT;\n");
 
     run_sqlite(&config.db_path, &sql)?;
-    Ok(())
+    Ok(WriteIndexResult {
+        link_refresh_count: link_refresh_entries.len(),
+    })
+}
+
+fn push_markdown_parse_sql(
+    sql: &mut String,
+    config: &Config,
+    entry: &FileEntry,
+    run_id: &str,
+    started_at: i64,
+    asset_by_path: &HashMap<String, String>,
+    asset_by_basename: &HashMap<String, Vec<String>>,
+) {
+    let markdown_path = config.root_path.join(&entry.relative_path);
+    let content = match fs::read_to_string(&markdown_path) {
+        Ok(content) => content,
+        Err(error) => {
+            push_markdown_cache_sql(sql, config, entry, "failed", None, 0, 0, started_at);
+            push_sync_event_sql(
+                sql,
+                config,
+                run_id,
+                Some(&entry.asset_id),
+                "updated",
+                None,
+                Some(&entry.relative_path),
+                None,
+                &format!(
+                    "{{\"phase\":\"markdown_parse\",\"status\":\"failed\",\"message\":{}}}",
+                    json_quote(&error.to_string())
+                ),
+                started_at,
+            );
+            return;
+        }
+    };
+
+    let links = parse_markdown_links(&content);
+    let title = markdown_title(&content).or_else(|| Some(entry.title.clone()));
+    push_markdown_cache_sql(
+        sql,
+        config,
+        entry,
+        "parsed",
+        title.as_deref(),
+        word_count(&content),
+        links.len(),
+        started_at,
+    );
+    sql.push_str(&format!(
+        "DELETE FROM asset_links WHERE source_asset_id = {} AND created_from = 'markdown_parse';\n",
+        sql_text(&entry.asset_id)
+    ));
+
+    for link in links {
+        let resolved = resolve_link(entry, &link, asset_by_path, asset_by_basename);
+        push_asset_link_sql(sql, config, entry, &link, &resolved, started_at);
+    }
 }
 
 fn start_sync_run(config: &Config, run_id: &str, started_at: i64) -> Result<(), String> {
@@ -1000,6 +2423,7 @@ fn complete_sync_run(
     completed_at: i64,
     files_seen: i64,
     files_moved: i64,
+    files_missing: i64,
 ) -> Result<(), String> {
     let sql = format!(
         "\
@@ -1008,7 +2432,8 @@ SET status = 'completed',
     completed_at = {completed_at},
     duration_ms = {},
     files_seen = {files_seen},
-    files_moved = {files_moved}
+    files_moved = {files_moved},
+    files_missing = {files_missing}
 WHERE id = {};
 
 UPDATE vaults
@@ -1076,6 +2501,20 @@ ON CONFLICT(id) DO UPDATE SET
         entry.mtime_ms,
         sql_nullable_i64(entry.ctime_ms),
         sql_text(&entry.quick_fingerprint),
+    ));
+}
+
+fn push_missing_file_sql(sql: &mut String, config: &Config, relative_path: &str, now: i64) {
+    sql.push_str(&format!(
+        "\
+UPDATE asset_files
+SET file_exists = 0,
+    missing_since = COALESCE(missing_since, {now})
+WHERE vault_id = {}
+  AND relative_path = {}
+  AND file_exists = 1;\n",
+        sql_text(&config.vault_id),
+        sql_text(relative_path),
     ));
 }
 
@@ -1699,6 +3138,7 @@ fn truncate_error(value: &str) -> String {
 enum JsonValue {
     String(String),
     Number(i64),
+    Raw(String),
 }
 
 fn emit_event(event_type: &str, fields: &[(&str, JsonValue)]) {
@@ -1711,6 +3151,7 @@ fn emit_event(event_type: &str, fields: &[(&str, JsonValue)]) {
         match value {
             JsonValue::String(value) => output.push_str(&json_quote(value)),
             JsonValue::Number(value) => output.push_str(&value.to_string()),
+            JsonValue::Raw(value) => output.push_str(value),
         }
     }
 

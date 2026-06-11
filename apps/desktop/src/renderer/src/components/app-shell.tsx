@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { CheckCircle2, Info, TriangleAlert, X, XCircle } from "lucide-react";
 import { getToastSnapshot, subscribeToasts, toast, type ToastItem } from "@/lib/toast";
 
-import { trpc, type RouterOutputs } from "@/lib/trpc";
+import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
 
 type TaskSnapshot = RouterOutputs["tasks"]["snapshot"];
 type BackgroundTask = NonNullable<TaskSnapshot["activeTask"]>;
@@ -22,10 +22,13 @@ type FooterTask = {
 };
 
 const COMPLETED_VISIBLE_MS = 8000;
+const EVENT_TASK_RETENTION_MS = 30 * 60 * 1000;
 const THUMBNAIL_REFRESH_BATCH_SIZE = 8;
+const TASK_EVENT_INVALIDATION_DELAY_MS = 250;
 const PF_TYPE: Record<FooterTaskType, { label: string }> = {
   indexing: { label: "索引" },
   reconcile: { label: "校验" },
+  sync: { label: "同步" },
   thumbnails: { label: "缩略图" },
 };
 
@@ -122,13 +125,16 @@ function GlobalStatusLine() {
   const [open, setOpen] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
   const [dismissed, setDismissed] = useState(() => new Set<string>());
+  const [eventTasks, setEventTasks] = useState(() => new Map<string, BackgroundTask>());
   const [now, setNow] = useState(() => Date.now());
   const completedFirstSeen = useRef(new Map<string, number>());
   const completedInvalidatedIds = useRef(new Set<string>());
   const lastThumbnailProgressInvalidation = useRef({ taskId: "", progress: 0 });
+  const taskEventInvalidationTimer = useRef<number | null>(null);
   const invalidateVaultState = async () => {
     await Promise.all([
       queryClient.invalidateQueries(trpc.assets.list.queryFilter()),
+      queryClient.invalidateQueries(trpc.assets.markdownContent.queryFilter()),
       queryClient.invalidateQueries(trpc.assets.vaults.queryFilter()),
       queryClient.invalidateQueries(trpc.tasks.snapshot.queryFilter()),
     ]);
@@ -161,6 +167,59 @@ function GlobalStatusLine() {
     refetchOnWindowFocus: true,
   });
   const snapshot = tasksQuery.data;
+
+  useEffect(() => {
+    const scheduleTaskSnapshotInvalidation = () => {
+      if (taskEventInvalidationTimer.current != null) {
+        return;
+      }
+
+      taskEventInvalidationTimer.current = window.setTimeout(() => {
+        taskEventInvalidationTimer.current = null;
+        void queryClient.invalidateQueries(trpc.tasks.snapshot.queryFilter());
+      }, TASK_EVENT_INVALIDATION_DELAY_MS);
+    };
+
+    const subscription = trpcClient.events.subscribe.subscribe(undefined, {
+      onData: (event) => {
+        if (
+          event.type === "task.updated"
+          || event.type === "task.completed"
+          || event.type === "task.failed"
+        ) {
+          setEventTasks((current) => {
+            const next = new Map(current);
+            next.set(event.task.id, event.task);
+            pruneEventTasks(next);
+            return next;
+          });
+          scheduleTaskSnapshotInvalidation();
+        }
+
+        if (
+          event.type === "task.completed"
+          && (event.task.type === "sync" || event.task.type === "indexing" || event.task.type === "reconcile")
+        ) {
+          void invalidateVaultState();
+        }
+
+        if (event.type === "task.completed" && event.task.type === "thumbnails") {
+          void queryClient.invalidateQueries(trpc.assets.list.queryFilter());
+        }
+      },
+      onError: (error) => {
+        console.error("Task event subscription failed", error);
+      },
+    });
+
+    return () => {
+      subscription.unsubscribe();
+      if (taskEventInvalidationTimer.current != null) {
+        window.clearTimeout(taskEventInvalidationTimer.current);
+        taskEventInvalidationTimer.current = null;
+      }
+    };
+  }, [queryClient]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -196,17 +255,30 @@ function GlobalStatusLine() {
   }, [queryClient, snapshot]);
 
   const tasks = useMemo(() => {
-    if (!snapshot) {
-      return [];
+    const byId = new Map<string, BackgroundTask>();
+
+    for (const task of eventTasks.values()) {
+      byId.set(task.id, task);
     }
 
-    return [
-      ...snapshot.running,
-      ...snapshot.queued,
-      ...snapshot.failed,
-      ...snapshot.recentlyCompleted,
-    ].map(toFooterTask);
-  }, [snapshot]);
+    if (snapshot) {
+      for (const task of [
+        ...snapshot.running,
+        ...snapshot.queued,
+        ...snapshot.failed,
+        ...snapshot.recentlyCompleted,
+      ]) {
+        const current = byId.get(task.id);
+        if (!current || task.updatedAt >= current.updatedAt) {
+          byId.set(task.id, task);
+        }
+      }
+    }
+
+    return Array.from(byId.values())
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map(toFooterTask);
+  }, [eventTasks, snapshot]);
 
   const live = useMemo(() => tasks.filter((task) => !dismissed.has(task.id)), [dismissed, tasks]);
   const running = live.filter((task) => task.state === "running");
@@ -260,7 +332,8 @@ function GlobalStatusLine() {
   const activeVault = snapshot?.activeVault ?? null;
   const vaultName = activeVault?.name ?? null;
   const vaultPath = activeVault?.rootPath ?? null;
-  const syncRunning = reconcileVault.isPending || running.some((task) => task.type === "reconcile" || task.type === "indexing");
+  const syncRunning = reconcileVault.isPending
+    || running.some((task) => task.type === "reconcile" || task.type === "indexing" || task.type === "sync");
   const canSync = Boolean(activeVault) && !syncRunning;
   const dismissTask = (id: string) => {
     setDismissed((current) => new Set(current).add(id));
@@ -419,6 +492,16 @@ function toFooterTask(task: BackgroundTask): FooterTask {
     reason: task.errorMessage,
     completedAt: task.completedAt,
   };
+}
+
+function pruneEventTasks(tasks: Map<string, BackgroundTask>) {
+  const cutoff = Date.now() - EVENT_TASK_RETENTION_MS;
+
+  for (const [id, task] of tasks) {
+    if ((task.status === "completed" || task.status === "failed") && (task.completedAt ?? task.updatedAt) < cutoff) {
+      tasks.delete(id);
+    }
+  }
 }
 
 function PFPill({

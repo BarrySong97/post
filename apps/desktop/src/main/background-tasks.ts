@@ -1,6 +1,8 @@
 import { app } from "electron";
 
-export type BackgroundTaskType = "indexing" | "reconcile" | "thumbnails";
+import { appEventBus } from "./events";
+
+export type BackgroundTaskType = "indexing" | "reconcile" | "sync" | "thumbnails";
 export type BackgroundTaskStatus = "queued" | "running" | "completed" | "failed";
 
 export type BackgroundTaskProgress = {
@@ -73,6 +75,7 @@ class BackgroundTaskManager {
 
     this.tasks.set(task.id, task);
     this.prune();
+    this.publishTaskEvents(task);
     return task;
   }
 
@@ -159,12 +162,42 @@ class BackgroundTaskManager {
       return;
     }
 
-    this.tasks.set(taskId, {
+    const nextTask = {
       ...task,
       ...patch,
       updatedAt: Date.now(),
-    });
+    };
+
+    this.tasks.set(taskId, nextTask);
     this.prune();
+    this.publishTaskEvents(nextTask, task.status);
+  }
+
+  private publishTaskEvents(task: BackgroundTask, previousStatus?: BackgroundTaskStatus): void {
+    const emittedAt = Date.now();
+    appEventBus.publish({
+      type: "task.updated",
+      emittedAt,
+      task,
+    });
+
+    if (previousStatus === task.status) {
+      return;
+    }
+
+    if (task.status === "completed") {
+      appEventBus.publish({
+        type: "task.completed",
+        emittedAt,
+        task,
+      });
+    } else if (task.status === "failed") {
+      appEventBus.publish({
+        type: "task.failed",
+        emittedAt,
+        task,
+      });
+    }
   }
 
   private prune(): void {

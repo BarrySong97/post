@@ -15,6 +15,8 @@ type IPCResponse =
       };
     };
 
+let nextSubscriptionId = 0;
+
 export function ipcTRPCLink(): TRPCLink<AppRouter> {
   return () => {
     return ({ op }) => {
@@ -25,6 +27,40 @@ export function ipcTRPCLink(): TRPCLink<AppRouter> {
         }
 
         let isActive = true;
+
+        if (op.type === "subscription") {
+          const subscriptionId = `sub_${Date.now().toString(36)}_${(nextSubscriptionId += 1).toString(36)}`;
+          const unsubscribeEventListener = window.api.onTRPCSubscriptionEvent((event) => {
+            if (!isActive || event.id !== subscriptionId) {
+              return;
+            }
+
+            if (event.type === "next") {
+              observer.next({
+                context: op.context,
+                result: {
+                  data: event.data,
+                },
+              });
+            } else if (event.type === "error") {
+              observer.error(TRPCClientError.from(new Error(event.error.message)));
+            } else {
+              observer.complete();
+            }
+          });
+
+          window.api.trpcSubscribe({
+            id: subscriptionId,
+            path: op.path,
+            input: op.input,
+          });
+
+          return () => {
+            isActive = false;
+            unsubscribeEventListener();
+            window.api.trpcUnsubscribe({ id: subscriptionId });
+          };
+        }
 
         window.api
           .trpcRequest({

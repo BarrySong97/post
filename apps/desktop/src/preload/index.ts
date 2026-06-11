@@ -12,6 +12,24 @@ type TerminalExitEvent = {
   signal: number | string | null;
 };
 
+type TRPCSubscriptionEvent =
+  | {
+      id: string;
+      type: "next";
+      data: unknown;
+    }
+  | {
+      id: string;
+      type: "error";
+      error: {
+        message: string;
+      };
+    }
+  | {
+      id: string;
+      type: "complete";
+    };
+
 const api = {
   platform: {
     isMac: process.platform === "darwin",
@@ -56,6 +74,19 @@ const api = {
   },
   trpcRequest: (request: { type: string; path: string; input: unknown }) =>
     ipcRenderer.invoke("trpc:request", request) as Promise<unknown>,
+  trpcSubscribe: (request: { id: string; path: string; input: unknown }) => {
+    ipcRenderer.send("trpc:subscribe", request);
+  },
+  trpcUnsubscribe: (request: { id: string }) => {
+    ipcRenderer.send("trpc:unsubscribe", request);
+  },
+  onTRPCSubscriptionEvent: (callback: (event: TRPCSubscriptionEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: TRPCSubscriptionEvent) => {
+      callback(payload);
+    };
+    ipcRenderer.on("trpc:subscription:event", listener);
+    return () => ipcRenderer.off("trpc:subscription:event", listener);
+  },
 };
 
 if (process.contextIsolated) {

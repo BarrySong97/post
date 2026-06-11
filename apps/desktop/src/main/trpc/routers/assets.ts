@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -10,9 +11,10 @@ import { and, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 
 import { schema } from "@post/db";
-import { backgroundTaskManager, type BackgroundTaskType } from "../../background-tasks";
+import { backgroundTaskManager } from "../../background-tasks";
 import { getDatabase } from "../../db";
 import { chooseVaultFolder, type IndexerCommand, type IndexerEvent, runIndexer } from "../../indexer";
+import { runThumbnailTask } from "../../thumbnail-tasks";
 import { publicProcedure, router } from "../trpc";
 
 const vaultInput = z.object({
@@ -521,11 +523,13 @@ function startThumbnailPrewarm(vault: VaultRecord, options: { force?: boolean } 
     return;
   }
 
-  if (!options.force && backgroundTaskManager.hasRecentCompletedTask(
+  const recentlyCompleted = backgroundTaskManager.hasRecentCompletedTask(
     "thumbnails",
     vault.id,
     THUMBNAIL_AUTO_PREWARM_COOLDOWN_MS,
-  )) {
+  );
+
+  if (!options.force && recentlyCompleted && !hasThumbnailWork(vault)) {
     return;
   }
 
@@ -534,23 +538,62 @@ function startThumbnailPrewarm(vault: VaultRecord, options: { force?: boolean } 
   });
 }
 
-function runThumbnailTask(
-  vault: VaultRecord,
-  input: { assetIds?: string[]; limit?: number } = {},
-) {
-  return runIndexerTask("thumbnails", "thumbnails", {
-    vaultId: vault.id,
-    rootPath: vault.rootPath,
-    vaultName: vault.name,
-    title: "Generating thumbnails",
-    assetIds: input.assetIds,
-    limit: input.limit,
+function hasThumbnailWork(vault: VaultRecord) {
+  const rows = getDatabase()
+    .select({
+      sizeBytes: schema.assetFiles.sizeBytes,
+      mtimeMs: schema.assetFiles.mtimeMs,
+      quickFingerprint: schema.assetFiles.quickFingerprint,
+      cacheStatus: schema.imageCache.status,
+      thumbnailPath: schema.imageCache.thumbnailPath,
+      sourceSizeBytes: schema.imageCache.sourceSizeBytes,
+      sourceMtimeMs: schema.imageCache.sourceMtimeMs,
+      sourceQuickFingerprint: schema.imageCache.sourceQuickFingerprint,
+    })
+    .from(schema.assets)
+    .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
+    .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
+    .where(and(
+      eq(schema.assets.vaultId, vault.id),
+      eq(schema.assets.kind, "image"),
+      isNull(schema.assets.deletedAt),
+      eq(schema.assetFiles.fileExists, true),
+    ))
+    .all();
+
+  return rows.some((row) => {
+    if (row.cacheStatus == null || row.cacheStatus === "pending") {
+      return true;
+    }
+
+    const sourceMatches =
+      row.sourceSizeBytes === row.sizeBytes
+      && getTimestampMs(row.sourceMtimeMs) === getTimestampMs(row.mtimeMs)
+      && row.sourceQuickFingerprint === row.quickFingerprint;
+
+    if (row.cacheStatus === "failed") {
+      return !sourceMatches;
+    }
+
+    return (
+      !sourceMatches
+      || !row.thumbnailPath
+      || !existsSync(row.thumbnailPath)
+    );
   });
+}
+
+function getTimestampMs(value: Date | number | null) {
+  if (value == null) {
+    return null;
+  }
+
+  return value instanceof Date ? value.getTime() : value;
 }
 
 async function runIndexerTask(
   command: IndexerCommand,
-  type: BackgroundTaskType,
+  type: "indexing" | "reconcile",
   input: RunIndexerTaskInput,
 ) {
   const task = backgroundTaskManager.createTask({
@@ -561,10 +604,6 @@ async function runIndexerTask(
   });
   const state = {
     filesSeen: 0,
-    thumbnailRequested: 0,
-    thumbnailReady: 0,
-    thumbnailCached: 0,
-    thumbnailFailed: 0,
   };
 
   backgroundTaskManager.startTask(task.id);
@@ -594,14 +633,10 @@ async function runIndexerTask(
 
 function applyIndexerEventToTask(
   taskId: string,
-  type: BackgroundTaskType,
+  type: "indexing" | "reconcile",
   event: IndexerEvent,
   state: {
     filesSeen: number;
-    thumbnailRequested: number;
-    thumbnailReady: number;
-    thumbnailCached: number;
-    thumbnailFailed: number;
   },
 ) {
   if (type === "indexing" || type === "reconcile") {
@@ -616,53 +651,12 @@ function applyIndexerEventToTask(
     }
     return;
   }
-
-  if (type !== "thumbnails") {
-    return;
-  }
-
-  if (event.type === "started" && typeof event.requested === "number") {
-    state.thumbnailRequested = event.requested;
-  }
-
-  if (event.type === "thumbnail_ready") {
-    state.thumbnailReady += 1;
-  } else if (event.type === "thumbnail_cached") {
-    state.thumbnailCached += 1;
-  } else if (event.type === "thumbnail_failed") {
-    state.thumbnailFailed += 1;
-  } else if (event.type === "completed") {
-    if (typeof event.ready === "number") {
-      state.thumbnailReady = event.ready;
-    }
-    if (typeof event.cached === "number") {
-      state.thumbnailCached = event.cached;
-    }
-    if (typeof event.failed === "number") {
-      state.thumbnailFailed = event.failed;
-    }
-  }
-
-  const current = state.thumbnailReady + state.thumbnailCached + state.thumbnailFailed;
-  backgroundTaskManager.updateTask(taskId, {
-    progress: {
-      current,
-      total: state.thumbnailRequested || undefined,
-      label: state.thumbnailRequested > 0
-        ? `${current} / ${state.thumbnailRequested}`
-        : `${current} images`,
-    },
-  });
 }
 
 function getTaskCompletionSummary(
-  type: BackgroundTaskType,
+  type: "indexing" | "reconcile",
   state: {
     filesSeen: number;
-    thumbnailRequested: number;
-    thumbnailReady: number;
-    thumbnailCached: number;
-    thumbnailFailed: number;
   },
   events: IndexerEvent[],
 ) {
@@ -672,22 +666,9 @@ function getTaskCompletionSummary(
     return `Indexed ${filesSeen} files`;
   }
 
-  if (type === "reconcile") {
-    const completed = findLastEvent(events, "completed");
-    const filesSeen = typeof completed?.filesSeen === "number" ? completed.filesSeen : state.filesSeen;
-    return `Reindexed ${filesSeen} files`;
-  }
-
-  const generated = state.thumbnailReady;
-  if (state.thumbnailRequested === 0) {
-    return "Thumbnails up to date";
-  }
-
-  if (state.thumbnailFailed > 0) {
-    return `Generated ${generated} thumbnails · ${state.thumbnailFailed} failed`;
-  }
-
-  return `Thumbnails complete · ${generated} images`;
+  const completed = findLastEvent(events, "completed");
+  const filesSeen = typeof completed?.filesSeen === "number" ? completed.filesSeen : state.filesSeen;
+  return `Reindexed ${filesSeen} files`;
 }
 
 function findLastEvent(events: IndexerEvent[], eventType: string) {

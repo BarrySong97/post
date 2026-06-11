@@ -2042,6 +2042,22 @@ const MasonryCard = React.memo(function MasonryCard({ data }: { index: number; d
   return <AssetCard asset={data} />;
 });
 
+function getAssetLayoutSignature(assetItems: readonly Asset[]) {
+  return assetItems
+    .map((asset) => [
+      asset.id,
+      asset.kind,
+      asset.title,
+      asset.body ?? "",
+      asset.thumbnailUrl ?? "",
+      asset.thumbnailStatus ?? "",
+      asset.imageWidth ?? "",
+      asset.imageHeight ?? "",
+      asset.fileExt ?? "",
+    ].join("\u0001"))
+    .join("\u0002");
+}
+
 function AssetBoard({
   assetItems,
   tagOptions,
@@ -2081,6 +2097,10 @@ function AssetBoard({
   const filteredAssetItems = useMemo(
     () => filterAndSortAssets(assetItems, filters),
     [assetItems, filters],
+  );
+  const layoutSignature = useMemo(
+    () => getAssetLayoutSignature(filteredAssetItems),
+    [filteredAssetItems],
   );
 
   useEffect(() => {
@@ -2132,11 +2152,11 @@ function AssetBoard({
     };
   }, []);
 
-  // subtract px-6 padding (24px × 2 = 48px)
+  // subtract px-6 padding (24px * 2 = 48px)
   const innerWidth = Math.max(0, size.width - 48);
   const positioner = usePositioner(
     { width: innerWidth, columnGutter: 16, columnWidth: 260 },
-    [innerWidth],
+    [innerWidth, layoutSignature],
   );
   const resizeObserver = useMasonryResizeObserver(positioner);
 
@@ -2151,7 +2171,7 @@ function AssetBoard({
     resizeObserver,
     itemHeightEstimate: 340,
     itemKey: (asset) => asset.id,
-    overscanBy: 1,
+    overscanBy: 1.25,
   });
 
   return (
@@ -3094,6 +3114,36 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   );
   const assetItems = indexedAssets;
   const activeAsset = assetId ? assetItems.find((asset) => asset.id === assetId) : undefined;
+  const setWatcherScope = useMutation(trpc.watcher.setScope.mutationOptions());
+  const auditWatcher = useMutation(trpc.watcher.audit.mutationOptions());
+  const watcherScope = useMemo(() => {
+    if (activeAsset) {
+      return {
+        key: `note:${activeAsset.id}:${activeAsset.source}`,
+        input: {
+          type: "note" as const,
+          assetId: activeAsset.id,
+        },
+      };
+    }
+
+    if (assetsQuery.data?.vault) {
+      return {
+        key: `vault:${assetsQuery.data.vault.id}:${assetsQuery.data.vault.rootPath}`,
+        input: {
+          type: "vault" as const,
+          vaultId: assetsQuery.data.vault.id,
+        },
+      };
+    }
+
+    return {
+      key: "idle",
+      input: {
+        type: "idle" as const,
+      },
+    };
+  }, [activeAsset, assetsQuery.data?.vault]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem("post.assetManager.sidebarCollapsed") === "true",
   );
@@ -3120,6 +3170,21 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   useEffect(() => {
     syncWindowControlsWithSidebar(!sidebarCollapsed || sidebarPreviewOpen);
   }, [sidebarCollapsed, sidebarPreviewOpen]);
+
+  useEffect(() => {
+    setWatcherScope.mutate(watcherScope.input);
+  }, [watcherScope.key]);
+
+  useEffect(() => {
+    const handleFocus = () => {
+      auditWatcher.mutate();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
 
   useEffect(() => {
     localStorage.setItem("post.assetManager.sidebarCollapsed", String(sidebarCollapsed));

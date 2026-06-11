@@ -1,12 +1,12 @@
 import { app, dialog } from "electron";
 import { is } from "@electron-toolkit/utils";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
 import { getDatabasePath } from "./db";
 
-export type IndexerCommand = "scan" | "reconcile" | "watch" | "thumbnails";
+export type IndexerCommand = "scan" | "reconcile" | "refresh" | "watch" | "thumbnails";
 
 export type IndexerEvent = {
   type: string;
@@ -17,8 +17,31 @@ export type IndexerResult = {
   events: IndexerEvent[];
 };
 
+export type IndexerWatchScope =
+  | {
+      type: "vault";
+    }
+  | {
+      type: "note";
+      assetId: string;
+      relativePath: string;
+    };
+
+export type IndexerWatchDaemon = {
+  pid: number | undefined;
+  setScope: (scope: IndexerWatchScope) => void;
+  audit: () => void;
+  stop: () => void;
+};
+
 type RunIndexerOptions = {
   onEvent?: (event: IndexerEvent) => void;
+};
+
+type WatchDaemonOptions = {
+  onEvent?: (event: IndexerEvent) => void;
+  onError?: (error: Error) => void;
+  onExit?: (code: number | null, signal: NodeJS.Signals | null, stderr: string) => void;
 };
 
 export async function chooseVaultFolder(): Promise<string | null> {
@@ -36,7 +59,7 @@ export async function chooseVaultFolder(): Promise<string | null> {
 
 export async function runIndexer(
   command: IndexerCommand,
-  input: { vaultId: string; rootPath: string; assetIds?: string[]; limit?: number },
+  input: { vaultId: string; rootPath: string; assetIds?: string[]; paths?: string[]; limit?: number },
   options: RunIndexerOptions = {},
 ): Promise<IndexerResult> {
   const { executable, args, cwd } = resolveIndexerInvocation(command, input);
@@ -93,6 +116,68 @@ export async function runIndexer(
   });
 }
 
+export function startIndexerWatchDaemon(
+  input: { vaultId: string; rootPath: string },
+  options: WatchDaemonOptions = {},
+): IndexerWatchDaemon {
+  const { executable, args, cwd } = resolveIndexerInvocation("watch", input, { daemon: true });
+  const child = spawn(executable, args, {
+    cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+    env: process.env,
+  });
+  const stderr: string[] = [];
+  let stdoutBuffer = "";
+  let closed = false;
+
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    stdoutBuffer += chunk;
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const event = parseIndexerEvent(line);
+      if (event) {
+        options.onEvent?.(event);
+      }
+    }
+  });
+
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    stderr.push(chunk);
+  });
+
+  child.on("error", (error) => {
+    options.onError?.(error);
+  });
+
+  child.on("close", (code, signal) => {
+    closed = true;
+    const trailingEvent = parseIndexerEvent(stdoutBuffer);
+    if (trailingEvent) {
+      options.onEvent?.(trailingEvent);
+    }
+    options.onExit?.(code, signal, stderr.join("").trim());
+  });
+
+  const writeCommand = (command: unknown) => {
+    if (closed || child.stdin.destroyed) {
+      return;
+    }
+
+    child.stdin.write(`${JSON.stringify(command)}\n`);
+  };
+
+  return {
+    pid: child.pid,
+    setScope: (scope) => writeCommand({ command: "set_scope", scope }),
+    audit: () => writeCommand({ command: "audit_scope" }),
+    stop: () => stopWatchDaemon(child, writeCommand),
+  };
+}
+
 export function getThumbnailCacheRoot(): string {
   const root = path.join(app.getPath("userData"), "thumbnails");
   mkdirSync(root, { recursive: true });
@@ -114,7 +199,8 @@ function parseIndexerEvent(line: string): IndexerEvent | null {
 
 function resolveIndexerInvocation(
   command: IndexerCommand,
-  input: { vaultId: string; rootPath: string; assetIds?: string[]; limit?: number },
+  input: { vaultId: string; rootPath: string; assetIds?: string[]; paths?: string[]; limit?: number },
+  options: { daemon?: boolean } = {},
 ) {
   const indexerArgs = [
     command,
@@ -128,8 +214,18 @@ function resolveIndexerInvocation(
     getThumbnailCacheRoot(),
   ];
 
+  if (options.daemon) {
+    indexerArgs.push("--daemon");
+  }
+
   if (input.assetIds?.length) {
     indexerArgs.push("--asset-ids", input.assetIds.join(","));
+  }
+
+  if (input.paths?.length) {
+    for (const inputPath of input.paths) {
+      indexerArgs.push("--path", inputPath);
+    }
   }
 
   if (input.limit) {
@@ -151,6 +247,25 @@ function resolveIndexerInvocation(
     args: indexerArgs,
     cwd: app.getPath("userData"),
   };
+}
+
+function stopWatchDaemon(
+  child: ChildProcessWithoutNullStreams,
+  writeCommand: (command: unknown) => void,
+): void {
+  if (child.killed) {
+    return;
+  }
+
+  writeCommand({ command: "shutdown" });
+  const killTimer = setTimeout(() => {
+    if (!child.killed) {
+      child.kill();
+    }
+  }, 1000);
+  child.once("close", () => {
+    clearTimeout(killTimer);
+  });
 }
 
 function findRepoRoot(start: string): string {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, shell } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, shell, type WebContents } from "electron";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import path, { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,6 +10,7 @@ import { getDatabase, getDatabasePath, initDatabase } from "./db";
 import { getThumbnailCacheRoot } from "./indexer";
 import { registerTerminalHandlers } from "./terminal";
 import { appRouter } from "./trpc/router";
+import { vaultWatcherManager } from "./vault-watcher-manager";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -26,6 +27,46 @@ type TRPCRequest = {
   type: "query" | "mutation" | "subscription";
   path: string;
   input: unknown;
+};
+
+type TRPCSubscriptionRequest = {
+  id: string;
+  path: string;
+  input: unknown;
+};
+
+type TRPCUnsubscribeRequest = {
+  id: string;
+};
+
+type TRPCSubscriptionEvent =
+  | {
+      id: string;
+      type: "next";
+      data: unknown;
+    }
+  | {
+      id: string;
+      type: "error";
+      error: {
+        message: string;
+      };
+    }
+  | {
+      id: string;
+      type: "complete";
+    };
+
+type ObservableSubscription = {
+  unsubscribe: () => void;
+};
+
+type ObservableLike = {
+  subscribe: (observer: {
+    next: (value: unknown) => void;
+    error: (error: unknown) => void;
+    complete: () => void;
+  }) => ObservableSubscription | (() => void) | void;
 };
 
 const TRAFFIC_LIGHT_POSITION = { x: 18, y: 14 };
@@ -63,8 +104,52 @@ function getCallerProcedure(caller: unknown, path: string): unknown {
   }, caller);
 }
 
+function getTRPCSubscriptionKey(senderId: number, subscriptionId: string): string {
+  return `${senderId}:${subscriptionId}`;
+}
+
+function serializeError(error: unknown): { message: string } {
+  return {
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function isObservableLike(value: unknown): value is ObservableLike {
+  return (
+    value != null
+    && typeof value === "object"
+    && typeof (value as { subscribe?: unknown }).subscribe === "function"
+  );
+}
+
+function sendTRPCSubscriptionEvent(sender: WebContents, payload: TRPCSubscriptionEvent): void {
+  if (!sender.isDestroyed()) {
+    sender.send("trpc:subscription:event", payload);
+  }
+}
+
 function registerTRPCHandler(): void {
   const caller = appRouter.createCaller({});
+  const subscriptions = new Map<string, { senderId: number; unsubscribe: () => void }>();
+  const trackedSenders = new Set<number>();
+
+  const disposeSubscription = (key: string): void => {
+    const subscription = subscriptions.get(key);
+    if (!subscription) {
+      return;
+    }
+
+    subscriptions.delete(key);
+    subscription.unsubscribe();
+  };
+
+  const disposeSubscriptionsForSender = (senderId: number): void => {
+    for (const [key, subscription] of subscriptions.entries()) {
+      if (subscription.senderId === senderId) {
+        disposeSubscription(key);
+      }
+    }
+  };
 
   ipcMain.handle("trpc:request", async (_event, request: TRPCRequest) => {
     if (request.type === "subscription") {
@@ -93,10 +178,94 @@ function registerTRPCHandler(): void {
       return {
         ok: false,
         error: {
-          message: error instanceof Error ? error.message : String(error),
+          message: serializeError(error).message,
         },
       };
     }
+  });
+
+  ipcMain.on("trpc:subscribe", async (event, request: TRPCSubscriptionRequest) => {
+    const senderId = event.sender.id;
+    const key = getTRPCSubscriptionKey(senderId, request.id);
+
+    disposeSubscription(key);
+
+    if (!trackedSenders.has(senderId)) {
+      trackedSenders.add(senderId);
+      event.sender.once("destroyed", () => {
+        disposeSubscriptionsForSender(senderId);
+        trackedSenders.delete(senderId);
+      });
+    }
+
+    const procedure = getCallerProcedure(caller, request.path);
+    if (typeof procedure !== "function") {
+      sendTRPCSubscriptionEvent(event.sender, {
+        id: request.id,
+        type: "error",
+        error: {
+          message: `Unknown tRPC subscription: ${request.path}`,
+        },
+      });
+      return;
+    }
+
+    try {
+      const observableResult = await procedure(request.input);
+      if (!isObservableLike(observableResult)) {
+        sendTRPCSubscriptionEvent(event.sender, {
+          id: request.id,
+          type: "error",
+          error: {
+            message: `tRPC procedure is not subscribable: ${request.path}`,
+          },
+        });
+        return;
+      }
+
+      const subscription = observableResult.subscribe({
+        next: (data) => {
+          sendTRPCSubscriptionEvent(event.sender, {
+            id: request.id,
+            type: "next",
+            data,
+          });
+        },
+        error: (error) => {
+          sendTRPCSubscriptionEvent(event.sender, {
+            id: request.id,
+            type: "error",
+            error: serializeError(error),
+          });
+          subscriptions.delete(key);
+        },
+        complete: () => {
+          sendTRPCSubscriptionEvent(event.sender, {
+            id: request.id,
+            type: "complete",
+          });
+          subscriptions.delete(key);
+        },
+      });
+      const unsubscribe = typeof subscription === "function"
+        ? subscription
+        : () => subscription?.unsubscribe();
+
+      subscriptions.set(key, {
+        senderId,
+        unsubscribe,
+      });
+    } catch (error) {
+      sendTRPCSubscriptionEvent(event.sender, {
+        id: request.id,
+        type: "error",
+        error: serializeError(error),
+      });
+    }
+  });
+
+  ipcMain.on("trpc:unsubscribe", (event, request: TRPCUnsubscribeRequest) => {
+    disposeSubscription(getTRPCSubscriptionKey(event.sender.id, request.id));
   });
 }
 
@@ -271,6 +440,10 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  vaultWatcherManager.shutdown();
 });
 
 app.on("activate", () => {

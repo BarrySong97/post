@@ -19,6 +19,24 @@ type TerminalExitEvent = {
   signal: number | string | null;
 };
 
+type TRPCSubscriptionEvent =
+  | {
+      id: string;
+      type: "next";
+      data: unknown;
+    }
+  | {
+      id: string;
+      type: "error";
+      error: {
+        message: string;
+      };
+    }
+  | {
+      id: string;
+      type: "complete";
+    };
+
 declare global {
   interface Window {
     electron: ElectronAPI;
@@ -47,6 +65,9 @@ declare global {
         path: string;
         input: unknown;
       }) => Promise<unknown>;
+      trpcSubscribe: (request: { id: string; path: string; input: unknown }) => void;
+      trpcUnsubscribe: (request: { id: string }) => void;
+      onTRPCSubscriptionEvent: (callback: (event: TRPCSubscriptionEvent) => void) => () => void;
     };
   }
 }
