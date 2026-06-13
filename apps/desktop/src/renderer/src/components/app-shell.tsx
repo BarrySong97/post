@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Popover } from "@heroui/react";
+import { useNavigate } from "@tanstack/react-router";
+import { Button, Popover } from "@heroui/react";
 import { AnimatePresence, motion } from "motion/react";
-import { CheckCircle2, Info, TriangleAlert, X, XCircle } from "lucide-react";
+import { CheckCircle2, Info, Settings2, TriangleAlert, X, XCircle } from "lucide-react";
 import { getToastSnapshot, subscribeToasts, toast, type ToastItem } from "@/lib/toast";
 
 import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
+import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 
 type TaskSnapshot = RouterOutputs["tasks"]["snapshot"];
 type BackgroundTask = NonNullable<TaskSnapshot["activeTask"]>;
@@ -33,10 +35,6 @@ const PF_TYPE: Record<FooterTaskType, { label: string }> = {
 };
 
 export function AppShell({ children }: { children: ReactNode }) {
-  useEffect(() => {
-    injectFooterCSS();
-  }, []);
-
   return (
     <>
       <GlobalToasts />
@@ -121,6 +119,7 @@ function getToastIconClassName(variant: ToastItem["variant"]) {
 }
 
 function GlobalStatusLine() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
@@ -131,14 +130,7 @@ function GlobalStatusLine() {
   const completedInvalidatedIds = useRef(new Set<string>());
   const lastThumbnailProgressInvalidation = useRef({ taskId: "", progress: 0 });
   const taskEventInvalidationTimer = useRef<number | null>(null);
-  const invalidateVaultState = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries(trpc.assets.list.queryFilter()),
-      queryClient.invalidateQueries(trpc.assets.markdownContent.queryFilter()),
-      queryClient.invalidateQueries(trpc.assets.vaults.queryFilter()),
-      queryClient.invalidateQueries(trpc.tasks.snapshot.queryFilter()),
-    ]);
-  };
+  const invalidateVaultState = useInvalidateVaultState();
   const vaultsQuery = useQuery(trpc.assets.vaults.queryOptions());
   const selectFolder = useMutation(
     trpc.assets.selectFolderAndScan.mutationOptions({
@@ -219,7 +211,7 @@ function GlobalStatusLine() {
         taskEventInvalidationTimer.current = null;
       }
     };
-  }, [queryClient]);
+  }, [invalidateVaultState, queryClient]);
 
   useEffect(() => {
     if (!snapshot) {
@@ -376,6 +368,17 @@ function GlobalStatusLine() {
   return (
     <footer className="pf-footer window-no-drag">
       <div className="pf-foot-left">
+        <Button
+          isIconOnly
+          variant="ghost"
+          size="sm"
+          aria-label="设置"
+          className="h-6 w-6 min-w-6 rounded-md text-zinc-400"
+          onPress={() => void navigate({ to: "/settings" })}
+        >
+          <Settings2 size={13} />
+        </Button>
+        <span className="pf-sep" />
         <div className="pf-appmeta">
           <span className="pf-appname">Post</span>
           <span className="pf-ver">v{appVersion}</span>
@@ -678,6 +681,7 @@ function PFTaskIco({ t, size = 13 }: { t: FooterTaskType; size?: number }) {
   );
 }
 
+
 function PFFolderIco() {
   return (
     <svg
@@ -726,125 +730,4 @@ function hasVisibleTaskActivity(snapshot: TaskSnapshot | undefined) {
   }
 
   return Date.now() - (recent.completedAt ?? recent.updatedAt) <= COMPLETED_VISIBLE_MS;
-}
-
-function injectFooterCSS() {
-  if (typeof document === "undefined" || document.getElementById("pf-footer-styles")) {
-    return;
-  }
-
-  const element = document.createElement("style");
-  element.id = "pf-footer-styles";
-  element.textContent = `
-.pf-footer{ box-sizing:border-box; flex:none; height:30px; display:flex; align-items:center; gap:14px;
-  padding:0 10px 0 13px; background:var(--panel,#fbfbfa); border-top:1px solid var(--border,#ececea);
-  font-family:var(--font,-apple-system,"PingFang SC","Helvetica Neue",Helvetica,Arial,sans-serif);
-  font-size:11.5px; color:var(--sub,#8c8c88); user-select:none; position:relative; z-index:90; }
-.pf-footer *{ box-sizing:border-box; }
-.pf-foot-left{ display:flex; align-items:center; gap:10px; min-width:0; }
-.pf-appmeta{ display:flex; align-items:center; gap:7px; flex:none; }
-.pf-appname{ font-weight:600; color:var(--text,#1b1b1a); letter-spacing:.01em; }
-.pf-ver{ font-family:var(--mono,"JetBrains Mono",ui-monospace,Menlo,monospace); font-size:10px; color:var(--faint,#b6b6b2); letter-spacing:.01em; }
-.pf-sep{ width:1px; height:13px; background:var(--border,#ececea); flex:none; }
-.pf-folder{ display:flex; align-items:center; gap:6px; min-width:0; padding:3px 7px; margin-left:-4px; border-radius:6px; cursor:default; }
-.pf-folder:hover{ background:var(--panel-2,#f4f4f2); }
-.pf-folder-ico{ color:var(--faint,#b6b6b2); flex:none; display:flex; }
-.pf-folder-name{ color:var(--text,#1b1b1a); font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.pf-folder--empty .pf-folder-ico{ opacity:.7; }
-.pf-folder--empty .pf-folder-name{ color:var(--faint,#b6b6b2); font-weight:400; }
-.pf-foot-right{ margin-left:auto; display:flex; align-items:center; position:relative; }
-.pf-folder-trigger{ display:flex; min-width:0; outline:none; }
-.pf-popover-trigger{ display:flex; align-items:center; outline:none; }
-.pf-sync{ display:flex; align-items:center; gap:6px; border:0; background:transparent; cursor:pointer;
-  font:inherit; color:var(--text,#1b1b1a); border-radius:99px; padding:3px 7px; line-height:1; margin-right:6px; }
-.pf-sync:hover{ background:var(--panel-2,#f4f4f2); }
-.pf-sync:disabled{ cursor:default; opacity:.72; }
-.pf-sync.is-running:hover{ background:transparent; }
-.pf-idle{ display:flex; align-items:center; gap:6px; color:var(--faint,#b6b6b2); font-size:11.5px; padding:3px 4px; }
-.pf-idle svg{ color:var(--good,oklch(0.62 0.14 150)); opacity:.85; }
-.pf-pill{ display:flex; align-items:center; gap:7px; border:0; background:transparent; cursor:pointer;
-  font:inherit; color:var(--sub,#8c8c88); border-radius:99px; padding:3px 7px; line-height:1; }
-.pf-pill:hover{ background:var(--panel-2,#f4f4f2); }
-.pf-pill.is-open{ background:var(--panel-2,#f4f4f2); }
-.pf-pill-glyph{ display:flex; align-items:center; flex:none; }
-.pf-pill-label{ color:var(--text,#1b1b1a); font-weight:500; white-space:nowrap; }
-.pf-pill-count{ font-family:var(--mono,"JetBrains Mono",ui-monospace,Menlo,monospace); font-size:10px; color:var(--faint,#b6b6b2); }
-.pf-pill-more{ font-family:var(--mono,"JetBrains Mono",ui-monospace,Menlo,monospace); font-size:9.5px; color:var(--faint,#b6b6b2);
-  background:var(--panel-2,#f4f4f2); border-radius:5px; padding:1px 4px; }
-.pf-caret{ color:var(--faint,#b6b6b2); font-size:8px; margin-left:1px; transform:translateY(-.5px); }
-.pf-pill--bad .pf-pill-label{ color:var(--pf-bad,oklch(0.585 0.16 27)); }
-.pf-pill--good .pf-pill-label{ color:var(--good,oklch(0.62 0.14 150)); }
-.pf-pill--queue .pf-pill-label{ color:var(--text,#1b1b1a); }
-.pf-pill--stale .pf-pill-label{ color:var(--sub,#8c8c88); }
-.pf-dot{ width:7px; height:7px; border-radius:50%; flex:none; }
-.pf-dot--queue{ background:var(--faint,#b6b6b2); }
-.pf-dot--bad{ background:var(--pf-bad,oklch(0.585 0.16 27)); box-shadow:0 0 0 3px color-mix(in oklch, var(--pf-bad,oklch(0.585 0.16 27)), transparent 84%); }
-.pf-dot--good{ background:var(--good,oklch(0.62 0.14 150)); box-shadow:0 0 0 3px color-mix(in oklch, var(--good,oklch(0.62 0.14 150)), transparent 82%); }
-.pf-dot--stale{ background:var(--good,oklch(0.62 0.14 150)); opacity:.55; }
-.pf-spin{ width:12px; height:12px; border-radius:50%; flex:none;
-  border:1.6px solid color-mix(in oklch, var(--accent,oklch(0.55 0.13 256)), transparent 74%);
-  border-top-color:var(--accent,oklch(0.55 0.13 256)); animation:pf-spin .8s linear infinite; }
-.pf-spin.pf-spin--sync{ width:10px; height:10px; border-width:1.4px; }
-@keyframes pf-spin{ to{ transform:rotate(360deg); } }
-.pf-pop-content{ z-index:120 !important; padding:0 !important; border:0 !important; background:transparent !important; box-shadow:none !important; overflow:visible !important; }
-.pf-pop-dialog{ outline:none; }
-.pf-menu-content{ z-index:120 !important; padding:0 !important; border:0 !important; background:transparent !important; box-shadow:none !important; overflow:visible !important; }
-.pf-menu-dialog{ outline:none; }
-.pf-folder-menu{ width:300px; overflow:hidden; border:1px solid var(--border,#ececea); border-radius:13px;
-  background:var(--card,#fff); box-shadow:0 16px 40px rgba(20,18,16,.20), 0 2px 8px rgba(20,18,16,.10); animation:pf-pop-in .15s ease-out; }
-.pf-menu-head{ padding:12px 14px 8px; color:var(--text,#1b1b1a); font-size:12px; font-weight:680; }
-.pf-menu-list{ max-height:260px; overflow:auto; padding:0 7px 6px; }
-.pf-menu-item{ display:flex; width:100%; align-items:center; gap:10px; border:0; border-radius:9px; background:transparent;
-  padding:7px 8px; text-align:left; cursor:pointer; color:var(--text,#1b1b1a); font:inherit; }
-.pf-menu-item:hover{ background:var(--panel-2,#f4f4f2); }
-.pf-menu-item.is-active{ background:var(--panel-2,#f4f4f2); }
-.pf-menu-item-main{ min-width:0; flex:1; display:flex; flex-direction:column; gap:2px; }
-.pf-menu-item-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:560; color:var(--text,#1b1b1a); }
-.pf-menu-item-path{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10.5px; color:var(--faint,#b6b6b2); }
-.pf-menu-item svg{ flex:none; color:var(--good,oklch(0.62 0.14 150)); }
-.pf-menu-empty{ padding:10px 8px 12px; color:var(--faint,#b6b6b2); font-size:11px; }
-.pf-menu-actions{ border-top:1px solid var(--border-soft,#f3f3f1); padding:7px; }
-.pf-menu-action{ width:100%; border:0; border-radius:9px; background:transparent; cursor:pointer; padding:7px 8px;
-  text-align:left; color:var(--accent,oklch(0.55 0.13 256)); font:inherit; font-weight:560; }
-.pf-menu-action:hover{ background:var(--panel-2,#f4f4f2); }
-.pf-menu-action:disabled{ cursor:default; opacity:.58; }
-.pf-pop{ width:300px;
-  background:var(--card,#fff); border:1px solid var(--border,#ececea); border-radius:13px;
-  box-shadow:0 16px 40px rgba(20,18,16,.20), 0 2px 8px rgba(20,18,16,.10); overflow:hidden; animation:pf-pop-in .15s ease-out; }
-@keyframes pf-pop-in{ from{ transform:translateY(6px); } to{ transform:none; } }
-.pf-pop-head{ display:flex; align-items:center; gap:8px; padding:12px 14px 9px; }
-.pf-pop-title{ font-size:12px; font-weight:680; color:var(--text,#1b1b1a); letter-spacing:.01em; }
-.pf-pop-n{ font-family:var(--mono,"JetBrains Mono",ui-monospace,Menlo,monospace); font-size:10px; color:var(--faint,#b6b6b2);
-  margin-left:auto; background:var(--panel-2,#f4f4f2); border-radius:6px; padding:2px 6px; }
-.pf-pop-body{ max-height:340px; overflow:auto; padding:0 7px 7px; }
-.pf-grp{ padding:5px 0 3px; }
-.pf-grp + .pf-grp{ border-top:1px solid var(--border-soft,#f3f3f1); }
-.pf-grp-head{ display:flex; align-items:center; gap:7px; padding:6px 8px 5px; font-size:9.5px; font-weight:680;
-  letter-spacing:.07em; text-transform:uppercase; color:var(--faint,#b6b6b2); }
-.pf-grp-dot{ width:6px; height:6px; border-radius:50%; flex:none; }
-.pf-grp-dot--running{ background:var(--accent,oklch(0.55 0.13 256)); }
-.pf-grp-dot--queued{ background:var(--faint,#b6b6b2); }
-.pf-grp-dot--failed{ background:var(--pf-bad,oklch(0.585 0.16 27)); }
-.pf-grp-dot--completed{ background:var(--good,oklch(0.62 0.14 150)); }
-.pf-grp-n{ margin-left:auto; font-family:var(--mono,"JetBrains Mono",ui-monospace,Menlo,monospace); color:var(--faint,#b6b6b2); letter-spacing:0; }
-.pf-trow{ display:flex; align-items:center; gap:10px; padding:7px 8px; border-radius:9px; }
-.pf-trow:hover{ background:var(--panel-2,#f4f4f2); }
-.pf-tico{ width:24px; height:24px; flex:none; border-radius:7px; background:var(--panel-2,#f4f4f2);
-  display:flex; align-items:center; justify-content:center; color:var(--sub,#8c8c88); }
-.pf-trow--failed .pf-tico{ color:var(--pf-bad,oklch(0.585 0.16 27)); background:var(--pf-bad-soft,oklch(0.955 0.024 30)); }
-.pf-trow--running .pf-tico{ color:var(--accent,oklch(0.55 0.13 256)); background:var(--accent-soft,oklch(0.965 0.018 256)); }
-.pf-tmain{ flex:1; min-width:0; }
-.pf-tlabel{ font-size:12.5px; font-weight:560; color:var(--text,#1b1b1a); }
-.pf-tsub{ font-size:11px; color:var(--faint,#b6b6b2); margin-top:2px; }
-.pf-tsub--bad{ color:var(--pf-bad,oklch(0.585 0.16 27)); }
-.pf-tbar{ height:3px; border-radius:99px; background:var(--panel-2,#f4f4f2); margin-top:6px; overflow:hidden; }
-.pf-tbar i{ display:block; height:100%; border-radius:99px; background:var(--accent,oklch(0.55 0.13 256)); }
-.pf-tright{ flex:none; display:flex; align-items:center; gap:6px;
-  font-family:var(--mono,"JetBrains Mono",ui-monospace,Menlo,monospace); font-size:10.5px; color:var(--sub,#8c8c88); }
-.pf-tright--good{ color:var(--good,oklch(0.62 0.14 150)); }
-.pf-tdismiss{ border:0; background:transparent; cursor:pointer; color:var(--faint,#b6b6b2); width:20px; height:20px;
-  border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px; }
-.pf-tdismiss:hover{ background:var(--pf-bad-soft,oklch(0.955 0.024 30)); color:var(--pf-bad,oklch(0.585 0.16 27)); }
-`;
-  document.head.appendChild(element);
 }

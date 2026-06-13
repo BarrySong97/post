@@ -8,22 +8,49 @@ import React, {
   type ReactNode,
   type SVGProps,
 } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { DragDropProvider, type DragEndEvent } from "@dnd-kit/react";
-import { isSortable, useSortable } from "@dnd-kit/react/sortable";
-import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
-import { arrayMove } from "@dnd-kit/helpers";
-import { AnimatePresence, motion } from "motion/react";
+import { useAtom, useSetAtom, useAtomValue } from "jotai";
+import {
+  assetFiltersAtom,
+  listParamsAtom,
+  activeSidebarItemAtom,
+  getEmptyAssetFilters,
+  type AssetFilterState,
+  type AssetTypeFilter,
+  type AssetFilterMatch,
+  type AssetTimeFilter,
+  type AssetStatusFilter,
+  type AssetSortOrder,
+} from "@/store/asset-manager-atoms";
+import {
+  OPEN_VAULT_TARGET_STORAGE_KEY,
+  readAssetFilterOpenFromStorage,
+  writeAssetFilterOpenToStorage,
+} from "@/features/assets/storage";
+import {
+  filterAndSortAssets,
+  getActiveFilterCount,
+  getAssetSourceLabel,
+  getTagHue,
+  mapIndexedAsset,
+} from "@/features/assets/asset-model";
+import { resolveMarkdownImageUrl } from "@/features/assets/asset-url";
+import type {
+  Asset,
+  AssetKind,
+  SidebarTag,
+} from "@/features/assets/types";
+import { isMacWindow } from "@/lib/platform";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { useMasonry, usePositioner, useResizeObserver as useMasonryResizeObserver } from "masonic";
+import { Plyr, type PlyrOptions, type PlyrSource } from "plyr-react";
+import "plyr-react/plyr.css";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTermTerminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   AlignLeft,
-  Archive,
   ArrowLeft,
   Calendar,
   Check,
@@ -39,17 +66,12 @@ import {
   Globe,
   Hash,
   Image as ImageIcon,
-  Inbox,
   Link as LinkIcon,
-  PanelLeftOpen,
-  PanelLeftClose,
   PanelRightOpen,
-  Pencil,
   Play,
   Plus,
   ShieldCheck,
   SquareTerminal,
-  Trash2,
   User,
   Video,
   X,
@@ -69,79 +91,16 @@ import {
 } from "@heroui/react";
 import { toast } from "@/lib/toast";
 
-import type { PanelImperativeHandle } from "react-resizable-panels";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { trpc, type RouterOutputs } from "@/lib/trpc";
+import { useAppLayout } from "@/components/app-layout-context";
+import { trpc } from "@/lib/trpc";
 import { load as yamlLoad } from "js-yaml";
 
-type AssetKind = "markdown" | "image" | "video" | "link" | "web" | "file";
-type AssetStatus = "inbox" | "organized" | "draft" | "published";
-type AssetPrivacy = "normal" | "private";
-
-type Asset = {
-  id: string;
-  kind: AssetKind;
-  status: AssetStatus;
-  privacy: AssetPrivacy;
-  title: string;
-  body?: string;
-  source: string;
-  sourceType: "vault" | "external_file" | "url";
-  time: string;
-  timestampMs: number;
-  createdTimestampMs: number;
-  tag: string;
-  collection?: string;
-  meta: string;
-  accent: number;
-  height?: "short" | "medium" | "tall";
-  duration?: string;
-  mediaUrl?: string;
-  thumbnailUrl?: string;
-  thumbnailStatus?: "pending" | "ready" | "failed" | null;
-  imageWidth?: number | null;
-  imageHeight?: number | null;
-  thumbnailWidth?: number | null;
-  thumbnailHeight?: number | null;
-  url?: string;
-  related: string[];
-  // subtype helpers
-  ogImage?: boolean;    // web: whether an OG image is cached
-  fileExt?: string;     // file: "pdf" | "csv" | "docx" | "xls" …
-  domain?: string;      // web/video/link: display domain
-  imageCount?: number;  // image: images in the collection
-};
-
-type IndexedAsset = RouterOutputs["assets"]["list"]["assets"][number];
-type SidebarTag = RouterOutputs["assets"]["list"]["tags"][number];
-type SidebarView = RouterOutputs["assets"]["list"]["views"][number];
-type AssetSummary = RouterOutputs["assets"]["list"]["summary"];
-
-type SidebarSectionId = "views" | "tags";
-
-type SidebarOrderState = {
-  sections: SidebarSectionId[];
-  views: string[];
-  tags: string[];
-};
-
-const SIDEBAR_ORDER_STORAGE_KEY = "post.assetManager.sidebarOrder.v1";
-const ASSET_FILTER_OPEN_STORAGE_KEY = "post.assetManager.filterOpen.v1";
-const OPEN_VAULT_TARGET_STORAGE_KEY = "post.assetManager.openVaultTarget.v1";
-const SIDEBAR_SECTION_IDS: SidebarSectionId[] = ["views", "tags"];
-const SIDEBAR_SECTION_TYPE = "sidebar-section";
-const SIDEBAR_ITEM_TYPE_PREFIX = "sidebar-item:";
-const TRAFFIC_LIGHT_POSITION = { x: 18, y: 14 };
-const SIDEBAR_PREVIEW_MAX_WIDTH = 320;
-const SIDEBAR_PREVIEW_VIEWPORT_RATIO = 0.84;
-const SIDEBAR_PREVIEW_EXIT_PADDING = 32;
-const SIDEBAR_EDGE_HOTSPOT_WIDTH = 24;
-let lastWindowControlsVisible: boolean | null = null;
 
 type OpenVaultTarget = "vscode" | "cursor" | "zed" | "finder";
 type OpenVaultIcon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -295,249 +254,6 @@ function getOpenVaultTarget(id: OpenVaultTarget) {
   return OPEN_VAULT_TARGETS.find((target) => target.id === id) ?? DEFAULT_OPEN_VAULT_TARGET;
 }
 
-function isMacWindow() {
-  return typeof window !== "undefined" && window.api?.platform?.isMac === true;
-}
-
-function syncWindowControlsWithSidebar(trafficLightsVisible: boolean) {
-  if (!isMacWindow() || typeof window.api.setWindowControlsState !== "function") {
-    return;
-  }
-
-  if (lastWindowControlsVisible === trafficLightsVisible) {
-    return;
-  }
-  lastWindowControlsVisible = trafficLightsVisible;
-
-  void window.api
-    .setWindowControlsState({
-      trafficLightsVisible,
-      trafficLightPosition: TRAFFIC_LIGHT_POSITION,
-    })
-    .catch(() => {
-      // Window control APIs are macOS/Electron-version specific.
-    });
-}
-
-function getSidebarPreviewWidth() {
-  if (typeof window === "undefined") {
-    return SIDEBAR_PREVIEW_MAX_WIDTH;
-  }
-
-  return Math.min(SIDEBAR_PREVIEW_MAX_WIDTH, window.innerWidth * SIDEBAR_PREVIEW_VIEWPORT_RATIO);
-}
-
-const getDefaultSidebarOrder = (
-  views: readonly SidebarView[] = [],
-  tags: readonly SidebarTag[] = [],
-): SidebarOrderState => ({
-  sections: [...SIDEBAR_SECTION_IDS],
-  views: views.map((view) => view.id),
-  tags: tags.map((tag) => tag.id),
-});
-
-function isSidebarSectionId(value: unknown): value is SidebarSectionId {
-  return typeof value === "string" && SIDEBAR_SECTION_IDS.includes(value as SidebarSectionId);
-}
-
-function getSidebarItemType(sectionId: SidebarSectionId) {
-  return `${SIDEBAR_ITEM_TYPE_PREFIX}${sectionId}`;
-}
-
-function getSectionIdFromItemType(type: unknown): SidebarSectionId | null {
-  if (typeof type !== "string" || !type.startsWith(SIDEBAR_ITEM_TYPE_PREFIX)) {
-    return null;
-  }
-
-  const sectionId = type.slice(SIDEBAR_ITEM_TYPE_PREFIX.length);
-  return isSidebarSectionId(sectionId) ? sectionId : null;
-}
-
-function mergeKnownOrder<T extends string>(
-  storedOrder: unknown,
-  defaultOrder: readonly T[],
-  isKnownId: (value: unknown) => value is T = (value): value is T =>
-    typeof value === "string" && defaultOrder.includes(value as T),
-) {
-  const seenIds = new Set<T>();
-  const storedIds = Array.isArray(storedOrder)
-    ? storedOrder.filter((id): id is T => {
-        if (!isKnownId(id) || seenIds.has(id)) {
-          return false;
-        }
-
-        seenIds.add(id);
-        return true;
-      })
-    : [];
-  const missingIds = defaultOrder.filter((id) => !storedIds.includes(id));
-  return [...storedIds, ...missingIds];
-}
-
-function normalizeSidebarOrder(value: unknown, defaults: SidebarOrderState): SidebarOrderState {
-  const stored = value && typeof value === "object" ? value as Partial<SidebarOrderState> : {};
-
-  return {
-    sections: mergeKnownOrder(stored.sections, defaults.sections, isSidebarSectionId),
-    views: mergeKnownOrder(stored.views, defaults.views),
-    tags: mergeKnownOrder(stored.tags, defaults.tags),
-  };
-}
-
-function readSidebarOrderFromStorage(defaults: SidebarOrderState) {
-  if (typeof window === "undefined") {
-    return defaults;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(SIDEBAR_ORDER_STORAGE_KEY);
-    return normalizeSidebarOrder(raw ? JSON.parse(raw) : null, defaults);
-  } catch {
-    return defaults;
-  }
-}
-
-function readAssetFilterOpenFromStorage() {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  try {
-    return window.localStorage.getItem(ASSET_FILTER_OPEN_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
-
-function orderByIds<T>(
-  items: readonly T[],
-  orderedIds: readonly string[],
-  getId: (item: T) => string,
-) {
-  const byId = new Map(items.map((item) => [getId(item), item]));
-  return orderedIds.flatMap((id) => {
-    const item = byId.get(id);
-    return item ? [item] : [];
-  });
-}
-
-function getTagHue(name: string): number {
-  let hash = 0;
-  for (let index = 0; index < name.length; index += 1) {
-    hash = (hash * 31 + name.charCodeAt(index)) % 360;
-  }
-
-  return hash || 210;
-}
-
-function mapIndexedAssetKind(kind: IndexedAsset["kind"], extension?: string | null): AssetKind {
-  if (kind === "markdown" || kind === "image" || kind === "video" || kind === "web") {
-    return kind;
-  }
-
-  if (extension === "url" || extension === "webloc") {
-    return "link";
-  }
-
-  return "file";
-}
-
-function mapIndexedAssetStatus(status: IndexedAsset["status"]): AssetStatus {
-  if (status === "archived") {
-    return "organized";
-  }
-
-  return status;
-}
-
-function formatBytes(sizeBytes: number) {
-  if (sizeBytes < 1024) {
-    return `${sizeBytes} B`;
-  }
-
-  if (sizeBytes < 1024 * 1024) {
-    return `${Math.round(sizeBytes / 1024)} KB`;
-  }
-
-  return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function formatAssetTime(value: unknown) {
-  const date = value instanceof Date ? value : new Date(value as string | number);
-
-  if (Number.isNaN(date.getTime())) {
-    return "刚刚";
-  }
-
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
-function getAssetTimestampMs(value: unknown, fallbackMs = Date.now()) {
-  if (value === null || value === undefined) {
-    return fallbackMs;
-  }
-
-  const date = value instanceof Date ? value : new Date(value as string | number);
-  return Number.isNaN(date.getTime()) ? fallbackMs : date.getTime();
-}
-
-function mapIndexedAsset(asset: IndexedAsset): Asset {
-  const tag = asset.tags[0]?.name ?? "待整理";
-  const kind = mapIndexedAssetKind(asset.kind, asset.extension);
-  const extension = asset.extension ?? asset.fileName.split(".").pop() ?? "file";
-  const mediaUrl = kind === "image"
-    ? `post-file://asset/${encodeURIComponent(asset.id)}/${encodeURIComponent(asset.fileName)}`
-    : undefined;
-  const usesOriginalAsThumbnail = kind === "image" && extension.toLowerCase() === "svg";
-  const thumbnailUrl = usesOriginalAsThumbnail
-    ? mediaUrl
-    : (kind === "image" || kind === "video") && asset.image?.status === "ready" && asset.image.thumbnailPath
-      ? `post-file://thumb/${encodeURIComponent(asset.id)}/${encodeURIComponent(asset.fileName)}.jpg`
-      : undefined;
-  const metaPrefix = {
-    markdown: "Markdown",
-    image: "图片",
-    video: "视频",
-    link: "链接",
-    web: "网页",
-    file: extension.toUpperCase(),
-  } satisfies Record<AssetKind, string>;
-
-  const updatedTimestampMs = getAssetTimestampMs(asset.mtimeMs);
-
-  return {
-    id: asset.id,
-    kind,
-    status: mapIndexedAssetStatus(asset.status),
-    privacy: asset.privacy,
-    title: asset.title,
-    body: asset.description ?? `路径：${asset.relativePath}`,
-    source: `${asset.vaultName} / ${asset.relativePath}`,
-    sourceType: "vault",
-    time: formatAssetTime(asset.mtimeMs),
-    timestampMs: updatedTimestampMs,
-    createdTimestampMs: getAssetTimestampMs(asset.ctimeMs, updatedTimestampMs),
-    tag,
-    meta: `${metaPrefix[kind]} · ${formatBytes(asset.sizeBytes)}`,
-    accent: getTagHue(tag),
-    height: kind === "image" || kind === "video" ? "medium" : "short",
-    mediaUrl,
-    thumbnailUrl,
-    thumbnailStatus: asset.image?.status ?? (usesOriginalAsThumbnail ? "ready" : null),
-    imageWidth: asset.image?.width,
-    imageHeight: asset.image?.height,
-    thumbnailWidth: asset.image?.thumbnailWidth,
-    thumbnailHeight: asset.image?.thumbnailHeight,
-    related: asset.relatedIds,
-    fileExt: kind === "file" ? extension : undefined,
-    imageCount: kind === "image" ? 1 : undefined,
-  };
-}
 
 function getKindMeta(kind: AssetKind) {
   const map = {
@@ -553,21 +269,6 @@ function getKindMeta(kind: AssetKind) {
 }
 
 
-type AssetTypeFilter = "markdown" | "image" | "video" | "link" | "file";
-type AssetFilterMatch = "and" | "or";
-type AssetTimeFilter = "any" | "today" | "week" | "m30" | "custom";
-type AssetStatusFilter = "any" | "inbox" | "draft" | "published";
-type AssetSortOrder = "updated_desc" | "updated_asc" | "created_desc" | "created_asc";
-
-type AssetFilterState = {
-  types: AssetTypeFilter[];
-  tags: string[];
-  sources: string[];
-  match: AssetFilterMatch;
-  time: AssetTimeFilter;
-  status: AssetStatusFilter;
-  sort: AssetSortOrder;
-};
 
 const ASSET_TYPE_FILTERS = [
   { value: "markdown", label: "文字", icon: FileText },
@@ -617,133 +318,6 @@ const SORT_OPTION_LABELS = Object.fromEntries(
   SORT_OPTIONS.map((item) => [item.value, item.label]),
 ) as Record<AssetSortOrder, string>;
 
-function getDefaultAssetFilters(): AssetFilterState {
-  return getEmptyAssetFilters();
-}
-
-function getEmptyAssetFilters(match: AssetFilterMatch = "and"): AssetFilterState {
-  return {
-    types: [],
-    tags: [],
-    sources: [],
-    match,
-    time: "any",
-    status: "any",
-    sort: "updated_desc",
-  };
-}
-
-function getActiveFilterCount(filters: AssetFilterState) {
-  return (
-    filters.types.length +
-    filters.tags.length +
-    filters.sources.length +
-    (filters.time !== "any" ? 1 : 0) +
-    (filters.status !== "any" ? 1 : 0) +
-    (filters.sort !== "updated_desc" ? 1 : 0)
-  );
-}
-
-function getAssetSourceLabel(asset: Asset) {
-  if (asset.sourceType === "vault") {
-    return "资产库";
-  }
-
-  if (asset.sourceType === "external_file") {
-    return "本地文件";
-  }
-
-  return "链接";
-}
-
-function getAssetTagNames(asset: Asset) {
-  return asset.tag === "待整理" ? [] : [asset.tag];
-}
-
-function isAssetInTimeRange(asset: Asset, time: AssetTimeFilter) {
-  if (time === "any" || time === "custom") {
-    return true;
-  }
-
-  const date = new Date(asset.timestampMs);
-  const now = new Date();
-  const elapsedMs = Math.max(0, now.getTime() - asset.timestampMs);
-  if (time === "today") {
-    return date.toDateString() === now.toDateString();
-  }
-
-  if (time === "week") {
-    return elapsedMs <= 7 * 24 * 60 * 60 * 1000;
-  }
-
-  return elapsedMs <= 30 * 24 * 60 * 60 * 1000;
-}
-
-function filterAssets(assetItems: readonly Asset[], filters: AssetFilterState) {
-  const predicates: Array<(asset: Asset) => boolean> = [];
-
-  if (filters.types.length > 0) {
-    predicates.push((asset) => filters.types.some((type) => {
-      if (type === "link") {
-        return asset.kind === "link" || asset.kind === "web";
-      }
-
-      return asset.kind === type;
-    }));
-  }
-
-  if (filters.tags.length > 0) {
-    predicates.push((asset) => filters.tags.every((tag) => getAssetTagNames(asset).includes(tag)));
-  }
-
-  if (filters.sources.length > 0) {
-    predicates.push((asset) => filters.sources.includes(getAssetSourceLabel(asset)));
-  }
-
-  if (filters.status !== "any") {
-    predicates.push((asset) => asset.status === filters.status);
-  }
-
-  if (filters.time !== "any") {
-    predicates.push((asset) => isAssetInTimeRange(asset, filters.time));
-  }
-
-  if (predicates.length === 0) {
-    return [...assetItems];
-  }
-
-  return assetItems.filter((asset) => {
-    const matches = predicates.map((predicate) => predicate(asset));
-    return filters.match === "and" ? matches.every(Boolean) : matches.some(Boolean);
-  });
-}
-
-function compareAssetTitles(a: Asset, b: Asset) {
-  return a.title.localeCompare(b.title, "zh-Hans-CN");
-}
-
-function sortAssets(assetItems: readonly Asset[], sort: AssetSortOrder) {
-  const [field, direction] = sort.split("_") as ["updated" | "created", "asc" | "desc"];
-  const multiplier = direction === "asc" ? 1 : -1;
-
-  return [...assetItems].sort((a, b) => {
-    const aTimestamp = field === "created" ? a.createdTimestampMs : a.timestampMs;
-    const bTimestamp = field === "created" ? b.createdTimestampMs : b.timestampMs;
-    const timestampDelta = aTimestamp - bTimestamp;
-
-    if (timestampDelta !== 0) {
-      return timestampDelta * multiplier;
-    }
-
-    return compareAssetTitles(a, b);
-  });
-}
-
-function filterAndSortAssets(assetItems: readonly Asset[], filters: AssetFilterState) {
-  return sortAssets(filterAssets(assetItems, filters), filters.sort);
-}
-
-
 function TagPill({ name }: { name: string }) {
   return (
     <Chip size="sm" className="gap-1.5 bg-zinc-100 px-2 text-[11px] text-zinc-700">
@@ -756,187 +330,6 @@ function TagPill({ name }: { name: string }) {
   );
 }
 
-type SidebarSectionProps = {
-  title: string;
-  children: ReactNode;
-  action?: ReactNode;
-  defaultOpen?: boolean;
-  dragHandleRef?: (element: Element | null) => void;
-};
-
-function SidebarSection({ title, children, action, defaultOpen = true, dragHandleRef }: SidebarSectionProps) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <div
-        ref={dragHandleRef}
-        className="group/section flex select-none items-center gap-1 px-2 py-1"
-      >
-        <span className="flex-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-          {title}
-        </span>
-        <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/section:opacity-100">
-          {action}
-          <CollapsibleTrigger asChild>
-            <button
-              type="button"
-              className="flex h-5 w-5 items-center justify-center rounded text-zinc-400 hover:bg-black/5"
-            >
-              <ChevronDown
-                size={12}
-                className={`transition-transform duration-200 ${open ? "" : "-rotate-90"}`}
-              />
-            </button>
-          </CollapsibleTrigger>
-        </div>
-      </div>
-      <AnimatePresence initial={false}>
-        {open ? (
-          <motion.div
-            key="content"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: [0.25, 0.46, 0.45, 0.94] }}
-            className="overflow-hidden"
-          >
-            {children}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-    </Collapsible>
-  );
-}
-
-type SidebarItemProps = {
-  label: string;
-  meta?: ReactNode;
-  actions?: ReactNode;
-  icon?: ComponentType<{ size?: number; className?: string }>;
-  colorDot?: string;
-  active?: boolean;
-  onClick?: () => void;
-};
-
-type SidebarItemActionButtonProps = {
-  label: string;
-  icon: ComponentType<{ size?: number; className?: string }>;
-};
-
-function SidebarItemActionButton({ label, icon: Icon }: SidebarItemActionButtonProps) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      data-no-drag
-      className="grid h-5 w-5 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-black/5 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
-      onClick={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      <Icon size={13} />
-    </button>
-  );
-}
-
-function SidebarItem({ label, meta, actions, icon: Icon, colorDot, active = false, onClick }: SidebarItemProps) {
-  const itemStateClass = active
-    ? "bg-[var(--sidebar-item-selected)] font-medium text-zinc-950 shadow-[inset_0_0_0_1px_var(--sidebar-item-selected-border)] hover:bg-[var(--sidebar-item-selected-hover)] active:bg-[var(--sidebar-item-pressed)]"
-    : "text-zinc-600 hover:bg-[var(--sidebar-item-hover)] hover:text-zinc-800 active:bg-[var(--sidebar-item-pressed)]";
-  const iconClass = active ? "shrink-0 text-zinc-700" : "shrink-0 text-zinc-400 group-hover/item:text-zinc-500";
-  const metaClass = active ? "text-xs text-zinc-500" : "text-xs text-zinc-400";
-  const interactionClass = onClick ? "cursor-pointer" : "";
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (!onClick || (event.key !== "Enter" && event.key !== " ")) {
-      return;
-    }
-
-    event.preventDefault();
-    onClick();
-  };
-
-  return (
-    <div
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      className={`group/item flex w-full select-none items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[13px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-zinc-500/25 ${interactionClass} ${itemStateClass}`}
-      onClick={onClick}
-      onKeyDown={handleKeyDown}
-    >
-      {Icon ? <Icon size={14} className={iconClass} /> : null}
-      {colorDot ? <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: colorDot }} /> : null}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {meta !== undefined || actions !== undefined ? (
-        <span className="relative ml-auto flex h-5 min-w-[46px] shrink-0 items-center justify-end overflow-hidden">
-          {meta !== undefined ? (
-            <span className={`${metaClass} transition-all duration-150 ease-out ${actions !== undefined ? "group-hover/item:-translate-y-1 group-hover/item:opacity-0 group-focus-within/item:-translate-y-1 group-focus-within/item:opacity-0" : ""}`}>
-              {meta}
-            </span>
-          ) : null}
-          {actions !== undefined ? (
-            <span className="pointer-events-none absolute right-0 flex translate-y-1 items-center gap-0.5 opacity-0 transition-all duration-150 ease-out group-hover/item:pointer-events-auto group-hover/item:translate-y-0 group-hover/item:opacity-100 group-focus-within/item:pointer-events-auto group-focus-within/item:translate-y-0 group-focus-within/item:opacity-100">
-              {actions}
-            </span>
-          ) : null}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-type SortableSidebarSectionProps = {
-  sectionId: SidebarSectionId;
-  index: number;
-  children: (dragHandleRef: (element: Element | null) => void) => ReactNode;
-};
-
-function SortableSidebarSection({ sectionId, index, children }: SortableSidebarSectionProps) {
-  const { ref, handleRef, isDragging, isDropTarget } = useSortable({
-    id: `section:${sectionId}`,
-    index,
-    group: "sidebar-sections",
-    type: SIDEBAR_SECTION_TYPE,
-    accept: SIDEBAR_SECTION_TYPE,
-    transition: { duration: 170, easing: "cubic-bezier(0.25, 1, 0.5, 1)", idle: true },
-  });
-
-  return (
-    <div
-      ref={ref}
-      className={`rounded-lg transition-[background-color,opacity] duration-150 ${isDragging ? "cursor-grabbing opacity-55" : ""} ${isDropTarget ? "bg-black/[0.025]" : ""}`}
-    >
-      {children(handleRef)}
-    </div>
-  );
-}
-
-type SortableSidebarItemProps = {
-  sectionId: SidebarSectionId;
-  itemId: string;
-  index: number;
-  children: ReactNode;
-};
-
-function SortableSidebarItem({ sectionId, itemId, index, children }: SortableSidebarItemProps) {
-  const type = getSidebarItemType(sectionId);
-  const { ref, isDragging, isDropTarget } = useSortable({
-    id: `item:${sectionId}:${itemId}`,
-    index,
-    group: `sidebar-items:${sectionId}`,
-    type,
-    accept: type,
-    transition: { duration: 140, easing: "cubic-bezier(0.25, 1, 0.5, 1)", idle: true },
-  });
-
-  return (
-    <div
-      ref={ref}
-      className={`rounded-lg transition-[background-color,opacity] duration-150 ${isDragging ? "cursor-grabbing opacity-55" : ""} ${isDropTarget ? "bg-black/[0.025]" : ""}`}
-    >
-      {children}
-    </div>
-  );
-}
 
 function VisualBlock({ asset }: { asset: Asset }) {
   const heightCls = { short: "h-32", medium: "h-44", tall: "h-72" }[asset.height ?? "medium"];
@@ -1260,256 +653,6 @@ const AssetCard = React.memo(function AssetCard({ asset }: { asset: Asset }) {
   );
 });
 
-function SidebarEdgeHotspot({ onOpen }: { onOpen: () => void }) {
-  return (
-    <div
-      aria-hidden="true"
-      className="window-no-drag absolute inset-y-0 left-0 z-[75]"
-      style={{ width: SIDEBAR_EDGE_HOTSPOT_WIDTH }}
-      onMouseEnter={onOpen}
-      onMouseMove={onOpen}
-    />
-  );
-}
-
-function FloatingSidebarDragOverlay() {
-  return (
-    <div
-      aria-hidden="true"
-      className="pointer-events-none absolute left-0 top-0 z-[95] h-14 w-[min(320px,84vw)]"
-    >
-      <div className="pointer-events-auto window-drag absolute left-0 top-0 h-full w-[88px]" />
-      <div className="pointer-events-auto window-drag absolute left-[140px] right-0 top-0 h-full" />
-    </div>
-  );
-}
-
-function Sidebar({
-  tagItems,
-  viewItems,
-  summary,
-  onToggleSidebar,
-  toggleMode = "collapse",
-  floating = false,
-}: {
-  tagItems: SidebarTag[];
-  viewItems: SidebarView[];
-  summary: AssetSummary;
-  onToggleSidebar: () => void;
-  toggleMode?: "collapse" | "expand";
-  floating?: boolean;
-}) {
-  const defaultSidebarOrder = useMemo(
-    () => getDefaultSidebarOrder(viewItems, tagItems),
-    [viewItems, tagItems],
-  );
-  const [sidebarOrder, setSidebarOrder] = useState(() => readSidebarOrderFromStorage(defaultSidebarOrder));
-
-  useEffect(() => {
-    setSidebarOrder((current) => normalizeSidebarOrder(current, defaultSidebarOrder));
-  }, [defaultSidebarOrder]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(SIDEBAR_ORDER_STORAGE_KEY, JSON.stringify(sidebarOrder));
-    } catch {
-      // Ignore storage failures; drag state should still work for the current session.
-    }
-  }, [sidebarOrder]);
-
-  const orderedViews = useMemo(
-    () => orderByIds(viewItems, sidebarOrder.views, (view) => view.id).slice(0, 5),
-    [sidebarOrder.views, viewItems],
-  );
-  const orderedTags = useMemo(
-    () => orderByIds(tagItems, sidebarOrder.tags, (tag) => tag.id).slice(0, 10),
-    [sidebarOrder.tags, tagItems],
-  );
-
-  const handleSidebarDragEnd = (event: DragEndEvent) => {
-    if (event.canceled) {
-      return;
-    }
-
-    const { source } = event.operation;
-    if (!isSortable(source) || source.initialIndex === source.index) {
-      return;
-    }
-
-    if (source.type === SIDEBAR_SECTION_TYPE) {
-      setSidebarOrder((current) => ({
-        ...current,
-        sections: arrayMove([...current.sections], source.initialIndex, source.index),
-      }));
-      return;
-    }
-
-    const sectionId = getSectionIdFromItemType(source.type);
-    if (!sectionId || source.initialGroup !== source.group) {
-      return;
-    }
-
-    setSidebarOrder((current) => ({
-      ...current,
-      [sectionId]: arrayMove([...current[sectionId]], source.initialIndex, source.index),
-    }));
-  };
-
-  const renderSortableSection = (
-    sectionId: SidebarSectionId,
-    dragHandleRef: (element: Element | null) => void,
-  ) => {
-    if (sectionId === "views") {
-      return (
-        <SidebarSection title="Views" dragHandleRef={dragHandleRef}>
-          <div className="space-y-0.5">
-            {orderedViews.map((view, index) => (
-              <SortableSidebarItem key={view.id} sectionId="views" itemId={view.id} index={index}>
-                <SidebarItem
-                  icon={FolderKanban}
-                  label={view.name}
-                  meta={view.count}
-                  actions={
-                    <>
-                      <SidebarItemActionButton label={`编辑 ${view.name}`} icon={Pencil} />
-                      <SidebarItemActionButton label={`删除 ${view.name}`} icon={Trash2} />
-                    </>
-                  }
-                />
-              </SortableSidebarItem>
-            ))}
-          </div>
-        </SidebarSection>
-      );
-    }
-
-    return (
-      <SidebarSection
-        title="Tags"
-        dragHandleRef={dragHandleRef}
-        action={
-          <button
-            type="button"
-            data-no-drag
-            className="rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5"
-          >
-            + 管理
-          </button>
-        }
-      >
-        <div className="space-y-0.5">
-          {orderedTags.map((tag, index) => (
-            <SortableSidebarItem key={tag.id} sectionId="tags" itemId={tag.id} index={index}>
-              <SidebarItem
-                colorDot={tag.color ?? `oklch(0.62 0.14 ${getTagHue(tag.name)})`}
-                label={tag.name}
-                meta={tag.count}
-                actions={
-                  <>
-                    <SidebarItemActionButton label={`编辑 ${tag.name}`} icon={Pencil} />
-                    <SidebarItemActionButton label={`删除 ${tag.name}`} icon={Trash2} />
-                  </>
-                }
-              />
-            </SortableSidebarItem>
-          ))}
-        </div>
-      </SidebarSection>
-    );
-  };
-
-  const ToggleIcon = toggleMode === "expand" ? PanelLeftOpen : PanelLeftClose;
-  const sidebarChromePadding = isMacWindow() ? "pl-[100px]" : "pl-3";
-  const sidebarChromeClassName = `relative mt-[10.5px] h-12 ${sidebarChromePadding}`;
-  const sidebarChromeDragClassName = floating ? "window-no-drag" : "window-drag";
-
-  return (
-    <aside
-      className={`flex h-full w-full flex-col border-r shadow-[inset_-1px_0_0_rgba(255,255,255,0.45)] ${
-        floating
-          ? "overflow-hidden rounded-r-2xl border-zinc-200 bg-white shadow-2xl shadow-black/15"
-          : "border-white/45 bg-white/45 backdrop-blur-2xl backdrop-saturate-150"
-      }`}
-    >
-      <div className={sidebarChromeClassName}>
-        <div aria-hidden="true" className={`${sidebarChromeDragClassName} absolute inset-0 z-0`} />
-        <div className="window-no-drag pointer-events-auto relative z-10 inline-flex -ml-1 -translate-y-1.5">
-          <Button
-            isIconOnly
-            aria-label={toggleMode === "expand" ? "展开左侧栏" : "收起左侧栏"}
-            data-no-drag
-            size="sm"
-            variant="ghost"
-            className="window-no-drag h-8 w-8 text-zinc-500 hover:bg-black/5"
-            onPress={onToggleSidebar}
-          >
-            <ToggleIcon size={19} />
-          </Button>
-        </div>
-      </div>
-
-      <div className="shrink-0 px-3 pb-1">
-        <SidebarSection
-          title="资产管理"
-          action={
-            <button type="button" className="window-no-drag flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5">
-              <Plus size={11} />
-              新建
-            </button>
-          }
-        >
-          <div className="space-y-0.5">
-            {[
-              { icon: Archive, label: "全部资产", count: summary.total, active: true },
-              { icon: Inbox, label: "待整理", count: summary.inbox },
-            ].map((item) => (
-              <SidebarItem
-                key={item.label}
-                icon={item.icon}
-                label={item.label}
-                meta={item.count}
-                active={"active" in item ? item.active : false}
-                onClick={() => { window.location.hash = "/"; }}
-              />
-            ))}
-          </div>
-        </SidebarSection>
-      </div>
-
-      {/* 可滚动部分：Views / Tags */}
-      <ScrollArea className="min-h-0 flex-1" viewportClassName="px-3 pb-4 pt-2">
-        <DragDropProvider
-          sensors={(defaults) => [
-            ...defaults.filter((sensor) => sensor !== PointerSensor),
-            PointerSensor.configure({
-              activationConstraints(event) {
-                return [
-                  new PointerActivationConstraints.Delay({
-                    value: event.pointerType === "touch" ? 250 : 180,
-                    tolerance: 6,
-                  }),
-                ];
-              },
-              preventActivation(event) {
-                return event.target instanceof Element &&
-                  event.target.closest("button, a, input, textarea, select, [contenteditable='true'], [data-no-drag]") !== null;
-              },
-            }),
-          ]}
-          onDragEnd={handleSidebarDragEnd}
-        >
-          <nav className="space-y-3">
-            {sidebarOrder.sections.map((sectionId, index) => (
-              <SortableSidebarSection key={sectionId} sectionId={sectionId} index={index}>
-                {(dragHandleRef) => renderSortableSection(sectionId, dragHandleRef)}
-              </SortableSidebarSection>
-            ))}
-          </nav>
-        </DragDropProvider>
-      </ScrollArea>
-    </aside>
-  );
-}
 
 type AssetBoardHeaderProps = {
   filterOpen: boolean;
@@ -2089,13 +1232,14 @@ function AssetBoard({
   onToggleTerminal: () => void;
   dragEnabled?: boolean;
 }) {
+  const [filters, setFilters] = useAtom(assetFiltersAtom);
+
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const masonryGridRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
   const [isScrolling, setIsScrolling] = useState(false);
   const [filterOpen, setFilterOpen] = useState(readAssetFilterOpenFromStorage);
-  const [filters, setFilters] = useState(getDefaultAssetFilters);
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const scrollFrame = useRef<number | undefined>(undefined);
   const isScrollingRef = useRef(false);
@@ -2114,11 +1258,7 @@ function AssetBoard({
   );
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(ASSET_FILTER_OPEN_STORAGE_KEY, String(filterOpen));
-    } catch {
-      // Ignore storage failures; filter UI should still work for the current session.
-    }
+    writeAssetFilterOpenToStorage(filterOpen);
   }, [filterOpen]);
 
   useEffect(() => {
@@ -2669,26 +1809,6 @@ function FrontmatterPanel({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-function resolveMarkdownImage(src: string | undefined, vaultId: string, fileDir: string): string {
-  if (!src || /^(https?:|data:)/.test(src)) return src ?? "";
-
-  function normalizeParts(parts: string[]): string {
-    const out: string[] = [];
-    for (const p of parts) {
-      if (p === "" || p === ".") continue;
-      if (p === "..") out.pop();
-      else out.push(p);
-    }
-    return out.join("/");
-  }
-
-  const base = fileDir ? fileDir.split("/") : [];
-  const srcParts = src.startsWith("/") ? src.slice(1).split("/") : [...base, ...src.split("/")];
-  const relPath = normalizeParts(srcParts);
-  const encoded = relPath.split("/").map(encodeURIComponent).join("/");
-  return `post-file://vault/${vaultId}/${encoded}`;
-}
-
 function MarkdownDetailBody({ asset }: { asset: Asset }) {
   const markdownQuery = useQuery(trpc.assets.markdownContent.queryOptions({ id: asset.id }));
   const rawContent = markdownQuery.data?.content ?? "";
@@ -2752,7 +1872,7 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
             remarkPlugins={[remarkGfm]}
             components={{
               img({ src, alt }) {
-                const resolved = resolveMarkdownImage(
+                const resolved = resolveMarkdownImageUrl(
                   src,
                   markdownQuery.data!.vaultId,
                   markdownQuery.data!.fileDir,
@@ -2799,11 +1919,87 @@ function ImageDetailBody({ asset }: { asset: Asset }) {
   );
 }
 
+function getVideoMimeType(extension: string | undefined) {
+  const normalized = extension?.toLowerCase();
+  if (!normalized) {
+    return "video/mp4";
+  }
+
+  const mimeByExtension: Record<string, string> = {
+    mp4: "video/mp4",
+    m4v: "video/mp4",
+    mov: "video/quicktime",
+    webm: "video/webm",
+    ogv: "video/ogg",
+    mkv: "video/x-matroska",
+    avi: "video/x-msvideo",
+  };
+
+  return mimeByExtension[normalized] ?? `video/${normalized}`;
+}
+
+function getAssetMediaRatio(asset: Asset) {
+  const width = asset.imageWidth ?? asset.thumbnailWidth;
+  const height = asset.imageHeight ?? asset.thumbnailHeight;
+  if (!width || !height || width <= 0 || height <= 0) {
+    return undefined;
+  }
+
+  return {
+    css: `${width} / ${height}`,
+    plyr: `${width}:${height}`,
+  };
+}
+
 function VideoDetailBody({ asset }: { asset: Asset }) {
+  const mediaRatio = useMemo(
+    () => getAssetMediaRatio(asset),
+    [asset.imageHeight, asset.imageWidth, asset.thumbnailHeight, asset.thumbnailWidth],
+  );
+  const source = useMemo<PlyrSource | null>(() => {
+    if (!asset.mediaUrl) {
+      return null;
+    }
+
+    return {
+      type: "video",
+      title: asset.title,
+      sources: [
+        {
+          src: asset.mediaUrl,
+          type: getVideoMimeType(asset.fileExt),
+        },
+      ],
+      ...(asset.thumbnailUrl ? { poster: asset.thumbnailUrl } : {}),
+    };
+  }, [asset.fileExt, asset.mediaUrl, asset.thumbnailUrl, asset.title]);
+  const options = useMemo<PlyrOptions>(() => ({
+    ...(mediaRatio ? { ratio: mediaRatio.plyr } : {}),
+    controls: [
+      "play-large",
+      "play",
+      "progress",
+      "current-time",
+      "mute",
+      "volume",
+      "settings",
+      "pip",
+      "airplay",
+      "fullscreen",
+    ],
+  }), [mediaRatio]);
+
   return (
     <div className="max-w-[780px]">
-      <div className="overflow-hidden rounded-[13px] border border-zinc-200 shadow-sm">
-        <VisualBlock asset={asset} />
+      <div
+        className="overflow-hidden rounded-[13px] border border-zinc-200 bg-black shadow-sm"
+        style={mediaRatio ? { aspectRatio: mediaRatio.css } : undefined}
+      >
+        {source ? (
+          <Plyr source={source} options={options} />
+        ) : (
+          <VisualBlock asset={asset} />
+        )}
       </div>
     </div>
   );
@@ -2935,6 +2131,8 @@ function AssetDetail({
 
   // text/file assets → open specific file in editor; media/link → open vault root
   const shouldOpenFileInEditor = asset.kind === "markdown" || asset.kind === "file";
+  const canOpenInDefaultMediaApp = asset.kind === "image" || asset.kind === "video";
+  const DefaultMediaOpenIcon = asset.kind === "image" ? ImageIcon : Play;
 
   const openVaultWithTarget = (targetId: OpenVaultTarget, persistTarget: boolean) => {
     if (persistTarget) {
@@ -2966,6 +2164,18 @@ function AssetDetail({
         <span className="text-xs text-zinc-400">全部资产 / {asset.tag}</span>
         <div className="flex-1" />
         <div className="window-no-drag flex items-center gap-2">
+          {canOpenInDefaultMediaApp ? (
+            <Button
+              size="sm"
+              isIconOnly
+              aria-label={asset.kind === "image" ? "用系统图片预览打开" : "用系统视频播放器打开"}
+              isDisabled={openFileMutation.isPending}
+              className="window-no-drag h-6 min-h-0 rounded-lg border border-zinc-200 bg-white px-2 text-[11px] text-zinc-600 hover:bg-zinc-50"
+              onPress={() => openFileMutation.mutate({ id: asset.id })}
+            >
+              <DefaultMediaOpenIcon className={HEADER_ICON_CLASS_NAME} />
+            </Button>
+          ) : null}
           {/* Editor split button — same as board header */}
           <div className="inline-flex h-6 overflow-hidden rounded-lg border border-zinc-200 bg-white text-zinc-600 shadow-[0_1px_1px_rgba(24,24,27,0.03)]">
             <button
@@ -3112,17 +2322,38 @@ function AssetDetail({
 }
 
 
-function getMainDefaultSize(_activeAsset: Asset | undefined, sidebarCollapsed: boolean) {
-  return sidebarCollapsed ? 100 : 80;
-}
-
 export function AssetManagerPage({ assetId }: { assetId?: string }) {
-  const assetsQuery = useQuery(trpc.assets.list.queryOptions());
-  const indexedAssets = useMemo(
-    () => assetsQuery.data?.assets.map(mapIndexedAsset) ?? [],
-    [assetsQuery.data?.assets],
+  const [listParams, setListParams] = useAtom(listParamsAtom);
+  const filters = useAtomValue(assetFiltersAtom);
+  const setActiveSidebarItem = useSetAtom(activeSidebarItemAtom);
+  const { backgroundWindowDragEnabled } = useAppLayout();
+
+  // Sidebar data: always unfiltered so tags/views/counts never flicker on filter change
+  const sidebarQuery = useQuery({
+    ...trpc.assets.list.queryOptions(),
+    refetchOnWindowFocus: false,
+    staleTime: 30_000,
+  });
+  // Asset list: filtered by current selection
+  const hasFilter = Object.keys(listParams).length > 0;
+  const filteredQuery = useQuery({
+    ...trpc.assets.list.queryOptions(listParams),
+    enabled: hasFilter,
+    placeholderData: keepPreviousData,
+  });
+  const assetsQuery = sidebarQuery; // keep for vault/loading/error references below
+
+  // Show previous filter results while new query loads — eliminates the count=0 flash
+  const assetItems = useMemo(
+    () => {
+      const raw = hasFilter
+        ? (filteredQuery.data?.assets ?? sidebarQuery.data?.assets)
+        : sidebarQuery.data?.assets;
+      return raw?.map(mapIndexedAsset) ?? [];
+    },
+    [hasFilter, filteredQuery.data?.assets, sidebarQuery.data?.assets],
   );
-  const assetItems = indexedAssets;
+
   const activeAsset = assetId ? assetItems.find((asset) => asset.id === assetId) : undefined;
   const setWatcherScope = useMutation(trpc.watcher.setScope.mutationOptions());
   const auditWatcher = useMutation(trpc.watcher.audit.mutationOptions());
@@ -3154,32 +2385,34 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
       },
     };
   }, [activeAsset, assetsQuery.data?.vault]);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => localStorage.getItem("post.assetManager.sidebarCollapsed") === "true",
-  );
-  const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false);
-  const [terminalOpen, setTerminalOpen] = useState(false);
-  const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
-  const sidebarCollapseIntentRef = useRef<"collapsed" | "expanded" | null>(null);
-
-  const handleToggleSidebar = () => {
-    if (sidebarCollapsed || sidebarPanelRef.current?.isCollapsed()) {
-      sidebarCollapseIntentRef.current = "expanded";
-      setSidebarPreviewOpen(false);
-      setSidebarCollapsed(false);
-      sidebarPanelRef.current?.expand();
-      return;
-    }
-
-    sidebarCollapseIntentRef.current = "collapsed";
-    setSidebarPreviewOpen(false);
-    setSidebarCollapsed(true);
-    sidebarPanelRef.current?.collapse();
-  };
-
+  // Sync board filter-panel tag changes back to sidebar selection + server query
   useEffect(() => {
-    syncWindowControlsWithSidebar(!sidebarCollapsed || sidebarPreviewOpen);
-  }, [sidebarCollapsed, sidebarPreviewOpen]);
+    const allTags = assetsQuery.data?.tags ?? [];
+    if (filters.tags.length === 1) {
+      const tag = allTags.find((t) => t.name === filters.tags[0]);
+      if (tag) {
+        setListParams((prev) => (prev.tagId === tag.id ? prev : { tagId: tag.id }));
+        // Only move sidebar to the tag if a view isn't explicitly selected —
+        // views own their selection even when their filter resolves to a single tag.
+        setActiveSidebarItem((prev) => {
+          if (prev.kind === "view") return prev;
+          if (prev.kind === "tag" && prev.id === tag.id) return prev;
+          return { kind: "tag", id: tag.id };
+        });
+      } else {
+        setListParams((prev) => (prev.tagId ? {} : prev));
+      }
+    } else if (filters.tags.length === 0) {
+      setListParams((prev) => (prev.tagId ? {} : prev));
+      setActiveSidebarItem((prev) => (prev.kind === "tag" ? { kind: "mgmt", id: "all" } : prev));
+    } else {
+      // Multiple tags: server returns all, board does client-side multi-tag filter
+      setListParams((prev) => (prev.tagId ? {} : prev));
+      setActiveSidebarItem((prev) => (prev.kind === "tag" ? { kind: "mgmt", id: "all" } : prev));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.tags]);
+  const [terminalOpen, setTerminalOpen] = useState(false);
 
   useEffect(() => {
     setWatcherScope.mutate(watcherScope.input);
@@ -3196,190 +2429,56 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
     };
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem("post.assetManager.sidebarCollapsed", String(sidebarCollapsed));
-  }, [sidebarCollapsed]);
-
-  useEffect(() => {
-    if (!sidebarCollapsed || !sidebarPreviewOpen) {
-      return;
-    }
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const previewWidth = getSidebarPreviewWidth();
-      const exitPadding = SIDEBAR_PREVIEW_EXIT_PADDING;
-      const outsideHorizontalBounds =
-        event.clientX < -exitPadding || event.clientX > previewWidth + exitPadding;
-      const outsideVerticalBounds =
-        event.clientY < -exitPadding || event.clientY > window.innerHeight + exitPadding;
-
-      if (outsideHorizontalBounds || outsideVerticalBounds) {
-        setSidebarPreviewOpen(false);
-      }
-    };
-
-    window.addEventListener("pointermove", handlePointerMove, { passive: true });
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-    };
-  }, [sidebarCollapsed, sidebarPreviewOpen]);
-
-  useEffect(() => {
-    return () => {
-      syncWindowControlsWithSidebar(true);
-    };
-  }, []);
-
-  const backgroundWindowDragEnabled = !(sidebarCollapsed && sidebarPreviewOpen);
   const vaultAvailable = Boolean(assetsQuery.data?.vault);
   const terminalAvailable = vaultAvailable && isMacWindow();
 
   return (
-      <div className="relative h-full min-h-0 overflow-hidden text-zinc-950">
-        {sidebarCollapsed && !sidebarPreviewOpen ? (
-          <div
-            aria-hidden="true"
-            className="window-drag pointer-events-none absolute left-6 right-48 top-0 z-[74] h-14"
+    <ResizablePanelGroup
+      id="asset-main-layout"
+      direction="horizontal"
+      className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
+      resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
+    >
+      <ResizablePanel
+        id="main"
+        defaultSize={100}
+        minSize={activeAsset ? 34 : 42}
+        className="relative z-[60]"
+      >
+        {activeAsset ? (
+          <AssetDetail
+            asset={activeAsset}
+            dragEnabled={backgroundWindowDragEnabled}
+            terminalAvailable={terminalAvailable}
+            terminalOpen={terminalOpen}
+            onToggleTerminal={() => setTerminalOpen((open) => !open)}
           />
-        ) : null}
-        {sidebarCollapsed ? <SidebarEdgeHotspot onOpen={() => setSidebarPreviewOpen(true)} /> : null}
-        {sidebarCollapsed ? (
-          <motion.div
-            key="sidebar-preview"
-            className="absolute inset-y-0 left-0 z-[85] w-[min(320px,84vw)]"
-            initial={false}
-            animate={{ x: sidebarPreviewOpen ? 0 : "-100%" }}
-            transition={{ x: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
-            style={{
-              pointerEvents: sidebarPreviewOpen ? "auto" : "none",
-              transformOrigin: "left center",
-            }}
-            onMouseEnter={() => setSidebarPreviewOpen(true)}
-          >
-            <Sidebar
-              tagItems={assetsQuery.data?.tags ?? []}
-              viewItems={assetsQuery.data?.views ?? []}
-              onToggleSidebar={handleToggleSidebar}
-              toggleMode="expand"
-              floating
-              summary={assetsQuery.data?.summary ?? {
-                total: 0,
-                inbox: 0,
-                organized: 0,
-                draft: 0,
-                published: 0,
-                archived: 0,
-              }}
-            />
-          </motion.div>
-        ) : null}
-        {sidebarCollapsed && sidebarPreviewOpen ? <FloatingSidebarDragOverlay /> : null}
-        <ResizablePanelGroup
-          id="asset-layout"
-          direction="horizontal"
-          className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
-          resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
-          defaultLayout={sidebarCollapsed ? { sidebar: 0, main: 100 } : undefined}
-        >
-        <ResizablePanel
-          panelRef={sidebarPanelRef}
-          id="sidebar"
-          defaultSize={20}
-          minSize={16}
-          maxSize={28}
-          collapsible
-          collapsedSize={0}
-          onResize={(size) => {
-            const nextCollapsed = size.asPercentage <= 0.01;
+        ) : (
+          <AssetBoard
+            assetItems={assetItems}
+            tagOptions={assetsQuery.data?.tags ?? []}
+            dragEnabled={backgroundWindowDragEnabled}
+            vaultAvailable={vaultAvailable}
+            terminalAvailable={terminalAvailable}
+            terminalOpen={terminalOpen}
+            onToggleTerminal={() => setTerminalOpen((open) => !open)}
+            loading={(hasFilter ? filteredQuery : sidebarQuery).isLoading}
+            errorMessage={(hasFilter ? filteredQuery : sidebarQuery).error?.message}
+          />
+        )}
+      </ResizablePanel>
 
-            if (sidebarCollapseIntentRef.current === "collapsed") {
-              setSidebarCollapsed(true);
-              if (nextCollapsed) {
-                sidebarCollapseIntentRef.current = null;
-              }
-              return;
-            }
-
-            if (sidebarCollapseIntentRef.current === "expanded") {
-              setSidebarCollapsed(false);
-              if (!nextCollapsed) {
-                sidebarCollapseIntentRef.current = null;
-              }
-              return;
-            }
-
-            setSidebarCollapsed(nextCollapsed);
-            if (!nextCollapsed) {
-              setSidebarPreviewOpen(false);
-            }
-          }}
-          className={`overflow-hidden transition-opacity duration-150 ${
-            sidebarCollapsed ? "pointer-events-none opacity-0" : "opacity-100"
-          }`}
-        >
-          {!sidebarCollapsed ? (
-            <Sidebar
-              tagItems={assetsQuery.data?.tags ?? []}
-              viewItems={assetsQuery.data?.views ?? []}
-              onToggleSidebar={handleToggleSidebar}
-              summary={assetsQuery.data?.summary ?? {
-                total: 0,
-                inbox: 0,
-                organized: 0,
-                draft: 0,
-                published: 0,
-                archived: 0,
-              }}
-            />
-          ) : null}
-        </ResizablePanel>
-        <ResizableHandle
-          withHandle
-          className={sidebarCollapsed ? "opacity-0 pointer-events-none" : ""}
-        />
-
-        <ResizablePanel
-          id="main"
-          defaultSize={getMainDefaultSize(activeAsset, sidebarCollapsed)}
-          minSize={activeAsset ? 34 : 42}
-          className="relative z-[60]"
-        >
-          {activeAsset ? (
-            <AssetDetail
-              asset={activeAsset}
+      {!activeAsset && terminalOpen ? (
+        <>
+          <ResizableHandle withHandle />
+          <ResizablePanel id="asset-terminal" defaultSize={30} minSize={20} maxSize={48}>
+            <AssetTerminalPanel
               dragEnabled={backgroundWindowDragEnabled}
-              terminalAvailable={terminalAvailable}
-              terminalOpen={terminalOpen}
-              onToggleTerminal={() => setTerminalOpen((open) => !open)}
+              onHide={() => setTerminalOpen(false)}
             />
-          ) : (
-            <AssetBoard
-              assetItems={assetItems}
-              tagOptions={assetsQuery.data?.tags ?? []}
-              dragEnabled={backgroundWindowDragEnabled}
-              vaultAvailable={vaultAvailable}
-              terminalAvailable={terminalAvailable}
-              terminalOpen={terminalOpen}
-              onToggleTerminal={() => setTerminalOpen((open) => !open)}
-              loading={assetsQuery.isLoading}
-              errorMessage={assetsQuery.error?.message}
-            />
-          )}
-        </ResizablePanel>
-
-        {!activeAsset && terminalOpen ? (
-          <>
-            <ResizableHandle withHandle />
-            <ResizablePanel id="asset-terminal" defaultSize={30} minSize={20} maxSize={48}>
-              <AssetTerminalPanel
-                dragEnabled={backgroundWindowDragEnabled}
-                onHide={() => setTerminalOpen(false)}
-              />
-            </ResizablePanel>
-          </>
-        ) : null}
-
-        </ResizablePanelGroup>
-      </div>
+          </ResizablePanel>
+        </>
+      ) : null}
+    </ResizablePanelGroup>
   );
 }

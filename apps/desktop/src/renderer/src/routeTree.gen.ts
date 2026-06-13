@@ -9,68 +9,152 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as AssetsAssetIdRouteImport } from './routes/assets.$assetId'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as AppRouteImport } from './routes/_app'
+import { Route as AppIndexRouteImport } from './routes/_app.index'
+import { Route as AppPublishRouteImport } from './routes/_app.publish'
+import { Route as AppGraphRouteImport } from './routes/_app.graph'
+import { Route as AppAssetsAssetIdRouteImport } from './routes/_app.assets.$assetId'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AssetsAssetIdRoute = AssetsAssetIdRouteImport.update({
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPublishRoute = AppPublishRouteImport.update({
+  id: '/publish',
+  path: '/publish',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppGraphRoute = AppGraphRouteImport.update({
+  id: '/graph',
+  path: '/graph',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAssetsAssetIdRoute = AppAssetsAssetIdRouteImport.update({
   id: '/assets/$assetId',
   path: '/assets/$assetId',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/assets/$assetId': typeof AssetsAssetIdRoute
+  '/': typeof AppIndexRoute
+  '/settings': typeof SettingsRoute
+  '/graph': typeof AppGraphRoute
+  '/publish': typeof AppPublishRoute
+  '/assets/$assetId': typeof AppAssetsAssetIdRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/assets/$assetId': typeof AssetsAssetIdRoute
+  '/settings': typeof SettingsRoute
+  '/graph': typeof AppGraphRoute
+  '/publish': typeof AppPublishRoute
+  '/': typeof AppIndexRoute
+  '/assets/$assetId': typeof AppAssetsAssetIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/assets/$assetId': typeof AssetsAssetIdRoute
+  '/_app': typeof AppRouteWithChildren
+  '/settings': typeof SettingsRoute
+  '/_app/graph': typeof AppGraphRoute
+  '/_app/publish': typeof AppPublishRoute
+  '/_app/': typeof AppIndexRoute
+  '/_app/assets/$assetId': typeof AppAssetsAssetIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/assets/$assetId'
+  fullPaths: '/' | '/settings' | '/graph' | '/publish' | '/assets/$assetId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/assets/$assetId'
-  id: '__root__' | '/' | '/assets/$assetId'
+  to: '/settings' | '/graph' | '/publish' | '/' | '/assets/$assetId'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/settings'
+    | '/_app/graph'
+    | '/_app/publish'
+    | '/_app/'
+    | '/_app/assets/$assetId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  AssetsAssetIdRoute: typeof AssetsAssetIdRoute
+  AppRoute: typeof AppRouteWithChildren
+  SettingsRoute: typeof SettingsRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/assets/$assetId': {
-      id: '/assets/$assetId'
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_app/': {
+      id: '/_app/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/publish': {
+      id: '/_app/publish'
+      path: '/publish'
+      fullPath: '/publish'
+      preLoaderRoute: typeof AppPublishRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/graph': {
+      id: '/_app/graph'
+      path: '/graph'
+      fullPath: '/graph'
+      preLoaderRoute: typeof AppGraphRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/assets/$assetId': {
+      id: '/_app/assets/$assetId'
       path: '/assets/$assetId'
       fullPath: '/assets/$assetId'
-      preLoaderRoute: typeof AssetsAssetIdRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppAssetsAssetIdRouteImport
+      parentRoute: typeof AppRoute
     }
   }
 }
 
+interface AppRouteChildren {
+  AppGraphRoute: typeof AppGraphRoute
+  AppPublishRoute: typeof AppPublishRoute
+  AppIndexRoute: typeof AppIndexRoute
+  AppAssetsAssetIdRoute: typeof AppAssetsAssetIdRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppGraphRoute: AppGraphRoute,
+  AppPublishRoute: AppPublishRoute,
+  AppIndexRoute: AppIndexRoute,
+  AppAssetsAssetIdRoute: AppAssetsAssetIdRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  AssetsAssetIdRoute: AssetsAssetIdRoute,
+  AppRoute: AppRouteWithChildren,
+  SettingsRoute: SettingsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
