@@ -74,19 +74,16 @@ const EMPTY_SUMMARY: AssetSummary & { untagged: number } = {
  * every page.
  */
 export function AppLayout({ children }: { children: ReactNode }) {
-  // Sidebar data is always unfiltered so tags/views/counts never flicker.
-  // Shares the react-query cache with the page's own `assets.list` query.
   const sidebarQuery = useQuery({
-    ...trpc.assets.list.queryOptions(),
+    ...trpc.assets.sidebarMeta.queryOptions(),
     refetchOnWindowFocus: false,
     staleTime: 30_000,
   });
 
   const sidebarSummary = useMemo(() => {
     const base = sidebarQuery.data?.summary;
-    const untagged = sidebarQuery.data?.assets?.filter((a) => a.tags.length === 0).length ?? 0;
-    return base ? { ...base, untagged } : EMPTY_SUMMARY;
-  }, [sidebarQuery.data?.summary, sidebarQuery.data?.assets]);
+    return base ? { ...base } : EMPTY_SUMMARY;
+  }, [sidebarQuery.data?.summary]);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true",

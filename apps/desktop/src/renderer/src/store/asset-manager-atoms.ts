@@ -16,13 +16,6 @@ export type AssetFilterState = {
   sort: AssetSortOrder;
 };
 
-export type AssetListParams = {
-  vaultId?: string;
-  tagId?: string;
-  statusFilter?: "inbox" | "organized" | "draft" | "published" | "archived";
-  untagged?: boolean;
-};
-
 export type ActiveSidebarItem =
   | { kind: "mgmt"; id: "all" | "inbox" }
   | { kind: "view"; id: string }
@@ -45,5 +38,4 @@ export function getDefaultAssetFilters(): AssetFilterState {
 }
 
 export const assetFiltersAtom = atom<AssetFilterState>(getDefaultAssetFilters());
-export const listParamsAtom = atom<AssetListParams>({});
 export const activeSidebarItemAtom = atom<ActiveSidebarItem>({ kind: "mgmt", id: "all" });

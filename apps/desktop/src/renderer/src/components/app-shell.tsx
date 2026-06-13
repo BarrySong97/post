@@ -196,7 +196,7 @@ function GlobalStatusLine() {
         }
 
         if (event.type === "task.completed" && event.task.type === "thumbnails") {
-          void queryClient.invalidateQueries(trpc.assets.list.queryFilter());
+          void invalidateVaultState();
         }
       },
       onError: (error) => {
@@ -233,7 +233,7 @@ function GlobalStatusLine() {
         taskId: runningThumbnailTask.id,
         progress: thumbnailProgress,
       };
-      void queryClient.invalidateQueries(trpc.assets.list.queryFilter());
+      void invalidateVaultState();
     }
 
     for (const task of snapshot.recentlyCompleted) {
@@ -242,9 +242,9 @@ function GlobalStatusLine() {
       }
 
       completedInvalidatedIds.current.add(task.id);
-      void queryClient.invalidateQueries(trpc.assets.list.queryFilter());
+      void invalidateVaultState();
     }
-  }, [queryClient, snapshot]);
+  }, [invalidateVaultState, snapshot]);
 
   const tasks = useMemo(() => {
     const byId = new Map<string, BackgroundTask>();

@@ -38,7 +38,7 @@ export type Asset = {
   imageCount?: number;
 };
 
-export type IndexedAsset = RouterOutputs["assets"]["list"]["assets"][number];
-export type SidebarTag = RouterOutputs["assets"]["list"]["tags"][number];
-export type SidebarView = RouterOutputs["assets"]["list"]["views"][number];
-export type AssetSummary = RouterOutputs["assets"]["list"]["summary"];
+export type IndexedAsset = RouterOutputs["assets"]["list"]["items"][number];
+export type SidebarTag = RouterOutputs["assets"]["sidebarMeta"]["tags"][number];
+export type SidebarView = RouterOutputs["assets"]["sidebarMeta"]["views"][number];
+export type AssetSummary = RouterOutputs["assets"]["sidebarMeta"]["summary"];

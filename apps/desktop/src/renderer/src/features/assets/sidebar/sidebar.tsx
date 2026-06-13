@@ -27,7 +27,6 @@ import {
   activeSidebarItemAtom,
   assetFiltersAtom,
   getDefaultAssetFilters,
-  listParamsAtom,
 } from "@/store/asset-manager-atoms";
 import { getTagHue } from "@/features/assets/asset-model";
 import { SIDEBAR_ORDER_STORAGE_KEY } from "@/features/assets/storage";
@@ -385,7 +384,6 @@ export function Sidebar({
   floating?: boolean;
 }) {
   const [activeSidebarItem, setActiveSidebarItem] = useAtom(activeSidebarItemAtom);
-  const setListParams = useSetAtom(listParamsAtom);
   const setFilters = useSetAtom(assetFiltersAtom);
   const navigate = useNavigate();
   const { location } = useRouterState();
@@ -393,7 +391,6 @@ export function Sidebar({
 
   const handleMgmtItemClick = (item: "all" | "inbox") => {
     setActiveSidebarItem({ kind: "mgmt", id: item });
-    setListParams(item === "inbox" ? { untagged: true } : {});
     setFilters(getDefaultAssetFilters());
     if (isNonHomeRoute) void navigate({ to: "/" });
   };
@@ -403,7 +400,6 @@ export function Sidebar({
     const tagId = view?.conditions.find((c) => c.startsWith("tag:"))?.slice(4);
     const tagName = tagId ? tagItems.find((t) => t.id === tagId)?.name : undefined;
     setActiveSidebarItem({ kind: "view", id: viewId });
-    setListParams(tagId ? { tagId } : {});
     setFilters((prev) => ({ ...prev, tags: tagName ? [tagName] : [] }));
     if (isNonHomeRoute) void navigate({ to: "/" });
   };
@@ -411,7 +407,6 @@ export function Sidebar({
   const handleTagClick = (tagId: string) => {
     const tagName = tagItems.find((t) => t.id === tagId)?.name;
     setActiveSidebarItem({ kind: "tag", id: tagId });
-    setListParams({ tagId });
     setFilters((prev) => ({ ...prev, tags: tagName ? [tagName] : [] }));
     if (isNonHomeRoute) void navigate({ to: "/" });
   };
@@ -424,10 +419,6 @@ export function Sidebar({
 
   // When viewItems/tagItems first arrive (async data load), merge their IDs into
   // the stored order so newly-added views/tags actually appear in the sidebar.
-  useEffect(() => {
-    setSidebarOrder((current) => normalizeSidebarOrder(current, defaultSidebarOrder));
-  }, [defaultSidebarOrder]);
-
   useEffect(() => {
     setSidebarOrder((current) => normalizeSidebarOrder(current, defaultSidebarOrder));
   }, [defaultSidebarOrder]);

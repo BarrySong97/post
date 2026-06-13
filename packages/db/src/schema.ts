@@ -137,6 +137,18 @@ export const assetFiles = sqliteTable(
     index("asset_files_vault_quick_fingerprint_idx").on(table.vaultId, table.quickFingerprint),
     index("asset_files_vault_content_hash_idx").on(table.vaultId, table.contentHash),
     index("asset_files_vault_file_exists_idx").on(table.vaultId, table.fileExists),
+    index("asset_files_vault_file_exists_mtime_asset_idx").on(
+      table.vaultId,
+      table.fileExists,
+      table.mtimeMs,
+      table.assetId,
+    ),
+    index("asset_files_vault_file_exists_ctime_asset_idx").on(
+      table.vaultId,
+      table.fileExists,
+      table.ctimeMs,
+      table.assetId,
+    ),
   ],
 );
 
@@ -204,6 +216,7 @@ export const assetTags = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.assetId, table.tagId] }),
     index("asset_tags_tag_id_idx").on(table.tagId),
+    index("asset_tags_tag_asset_idx").on(table.tagId, table.assetId),
   ],
 );
 

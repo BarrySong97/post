@@ -10,6 +10,7 @@ import { getDatabase } from "../../db";
 import { chooseVaultFolder } from "../../indexer";
 import {
   attachRelations,
+  getAssetPage,
   getAssetRows,
   getAssetSummary,
   getSavedViews,
@@ -38,6 +39,36 @@ const importPathInput = z.object({
   rootPath: z.string().min(1),
   name: z.string().trim().min(1).optional(),
 });
+
+const ASSET_LIST_DEFAULT_LIMIT = 80;
+const ASSET_LIST_MAX_LIMIT = 160;
+
+const assetListInput = vaultInput
+  .extend({
+    tagId: z.string().optional(),
+    tagIds: z.array(z.string().min(1)).optional(),
+    tagMatch: z.enum(["and", "or"]).optional(),
+    statusFilter: z.enum(["inbox", "organized", "draft", "published", "archived"]).optional(),
+    untagged: z.boolean().optional(),
+    typeFilters: z.array(z.enum(["markdown", "image", "video", "link", "file"])).optional(),
+    timeFilter: z.enum(["any", "today", "week", "m30"]).optional(),
+    sourceTypes: z.array(z.enum(["vault", "external_file", "url"])).optional(),
+    sort: z.enum(["updated_desc", "updated_asc", "created_desc", "created_asc"]).optional(),
+    limit: z.number().int().min(1).max(ASSET_LIST_MAX_LIMIT).optional(),
+    cursor: z.object({
+      valueMs: z.number(),
+      id: z.string().min(1),
+    }).optional(),
+  })
+  .optional();
+
+function getConflictCount(vaultId: string) {
+  return getDatabase()
+    .select()
+    .from(schema.syncEvents)
+    .where(and(eq(schema.syncEvents.vaultId, vaultId), eq(schema.syncEvents.eventType, "conflict")))
+    .all().length;
+}
 
 export const assetsRouter = router({
   vaults: publicProcedure.query(() => {
@@ -132,61 +163,58 @@ export const assetsRouter = router({
       };
     }),
 
+  sidebarMeta: publicProcedure.input(vaultInput.optional()).query(({ input }) => {
+    const vault = getRequestedOrActiveVault(input?.vaultId);
+    if (!vault) {
+      return {
+        vault: null,
+        tags: [],
+        views: [],
+        summary: getAssetSummary(),
+        sourceOptions: [],
+        conflictCount: 0,
+      };
+    }
+
+    startThumbnailPrewarm(vault);
+    const summary = getAssetSummary(vault.id);
+
+    return {
+      vault,
+      tags: getSidebarTags(vault.id),
+      views: getSavedViews(vault.id),
+      summary,
+      sourceOptions: summary.total > 0 ? ["资产库"] : [],
+      conflictCount: getConflictCount(vault.id),
+    };
+  }),
+
   list: publicProcedure
-    .input(
-      vaultInput
-        .extend({
-          tagId: z.string().optional(),
-          statusFilter: z.enum(["inbox", "organized", "draft", "published", "archived"]).optional(),
-          untagged: z.boolean().optional(),
-        })
-        .optional(),
-    )
+    .input(assetListInput)
     .query(({ input }) => {
       const vault = getRequestedOrActiveVault(input?.vaultId);
       if (!vault) {
         return {
-          vault: null,
-          assets: [],
-          tags: [],
-          views: [],
-          summary: getAssetSummary([]),
-          conflictCount: 0,
+          items: [],
+          total: 0,
+          nextCursor: null,
         };
       }
 
-      const rows = getAssetRows(vault.id);
-      const allAssets = attachRelations(rows);
       startThumbnailPrewarm(vault);
-
-      // Apply server-side filters; sidebar counts always use allAssets
-      let filteredAssets = allAssets;
-      if (input?.tagId) {
-        filteredAssets = filteredAssets.filter((a) =>
-          a.tags.some((t) => t.id === input.tagId),
-        );
-      }
-      if (input?.statusFilter) {
-        filteredAssets = filteredAssets.filter((a) => a.status === input.statusFilter);
-      }
-      if (input?.untagged) {
-        filteredAssets = filteredAssets.filter((a) => a.tags.length === 0);
-      }
-
-      const conflictCount = getDatabase()
-        .select()
-        .from(schema.syncEvents)
-        .where(and(eq(schema.syncEvents.vaultId, vault.id), eq(schema.syncEvents.eventType, "conflict")))
-        .all().length;
-
-      return {
-        vault,
-        assets: filteredAssets,
-        tags: getSidebarTags(vault.id, allAssets),
-        views: getSavedViews(vault.id, allAssets),
-        summary: getAssetSummary(allAssets),
-        conflictCount,
-      };
+      return getAssetPage({
+        vaultId: vault.id,
+        tagIds: input?.tagIds ?? (input?.tagId ? [input.tagId] : undefined),
+        tagMatch: input?.tagMatch,
+        statusFilter: input?.statusFilter,
+        untagged: input?.untagged,
+        typeFilters: input?.typeFilters,
+        timeFilter: input?.timeFilter,
+        sourceTypes: input?.sourceTypes,
+        sort: input?.sort,
+        cursor: input?.cursor,
+        limit: input?.limit ?? ASSET_LIST_DEFAULT_LIMIT,
+      });
     }),
 
   byId: publicProcedure.input(z.object({ id: z.string().min(1) })).query(({ input }) => {

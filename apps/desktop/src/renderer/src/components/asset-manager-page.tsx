@@ -4,16 +4,17 @@ import React, {
   useEffect,
   useMemo,
   useId,
+  useCallback,
   type ComponentType,
   type ReactNode,
   type SVGProps,
 } from "react";
-import { useAtom, useSetAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue } from "jotai";
 import {
   assetFiltersAtom,
-  listParamsAtom,
   activeSidebarItemAtom,
   getEmptyAssetFilters,
+  type ActiveSidebarItem,
   type AssetFilterState,
   type AssetTypeFilter,
   type AssetFilterMatch,
@@ -27,7 +28,6 @@ import {
   writeAssetFilterOpenToStorage,
 } from "@/features/assets/storage";
 import {
-  filterAndSortAssets,
   getActiveFilterCount,
   getAssetSourceLabel,
   getTagHue,
@@ -38,9 +38,10 @@ import type {
   Asset,
   AssetKind,
   SidebarTag,
+  SidebarView,
 } from "@/features/assets/types";
 import { isMacWindow } from "@/lib/platform";
-import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { useMasonry, usePositioner, useResizeObserver as useMasonryResizeObserver } from "masonic";
 import { Plyr, type PlyrOptions, type PlyrSource } from "plyr-react";
 import "plyr-react/plyr.css";
@@ -98,7 +99,7 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppLayout } from "@/components/app-layout-context";
-import { trpc } from "@/lib/trpc";
+import { trpc, type RouterInputs } from "@/lib/trpc";
 import { load as yamlLoad } from "js-yaml";
 
 
@@ -317,6 +318,87 @@ const STATUS_FILTER_LABELS = Object.fromEntries(
 const SORT_OPTION_LABELS = Object.fromEntries(
   SORT_OPTIONS.map((item) => [item.value, item.label]),
 ) as Record<AssetSortOrder, string>;
+
+type AssetListInput = Extract<NonNullable<RouterInputs["assets"]["list"]>, Record<string, unknown>>;
+type AssetSourceType = NonNullable<AssetListInput["sourceTypes"]>[number];
+
+const ASSET_PAGE_LIMIT = 80;
+const MISSING_TAG_ID = "__missing_tag__";
+const SOURCE_LABEL_TO_TYPE = {
+  资产库: "vault",
+  本地文件: "external_file",
+  链接: "url",
+} satisfies Record<string, AssetSourceType>;
+
+function getTagIdsFromNames(tagNames: readonly string[], tagOptions: readonly SidebarTag[]) {
+  if (tagNames.length === 0) {
+    return [];
+  }
+
+  const tagIds = tagNames
+    .map((tagName) => tagOptions.find((tag) => tag.name === tagName)?.id)
+    .filter((tagId): tagId is string => Boolean(tagId));
+  return tagIds.length === tagNames.length ? tagIds : [MISSING_TAG_ID];
+}
+
+function getSidebarSelectionTagIds(
+  activeSidebarItem: ActiveSidebarItem,
+  tagOptions: readonly SidebarTag[],
+  viewOptions: readonly SidebarView[],
+) {
+  if (activeSidebarItem.kind === "tag") {
+    return tagOptions.some((tag) => tag.id === activeSidebarItem.id) ? [activeSidebarItem.id] : [MISSING_TAG_ID];
+  }
+
+  if (activeSidebarItem.kind !== "view") {
+    return [];
+  }
+
+  const view = viewOptions.find((item) => item.id === activeSidebarItem.id);
+  return view?.conditions
+    .filter((condition) => condition.startsWith("tag:"))
+    .map((condition) => condition.slice(4)) ?? [];
+}
+
+function getSourceTypes(sources: readonly string[]) {
+  if (sources.length === 0) {
+    return undefined;
+  }
+
+  return sources.map((source) => SOURCE_LABEL_TO_TYPE[source] ?? "external_file");
+}
+
+function buildAssetListInput({
+  activeSidebarItem,
+  filters,
+  tagOptions,
+  viewOptions,
+  vaultId,
+}: {
+  activeSidebarItem: ActiveSidebarItem;
+  filters: AssetFilterState;
+  tagOptions: readonly SidebarTag[];
+  viewOptions: readonly SidebarView[];
+  vaultId?: string;
+}): AssetListInput {
+  const filterTagIds = getTagIdsFromNames(filters.tags, tagOptions);
+  const selectionTagIds = getSidebarSelectionTagIds(activeSidebarItem, tagOptions, viewOptions);
+  const tagIds = filterTagIds.length > 0 ? filterTagIds : selectionTagIds;
+  const untagged = tagIds.length === 0 && activeSidebarItem.kind === "mgmt" && activeSidebarItem.id === "inbox";
+
+  return {
+    vaultId,
+    tagIds: tagIds.length > 0 ? tagIds : undefined,
+    tagMatch: filters.match,
+    statusFilter: filters.status === "any" ? undefined : filters.status,
+    untagged: untagged || undefined,
+    typeFilters: filters.types.length > 0 ? filters.types : undefined,
+    timeFilter: filters.time === "custom" ? "any" : filters.time,
+    sourceTypes: getSourceTypes(filters.sources),
+    sort: filters.sort,
+    limit: ASSET_PAGE_LIMIT,
+  };
+}
 
 function TagPill({ name }: { name: string }) {
   return (
@@ -1195,47 +1277,86 @@ const MasonryCard = React.memo(function MasonryCard({ data }: { index: number; d
   return <AssetCard asset={data} />;
 });
 
-function getAssetLayoutSignature(assetItems: readonly Asset[]) {
-  return assetItems
-    .map((asset) => [
-      asset.id,
-      asset.kind,
-      asset.title,
-      asset.body ?? "",
-      asset.thumbnailUrl ?? "",
-      asset.thumbnailStatus ?? "",
-      asset.imageWidth ?? "",
-      asset.imageHeight ?? "",
-      asset.fileExt ?? "",
-    ].join("\u0001"))
-    .join("\u0002");
-}
+const AssetPaginationFooter = React.forwardRef<HTMLDivElement, {
+  loadedCount: number;
+  totalCount: number;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  errorMessage?: string;
+  onRetry: () => void;
+}>(function AssetPaginationFooter({
+  loadedCount,
+  totalCount,
+  hasNextPage,
+  isFetchingNextPage,
+  errorMessage,
+  onRetry,
+}, ref) {
+  const showLoadedCount = totalCount > loadedCount;
+
+  return (
+    <div ref={ref} className="grid min-h-14 place-items-center px-4 py-3 text-[12px] text-zinc-400">
+      {errorMessage ? (
+        <button
+          type="button"
+          className="rounded-lg border border-red-100 bg-red-50 px-3 py-1.5 font-medium text-red-700 transition-colors hover:bg-red-100"
+          onClick={onRetry}
+        >
+          加载下一页失败，点击重试
+        </button>
+      ) : isFetchingNextPage ? (
+        <span>正在加载更多资产</span>
+      ) : hasNextPage ? (
+        <span>{showLoadedCount ? `已加载 ${loadedCount} / ${totalCount} 项` : "继续滚动加载更多"}</span>
+      ) : (
+        <span>{totalCount > 0 ? `已加载全部 ${totalCount} 项` : ""}</span>
+      )}
+    </div>
+  );
+});
 
 function AssetBoard({
   assetItems,
   tagOptions,
+  sourceOptions,
+  resultCount,
+  totalCount,
   vaultAvailable,
   terminalAvailable,
   terminalOpen,
   loading,
   errorMessage,
+  hasNextPage,
+  isFetchingNextPage,
+  paginationErrorMessage,
   onToggleTerminal,
+  onFetchNextPage,
   dragEnabled = true,
+  queryResetKey,
 }: {
   assetItems: Asset[];
   tagOptions: SidebarTag[];
+  sourceOptions: string[];
+  resultCount: number;
+  totalCount: number;
   vaultAvailable: boolean;
   terminalAvailable: boolean;
   terminalOpen: boolean;
   loading: boolean;
   errorMessage?: string;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  paginationErrorMessage?: string;
   onToggleTerminal: () => void;
+  onFetchNextPage: () => void;
   dragEnabled?: boolean;
+  queryResetKey: string;
 }) {
   const [filters, setFilters] = useAtom(assetFiltersAtom);
 
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const masonryGridRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
   const [isScrolling, setIsScrolling] = useState(false);
@@ -1244,22 +1365,18 @@ function AssetBoard({
   const scrollFrame = useRef<number | undefined>(undefined);
   const isScrollingRef = useRef(false);
   const activeFilterCount = getActiveFilterCount(filters);
-  const sourceOptions = useMemo(
-    () => Array.from(new Set(assetItems.map(getAssetSourceLabel))),
-    [assetItems],
-  );
-  const filteredAssetItems = useMemo(
-    () => filterAndSortAssets(assetItems, filters),
-    [assetItems, filters],
-  );
-  const layoutSignature = useMemo(
-    () => getAssetLayoutSignature(filteredAssetItems),
-    [filteredAssetItems],
-  );
 
   useEffect(() => {
     writeAssetFilterOpenToStorage(filterOpen);
   }, [filterOpen]);
+
+  useEffect(() => {
+    const el = scrollViewportRef.current;
+    if (!el) return;
+
+    el.scrollTop = 0;
+    setScrollTop(0);
+  }, [queryResetKey]);
 
   useEffect(() => {
     const el = scrollViewportRef.current;
@@ -1302,11 +1419,35 @@ function AssetBoard({
     };
   }, []);
 
+  useEffect(() => {
+    const root = scrollViewportRef.current;
+    const target = loadMoreRef.current;
+    if (!root || !target || !hasNextPage || loading || isFetchingNextPage) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onFetchNextPage();
+        }
+      },
+      {
+        root,
+        rootMargin: "520px 0px",
+        threshold: 0.01,
+      },
+    );
+    observer.observe(target);
+
+    return () => observer.disconnect();
+  }, [assetItems.length, hasNextPage, isFetchingNextPage, loading, onFetchNextPage]);
+
   // subtract px-6 padding (24px * 2 = 48px)
   const innerWidth = Math.max(0, size.width - 48);
   const positioner = usePositioner(
     { width: innerWidth, columnGutter: 16, columnWidth: 260 },
-    [innerWidth, layoutSignature],
+    [innerWidth, queryResetKey],
   );
   const resizeObserver = useMasonryResizeObserver(positioner);
 
@@ -1316,7 +1457,7 @@ function AssetBoard({
     isScrolling,
     height: size.height,
     containerRef: masonryGridRef,
-    items: filteredAssetItems,
+    items: assetItems,
     render: MasonryCard,
     resizeObserver,
     itemHeightEstimate: 340,
@@ -1348,15 +1489,15 @@ function AssetBoard({
             onFiltersChange={setFilters}
             tagOptions={tagOptions}
             sourceOptions={sourceOptions}
-            resultCount={filteredAssetItems.length}
+            resultCount={resultCount}
           />
         </AccordionItem>
       </AccordionRoot>
       <AssetActiveFilterSummary
         filters={filters}
         onFiltersChange={setFilters}
-        resultCount={filteredAssetItems.length}
-        totalCount={assetItems.length}
+        resultCount={resultCount}
+        totalCount={totalCount}
       />
       {errorMessage ? (
         <div className="shrink-0 border-b border-red-100 bg-red-50 px-6 py-2 text-xs text-red-700">
@@ -1374,14 +1515,29 @@ function AssetBoard({
       >
         {loading ? (
           <div className="grid h-56 place-items-center text-sm text-zinc-400">正在读取资产库</div>
-        ) : filteredAssetItems.length ? (
-          masonry
+        ) : assetItems.length ? (
+          <>
+            {masonry}
+            <AssetPaginationFooter
+              ref={loadMoreRef}
+              loadedCount={assetItems.length}
+              totalCount={resultCount}
+              hasNextPage={hasNextPage}
+              isFetchingNextPage={isFetchingNextPage}
+              errorMessage={paginationErrorMessage}
+              onRetry={onFetchNextPage}
+            />
+          </>
         ) : (
           <div className="grid h-72 place-items-center">
             <div className="text-center">
               <FolderKanban className="mx-auto text-zinc-300" size={36} />
-              <h2 className="mt-3 text-sm font-semibold text-zinc-800">选择一个文件夹开始索引</h2>
-              <p className="mt-1 text-xs text-zinc-500">文件留在原地，标签和关系写入 SQLite。</p>
+              <h2 className="mt-3 text-sm font-semibold text-zinc-800">
+                {vaultAvailable ? "没有匹配的资产" : "选择一个文件夹开始索引"}
+              </h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                {vaultAvailable ? "调整筛选条件后再试一次。" : "文件留在原地，标签和关系写入 SQLite。"}
+              </p>
             </div>
           </div>
         )}
@@ -2323,38 +2479,49 @@ function AssetDetail({
 
 
 export function AssetManagerPage({ assetId }: { assetId?: string }) {
-  const [listParams, setListParams] = useAtom(listParamsAtom);
   const filters = useAtomValue(assetFiltersAtom);
-  const setActiveSidebarItem = useSetAtom(activeSidebarItemAtom);
+  const activeSidebarItem = useAtomValue(activeSidebarItemAtom);
   const { backgroundWindowDragEnabled } = useAppLayout();
 
-  // Sidebar data: always unfiltered so tags/views/counts never flicker on filter change
   const sidebarQuery = useQuery({
-    ...trpc.assets.list.queryOptions(),
+    ...trpc.assets.sidebarMeta.queryOptions(),
     refetchOnWindowFocus: false,
     staleTime: 30_000,
   });
-  // Asset list: filtered by current selection
-  const hasFilter = Object.keys(listParams).length > 0;
-  const filteredQuery = useQuery({
-    ...trpc.assets.list.queryOptions(listParams),
-    enabled: hasFilter,
-    placeholderData: keepPreviousData,
-  });
-  const assetsQuery = sidebarQuery; // keep for vault/loading/error references below
 
-  // Show previous filter results while new query loads — eliminates the count=0 flash
-  const assetItems = useMemo(
-    () => {
-      const raw = hasFilter
-        ? (filteredQuery.data?.assets ?? sidebarQuery.data?.assets)
-        : sidebarQuery.data?.assets;
-      return raw?.map(mapIndexedAsset) ?? [];
-    },
-    [hasFilter, filteredQuery.data?.assets, sidebarQuery.data?.assets],
+  const listQueryInput = useMemo(
+    () => buildAssetListInput({
+      activeSidebarItem,
+      filters,
+      tagOptions: sidebarQuery.data?.tags ?? [],
+      viewOptions: sidebarQuery.data?.views ?? [],
+      vaultId: sidebarQuery.data?.vault?.id,
+    }),
+    [activeSidebarItem, filters, sidebarQuery.data?.tags, sidebarQuery.data?.vault?.id, sidebarQuery.data?.views],
+  );
+  const listQueryResetKey = useMemo(() => JSON.stringify(listQueryInput), [listQueryInput]);
+  const listQuery = useInfiniteQuery(
+    trpc.assets.list.infiniteQueryOptions(listQueryInput, {
+      enabled: !assetId,
+      getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    }),
   );
 
-  const activeAsset = assetId ? assetItems.find((asset) => asset.id === assetId) : undefined;
+  const assetItems = useMemo(
+    () => listQuery.data?.pages.flatMap((page) => page.items.map(mapIndexedAsset)) ?? [],
+    [listQuery.data?.pages],
+  );
+  const resultCount = listQuery.data?.pages[0]?.total ?? 0;
+  const activeAssetFromList = assetId ? assetItems.find((asset) => asset.id === assetId) : undefined;
+  const detailQuery = useQuery({
+    ...trpc.assets.byId.queryOptions({ id: assetId ?? MISSING_TAG_ID }),
+    enabled: Boolean(assetId),
+  });
+  const activeAsset = assetId
+    ? detailQuery.data
+      ? mapIndexedAsset(detailQuery.data)
+      : activeAssetFromList
+    : undefined;
   const setWatcherScope = useMutation(trpc.watcher.setScope.mutationOptions());
   const auditWatcher = useMutation(trpc.watcher.audit.mutationOptions());
   const watcherScope = useMemo(() => {
@@ -2368,12 +2535,12 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
       };
     }
 
-    if (assetsQuery.data?.vault) {
+    if (sidebarQuery.data?.vault) {
       return {
-        key: `vault:${assetsQuery.data.vault.id}:${assetsQuery.data.vault.rootPath}`,
+        key: `vault:${sidebarQuery.data.vault.id}:${sidebarQuery.data.vault.rootPath}`,
         input: {
           type: "vault" as const,
-          vaultId: assetsQuery.data.vault.id,
+          vaultId: sidebarQuery.data.vault.id,
         },
       };
     }
@@ -2384,35 +2551,16 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
         type: "idle" as const,
       },
     };
-  }, [activeAsset, assetsQuery.data?.vault]);
-  // Sync board filter-panel tag changes back to sidebar selection + server query
-  useEffect(() => {
-    const allTags = assetsQuery.data?.tags ?? [];
-    if (filters.tags.length === 1) {
-      const tag = allTags.find((t) => t.name === filters.tags[0]);
-      if (tag) {
-        setListParams((prev) => (prev.tagId === tag.id ? prev : { tagId: tag.id }));
-        // Only move sidebar to the tag if a view isn't explicitly selected —
-        // views own their selection even when their filter resolves to a single tag.
-        setActiveSidebarItem((prev) => {
-          if (prev.kind === "view") return prev;
-          if (prev.kind === "tag" && prev.id === tag.id) return prev;
-          return { kind: "tag", id: tag.id };
-        });
-      } else {
-        setListParams((prev) => (prev.tagId ? {} : prev));
-      }
-    } else if (filters.tags.length === 0) {
-      setListParams((prev) => (prev.tagId ? {} : prev));
-      setActiveSidebarItem((prev) => (prev.kind === "tag" ? { kind: "mgmt", id: "all" } : prev));
-    } else {
-      // Multiple tags: server returns all, board does client-side multi-tag filter
-      setListParams((prev) => (prev.tagId ? {} : prev));
-      setActiveSidebarItem((prev) => (prev.kind === "tag" ? { kind: "mgmt", id: "all" } : prev));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.tags]);
+  }, [activeAsset, sidebarQuery.data?.vault]);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const { fetchNextPage, hasNextPage, isFetchingNextPage } = listQuery;
+  const fetchNextAssetPage = useCallback(() => {
+    if (!hasNextPage || isFetchingNextPage) {
+      return;
+    }
+
+    void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   useEffect(() => {
     setWatcherScope.mutate(watcherScope.input);
@@ -2429,8 +2577,10 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
     };
   }, []);
 
-  const vaultAvailable = Boolean(assetsQuery.data?.vault);
+  const vaultAvailable = Boolean(sidebarQuery.data?.vault);
   const terminalAvailable = vaultAvailable && isMacWindow();
+  const boardErrorMessage = listQuery.isError && assetItems.length === 0 ? listQuery.error.message : undefined;
+  const paginationErrorMessage = listQuery.isError && assetItems.length > 0 ? listQuery.error.message : undefined;
 
   return (
     <ResizablePanelGroup
@@ -2442,33 +2592,47 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
       <ResizablePanel
         id="main"
         defaultSize={100}
-        minSize={activeAsset ? 34 : 42}
+        minSize={assetId ? 34 : 42}
         className="relative z-[60]"
       >
-        {activeAsset ? (
-          <AssetDetail
-            asset={activeAsset}
-            dragEnabled={backgroundWindowDragEnabled}
-            terminalAvailable={terminalAvailable}
-            terminalOpen={terminalOpen}
-            onToggleTerminal={() => setTerminalOpen((open) => !open)}
-          />
+        {assetId ? (
+          activeAsset ? (
+            <AssetDetail
+              asset={activeAsset}
+              dragEnabled={backgroundWindowDragEnabled}
+              terminalAvailable={terminalAvailable}
+              terminalOpen={terminalOpen}
+              onToggleTerminal={() => setTerminalOpen((open) => !open)}
+            />
+          ) : (
+            <main className="grid h-full place-items-center bg-white text-sm text-zinc-400">
+              {detailQuery.error ? detailQuery.error.message : "正在读取资产"}
+            </main>
+          )
         ) : (
           <AssetBoard
             assetItems={assetItems}
-            tagOptions={assetsQuery.data?.tags ?? []}
+            tagOptions={sidebarQuery.data?.tags ?? []}
+            sourceOptions={sidebarQuery.data?.sourceOptions ?? []}
+            resultCount={resultCount}
+            totalCount={sidebarQuery.data?.summary.total ?? resultCount}
             dragEnabled={backgroundWindowDragEnabled}
             vaultAvailable={vaultAvailable}
             terminalAvailable={terminalAvailable}
             terminalOpen={terminalOpen}
             onToggleTerminal={() => setTerminalOpen((open) => !open)}
-            loading={(hasFilter ? filteredQuery : sidebarQuery).isLoading}
-            errorMessage={(hasFilter ? filteredQuery : sidebarQuery).error?.message}
+            loading={listQuery.isLoading && assetItems.length === 0}
+            errorMessage={boardErrorMessage}
+            hasNextPage={Boolean(hasNextPage)}
+            isFetchingNextPage={isFetchingNextPage}
+            paginationErrorMessage={paginationErrorMessage}
+            onFetchNextPage={fetchNextAssetPage}
+            queryResetKey={listQueryResetKey}
           />
         )}
       </ResizablePanel>
 
-      {!activeAsset && terminalOpen ? (
+      {!assetId && terminalOpen ? (
         <>
           <ResizableHandle withHandle />
           <ResizablePanel id="asset-terminal" defaultSize={30} minSize={20} maxSize={48}>
