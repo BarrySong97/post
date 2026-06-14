@@ -1,9 +1,9 @@
 {
   "name": "desktop",
   "version": "0.0.0",
+  "private": true,
   "description": "Electron desktop app scaffold for Post",
   "author": "Post",
-  "private": true,
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -22,6 +22,7 @@
     "@electron-toolkit/preload": "catalog:",
     "@electron-toolkit/utils": "catalog:",
     "@heroui/react": "catalog:",
+    "@hookform/resolvers": "^5.4.0",
     "@post/db": "workspace:*",
     "@post/ui": "workspace:*",
     "@radix-ui/react-collapsible": "^1.1.12",
@@ -45,6 +46,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-force-graph-2d": "^1.29.1",
+    "react-hook-form": "^7.79.0",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "catalog:",
     "remark-gfm": "^4.0.1",

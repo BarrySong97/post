@@ -6,7 +6,29 @@
 #   2) 用 lefthook / husky 调用本脚本
 set -e
 node scripts/check-docs.mjs
-# 取消注释,接上你的项目检查:
-# npm run lint
-# npm run typecheck
-# npm test
+
+staged_files=$(git diff --cached --name-only --diff-filter=ACMR)
+format_files=""
+lint_files=""
+
+for file in $staged_files; do
+  case "$file" in
+    *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.json|*.css)
+      format_files="$format_files $file"
+      ;;
+  esac
+
+  case "$file" in
+    *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs)
+      lint_files="$lint_files $file"
+      ;;
+  esac
+done
+
+if [ -n "$format_files" ]; then
+  pnpm exec oxfmt --check $format_files --no-error-on-unmatched-pattern
+fi
+
+if [ -n "$lint_files" ]; then
+  pnpm exec oxlint $lint_files --no-error-on-unmatched-pattern
+fi

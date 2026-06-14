@@ -1,15 +1,19 @@
 {
   "name": "post",
   "private": true,
-  "type": "module",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
+  "type": "module",
   "scripts": {
     "dev": "pnpm rebuild:electron && turbo -F desktop dev",
     "build": "turbo build",
     "check-types": "turbo check-types",
+    "lint": "oxlint apps packages scripts --no-error-on-unmatched-pattern",
+    "lint:fix": "oxlint apps packages scripts --fix --no-error-on-unmatched-pattern",
+    "format": "oxfmt --write apps packages scripts package.json tsconfig.json turbo.json .claude .codex .oxlintrc.json .oxfmtrc.json --no-error-on-unmatched-pattern",
+    "format:check": "oxfmt --check apps packages scripts package.json tsconfig.json turbo.json .claude .codex .oxlintrc.json .oxfmtrc.json --no-error-on-unmatched-pattern",
     "db:generate": "pnpm -F @post/db db:generate",
     "db:migrate": "pnpm -F @post/db db:migrate",
     "db:studio": "pnpm -F @post/db db:studio",
@@ -23,6 +27,8 @@
   },
   "devDependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "oxfmt": "^0.54.0",
+    "oxlint": "^1.69.0",
     "turbo": "^2.8.12",
     "typescript": "catalog:"
   },
