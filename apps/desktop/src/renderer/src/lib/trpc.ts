@@ -1,3 +1,10 @@
+/**
+ * @purpose Provide renderer trpc utilities shared across pages and components.
+ * @role    Small renderer helper module outside page-specific ownership.
+ * @deps    Renderer runtime, tRPC/client/provider code, platform or toast libraries as appropriate.
+ * @gotcha  Keep helpers browser-safe unless they intentionally call preload-exposed APIs.
+ */
+
 import { QueryClient } from "@tanstack/react-query";
 import { createTRPCClient } from "@trpc/client";
 import { createTRPCOptionsProxy } from "@trpc/tanstack-react-query";

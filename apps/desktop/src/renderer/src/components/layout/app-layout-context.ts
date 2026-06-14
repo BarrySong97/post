@@ -1,3 +1,10 @@
+/**
+ * @purpose Render the app layout context surface for the desktop renderer.
+ * @role    App-level React component composed by routes, shell, or shared workflows.
+ * @deps    React context and layout components that consume shared layout state.
+ * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ */
+
 import { createContext, useContext } from "react";
 
 /**

@@ -1,9 +1,16 @@
+/**
+ * @purpose Render the publish surface for the desktop renderer.
+ * @role    App-level React component composed by routes, shell, or shared workflows.
+ * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
+ * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ */
+
 import { useId, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { Button, Chip } from "@heroui/react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { PageChrome } from "@/components/app-layout";
+import { PageChrome } from "@/components/layout/app-layout";
 
 // ── Types & constants ─────────────────────────────────────────────────────────
 
@@ -17,11 +24,39 @@ type Platform = {
 };
 
 const PLATFORMS: Platform[] = [
-  { id: "mp",  name: "公众号", fmt: "长文",   hue: 150, default: true,  adapt: "保留全文 1240 字 · 自动配图与小标题" },
-  { id: "xhs", name: "小红书", fmt: "图文",   hue: 0,   default: true,  adapt: "压缩到 ~350 字 · 9 图 · 加话题标签" },
-  { id: "zh",  name: "知乎",   fmt: "长文",   hue: 210, default: false, adapt: "保留论证结构 · 顶部加 TL;DR" },
-  { id: "x",   name: "X",      fmt: "Thread", hue: 230, default: true,  adapt: "拆成 5 条 thread · 译为英文" },
-  { id: "jk",  name: "即刻",   fmt: "短帖",   hue: 280, default: false, adapt: "140 字金句 + 原文链接" },
+  {
+    id: "mp",
+    name: "公众号",
+    fmt: "长文",
+    hue: 150,
+    default: true,
+    adapt: "保留全文 1240 字 · 自动配图与小标题",
+  },
+  {
+    id: "xhs",
+    name: "小红书",
+    fmt: "图文",
+    hue: 0,
+    default: true,
+    adapt: "压缩到 ~350 字 · 9 图 · 加话题标签",
+  },
+  {
+    id: "zh",
+    name: "知乎",
+    fmt: "长文",
+    hue: 210,
+    default: false,
+    adapt: "保留论证结构 · 顶部加 TL;DR",
+  },
+  {
+    id: "x",
+    name: "X",
+    fmt: "Thread",
+    hue: 230,
+    default: true,
+    adapt: "拆成 5 条 thread · 译为英文",
+  },
+  { id: "jk", name: "即刻", fmt: "短帖", hue: 280, default: false, adapt: "140 字金句 + 原文链接" },
 ];
 
 const DEFAULT_SELECTED = new Set(PLATFORMS.filter((p) => p.default).map((p) => p.id));
@@ -39,7 +74,11 @@ const SOURCE = {
 
 // ── SVG stripe cover placeholder ──────────────────────────────────────────────
 
-function CoverPlaceholder({ label, ratio = "16 / 9", hue = 210 }: {
+function CoverPlaceholder({
+  label,
+  ratio = "16 / 9",
+  hue = 210,
+}: {
   label: string;
   ratio?: string;
   hue?: number;
@@ -56,8 +95,22 @@ function CoverPlaceholder({ label, ratio = "16 / 9", hue = 210 }: {
     >
       <svg className="absolute inset-0 h-full w-full" preserveAspectRatio="xMidYMid slice">
         <defs>
-          <pattern id={patternId} width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2="9" stroke="currentColor" strokeWidth="1" strokeOpacity="0.5" />
+          <pattern
+            id={patternId}
+            width="9"
+            height="9"
+            patternUnits="userSpaceOnUse"
+            patternTransform="rotate(45)"
+          >
+            <line
+              x1="0"
+              y1="0"
+              x2="0"
+              y2="9"
+              stroke="currentColor"
+              strokeWidth="1"
+              strokeOpacity="0.5"
+            />
           </pattern>
         </defs>
         <rect width="100%" height="100%" fill={`url(#${patternId})`} />
@@ -76,7 +129,11 @@ function CoverPlaceholder({ label, ratio = "16 / 9", hue = 210 }: {
 
 // ── Platform chip ─────────────────────────────────────────────────────────────
 
-function PlatformChip({ platform, selected, onToggle }: {
+function PlatformChip({
+  platform,
+  selected,
+  onToggle,
+}: {
   platform: Platform;
   selected: boolean;
   onToggle: () => void;
@@ -100,7 +157,10 @@ function PlatformChip({ platform, selected, onToggle }: {
         ✓
       </span>
       {/* Color dot */}
-      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: `oklch(0.62 0.15 ${platform.hue})` }} />
+      <span
+        className="h-2 w-2 shrink-0 rounded-full"
+        style={{ background: `oklch(0.62 0.15 ${platform.hue})` }}
+      />
       {/* Name */}
       <span className="text-xs font-semibold text-zinc-800">{platform.name}</span>
       {/* Format badge */}
@@ -122,7 +182,11 @@ function ComposeCard() {
       <div className="relative">
         <CoverPlaceholder label={SOURCE.cover} ratio="16 / 9" hue={210} />
         <div className="absolute bottom-2.5 right-2.5">
-          <Button size="sm" variant="outline" className="h-7 border-zinc-200 bg-white/90 px-2.5 text-xs font-semibold text-zinc-700 backdrop-blur-sm">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 border-zinc-200 bg-white/90 px-2.5 text-xs font-semibold text-zinc-700 backdrop-blur-sm"
+          >
             ↻ 更换封面
           </Button>
         </div>
@@ -152,7 +216,11 @@ function ComposeCard() {
               <span>{SOURCE.words} 字</span>
               <span>·</span>
               <span>{SOURCE.read}</span>
-              <Button size="sm" variant="ghost" className="ml-auto h-5 min-w-0 px-1 text-xs text-blue-600">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto h-5 min-w-0 px-1 text-xs text-blue-600"
+              >
                 ✎ 编辑正文
               </Button>
             </div>
@@ -239,7 +307,10 @@ function PreviewColumn({ selectedPlatforms }: { selectedPlatforms: Set<string> }
                   : "bg-transparent text-zinc-400 hover:text-zinc-600"
               }`}
             >
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: `oklch(0.62 0.15 ${p.hue})` }} />
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-full"
+                style={{ background: `oklch(0.62 0.15 ${p.hue})` }}
+              />
               {p.name}
             </button>
           ))}
@@ -259,7 +330,9 @@ function PreviewColumn({ selectedPlatforms }: { selectedPlatforms: Set<string> }
               <CoverPlaceholder label={SOURCE.cover} ratio="16 / 9" hue={210} />
               <div className="p-4">
                 <p className="mb-1 text-xs text-zinc-300">Post 团队 · 6 分钟阅读</p>
-                <p className="mb-2 text-sm font-semibold leading-snug text-zinc-900">{SOURCE.title}</p>
+                <p className="mb-2 text-sm font-semibold leading-snug text-zinc-900">
+                  {SOURCE.title}
+                </p>
                 <p className="text-xs leading-relaxed text-zinc-500">
                   做内容三年，我最大的改变不是工具变多，而是把所有素材塞进同一个库。
                 </p>
@@ -267,7 +340,10 @@ function PreviewColumn({ selectedPlatforms }: { selectedPlatforms: Set<string> }
             </div>
             {activePlat && (
               <div className="mt-3 flex items-center justify-center gap-2 text-xs text-zinc-300">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: `oklch(0.62 0.15 ${activePlat.hue})` }} />
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                  style={{ background: `oklch(0.62 0.15 ${activePlat.hue})` }}
+                />
                 按「{activePlat.name}」语气改写 · 可手动微调
               </div>
             )}
@@ -302,9 +378,11 @@ export function PublishPage() {
 
   const n = selected.size;
   const btnLabel =
-    phase === "done" ? `已发布到 ${n} 个平台` :
-    phase === "publishing" ? "发布中…" :
-    `发布到 ${n} 个平台`;
+    phase === "done"
+      ? `已发布到 ${n} 个平台`
+      : phase === "publishing"
+        ? "发布中…"
+        : `发布到 ${n} 个平台`;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white">

@@ -1,3 +1,10 @@
+/**
+ * @purpose Store cross-component asset manager UI state in Jotai atoms.
+ * @role    Renderer state boundary for filters, sidebar selection, and asset manager view state.
+ * @deps    jotai and asset filter types.
+ * @gotcha  Keep persisted/filter state serializable because saved views and storage helpers depend on it.
+ */
+
 import { atom } from "jotai";
 
 export type AssetTypeFilter = "markdown" | "image" | "video" | "link" | "file";

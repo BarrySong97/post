@@ -1,3 +1,10 @@
+/**
+ * @purpose Support asset manager asset filter controls behavior and data shaping.
+ * @role    Reusable asset manager component shared by asset browsing and saved view forms.
+ * @deps    Asset tRPC types, React/HeroUI where UI is present, local storage or URL helpers as needed.
+ * @gotcha  Keep asset kind/status/tag/view contracts synchronized with packages/db schema and saved-view JSON.
+ */
+
 import type { ComponentType, Dispatch, ReactNode, SetStateAction } from "react";
 import { AccordionBody, AccordionPanel, Button, Tag, TagGroup, Tabs } from "@heroui/react";
 import { FileText, Image as ImageIcon, Link as LinkIcon, Plus, Video } from "lucide-react";
@@ -11,8 +18,8 @@ import {
   type AssetTimeFilter,
   type AssetTypeFilter,
 } from "@/store/asset-manager-atoms";
-import { getTagHue } from "@/features/assets/asset-model";
-import type { SidebarTag } from "@/features/assets/types";
+import { getTagHue } from "@/lib/asset-manager/asset-model";
+import type { SidebarTag } from "@/lib/asset-manager/types";
 import type { RouterInputs, RouterOutputs } from "@/lib/trpc";
 
 export const ASSET_TYPE_FILTERS = [
@@ -67,7 +74,8 @@ type AssetListInput = Extract<NonNullable<RouterInputs["assets"]["list"]>, Recor
 type AssetSourceType = NonNullable<AssetListInput["sourceTypes"]>[number];
 export type SavedViewFiltersInput = RouterInputs["assets"]["createSavedView"]["filters"];
 export type SavedViewSortInput = RouterInputs["assets"]["createSavedView"]["sort"];
-export type SavedViewFiltersOutput = RouterOutputs["assets"]["sidebarMeta"]["views"][number]["filters"];
+export type SavedViewFiltersOutput =
+  RouterOutputs["assets"]["sidebarMeta"]["views"][number]["filters"];
 
 export const SOURCE_LABEL_TO_TYPE = {
   资产库: "vault",
@@ -126,9 +134,10 @@ export function savedViewFiltersToAssetFilters(
     sources: sourceTypesToLabels(filters.sources),
     match: filters.match,
     time: filters.time,
-    status: filters.status === "inbox" || filters.status === "draft" || filters.status === "published"
-      ? filters.status
-      : "any",
+    status:
+      filters.status === "inbox" || filters.status === "draft" || filters.status === "published"
+        ? filters.status
+        : "any",
     sort,
   };
 }
@@ -185,9 +194,10 @@ function AssetFilterTagGroup<T extends string>({
       selectionMode="multiple"
       selectedKeys={new Set(selectedValues)}
       onSelectionChange={(keys) => {
-        const nextValues = keys === "all"
-          ? options.map((option) => option.value)
-          : Array.from(keys, (key) => String(key) as T);
+        const nextValues =
+          keys === "all"
+            ? options.map((option) => option.value)
+            : Array.from(keys, (key) => String(key) as T);
 
         onSelectedValuesChange(nextValues);
       }}
@@ -215,10 +225,20 @@ function AssetFilterTagGroup<T extends string>({
   );
 }
 
-function AssetFilterField({ label, children, wide = true }: { label: string; children: ReactNode; wide?: boolean }) {
+function AssetFilterField({
+  label,
+  children,
+  wide = true,
+}: {
+  label: string;
+  children: ReactNode;
+  wide?: boolean;
+}) {
   return (
     <div className={`flex gap-3 ${wide ? "items-start" : "flex-col"}`}>
-      <span className={`shrink-0 text-[10.5px] font-semibold tracking-wide text-zinc-400 ${wide ? "w-8 pt-1" : ""}`}>
+      <span
+        className={`shrink-0 text-[10.5px] font-semibold tracking-wide text-zinc-400 ${wide ? "w-8 pt-1" : ""}`}
+      >
         {label}
       </span>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{children}</div>
@@ -277,7 +297,9 @@ export function AssetFilterFields({
           label="资产来源"
           options={sourceOptions.map((source) => ({ value: source, label: source }))}
           selectedValues={filters.sources}
-          onSelectedValuesChange={(sources) => onFiltersChange((current) => ({ ...current, sources }))}
+          onSelectedValuesChange={(sources) =>
+            onFiltersChange((current) => ({ ...current, sources }))
+          }
         />
       </AssetFilterField>
 
@@ -322,7 +344,10 @@ export function AssetFilterPanel({
   onSaveView,
 }: AssetFilterPanelProps) {
   return (
-    <AccordionPanel id="asset-filter-panel" className="overflow-hidden border-b border-zinc-200 bg-[#fbfbfa]">
+    <AccordionPanel
+      id="asset-filter-panel"
+      className="overflow-hidden border-b border-zinc-200 bg-[#fbfbfa]"
+    >
       <AccordionBody className="space-y-3 px-6 py-3">
         <AssetFilterFields
           filters={filters}

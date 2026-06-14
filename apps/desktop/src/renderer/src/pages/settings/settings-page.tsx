@@ -1,3 +1,10 @@
+/**
+ * @purpose Render the settings surface for the desktop renderer.
+ * @role    App-level React component composed by routes, shell, or shared workflows.
+ * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
+ * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ */
+
 import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -14,7 +21,7 @@ import {
 } from "lucide-react";
 import { Button, Input, ListBox, Select, Switch } from "@heroui/react";
 
-import { readSidebarWidthPct } from "@/features/assets/storage";
+import { readSidebarWidthPct } from "@/lib/asset-manager/storage";
 import { isMacWindow } from "@/lib/platform";
 
 type SettingsSection = "general" | "appearance" | "vault" | "privacy" | "shortcuts";
@@ -36,9 +43,7 @@ const NAV = [
   },
   {
     group: "高级",
-    items: [
-      { id: "shortcuts" as const, label: "快捷键", Icon: Keyboard },
-    ],
+    items: [{ id: "shortcuts" as const, label: "快捷键", Icon: Keyboard }],
   },
 ];
 
@@ -56,7 +61,6 @@ export function SettingsPage() {
         style={{ width: sidebarWidth }}
         className="flex h-full flex-none flex-col border-r border-white/45 bg-white/45 shadow-[inset_-1px_0_0_rgba(255,255,255,0.45)] backdrop-blur-2xl backdrop-saturate-150"
       >
-
         {/* Chrome row — traffic-lights safe zone + back button */}
         <div className={`relative mt-[10.5px] h-12 ${chromePadding}`}>
           <div aria-hidden="true" className="window-drag absolute inset-0 z-0" />
@@ -105,7 +109,9 @@ export function SettingsPage() {
                   >
                     <Icon
                       size={14}
-                      className={active === id ? "shrink-0 text-zinc-700" : "shrink-0 text-zinc-400"}
+                      className={
+                        active === id ? "shrink-0 text-zinc-700" : "shrink-0 text-zinc-400"
+                      }
                     />
                     {label}
                   </button>
@@ -159,7 +165,15 @@ function SettingGroup({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SettingRow({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
+function SettingRow({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex items-center gap-4 border-t border-zinc-100 px-4 py-3.5 first:border-t-0">
       <div className="min-w-0 flex-1">
@@ -234,14 +248,21 @@ function GeneralSection() {
             }`}
           >
             <div className="flex items-center justify-between">
-              {mode === "grid"
-                ? <Grid2x2 size={18} className={viewMode === mode ? "text-blue-500" : "text-zinc-400"} />
-                : <List size={18} className={viewMode === mode ? "text-blue-500" : "text-zinc-400"} />}
-              <span className={`h-3.5 w-3.5 rounded-full border-2 ${
-                viewMode === mode
-                  ? "border-blue-500 bg-blue-500 shadow-[inset_0_0_0_2px_white]"
-                  : "border-zinc-300 bg-white"
-              }`} />
+              {mode === "grid" ? (
+                <Grid2x2
+                  size={18}
+                  className={viewMode === mode ? "text-blue-500" : "text-zinc-400"}
+                />
+              ) : (
+                <List size={18} className={viewMode === mode ? "text-blue-500" : "text-zinc-400"} />
+              )}
+              <span
+                className={`h-3.5 w-3.5 rounded-full border-2 ${
+                  viewMode === mode
+                    ? "border-blue-500 bg-blue-500 shadow-[inset_0_0_0_2px_white]"
+                    : "border-zinc-300 bg-white"
+                }`}
+              />
             </div>
             <div className="text-[13px] font-semibold text-zinc-800">
               {mode === "grid" ? "网格视图" : "列表视图"}
@@ -256,16 +277,41 @@ function GeneralSection() {
       <SettingGroup>
         <SettingRow title="启动资产库" desc="启动时自动打开的资产库">
           <SettingSelect defaultKey="last">
-            <ListBox.Item id="last" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">上次使用的</ListBox.Item>
-            <ListBox.Item id="none" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">不自动打开</ListBox.Item>
+            <ListBox.Item
+              id="last"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              上次使用的
+            </ListBox.Item>
+            <ListBox.Item
+              id="none"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              不自动打开
+            </ListBox.Item>
           </SettingSelect>
         </SettingRow>
 
         <SettingRow title="语言" desc="界面显示语言">
           <SettingSelect defaultKey="auto">
-            <ListBox.Item id="auto" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">跟随系统</ListBox.Item>
-            <ListBox.Item id="zh" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">中文</ListBox.Item>
-            <ListBox.Item id="en" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">English</ListBox.Item>
+            <ListBox.Item
+              id="auto"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              跟随系统
+            </ListBox.Item>
+            <ListBox.Item
+              id="zh"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              中文
+            </ListBox.Item>
+            <ListBox.Item
+              id="en"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              English
+            </ListBox.Item>
           </SettingSelect>
         </SettingRow>
 
@@ -311,11 +357,13 @@ function AppearanceSection() {
           >
             <div className="flex items-center justify-between">
               <Icon size={18} className={theme === id ? "text-blue-500" : "text-zinc-400"} />
-              <span className={`h-3.5 w-3.5 rounded-full border-2 ${
-                theme === id
-                  ? "border-blue-500 bg-blue-500 shadow-[inset_0_0_0_2px_white]"
-                  : "border-zinc-300 bg-white"
-              }`} />
+              <span
+                className={`h-3.5 w-3.5 rounded-full border-2 ${
+                  theme === id
+                    ? "border-blue-500 bg-blue-500 shadow-[inset_0_0_0_2px_white]"
+                    : "border-zinc-300 bg-white"
+                }`}
+              />
             </div>
             <div className="text-[13px] font-semibold text-zinc-800">{label}</div>
             <div className="text-[11.5px] leading-snug text-zinc-500">{sub}</div>
@@ -326,8 +374,18 @@ function AppearanceSection() {
       <SettingGroup>
         <SettingRow title="信息密度" desc="调整界面元素的间距与大小">
           <SettingSelect defaultKey="normal" className="w-28">
-            <ListBox.Item id="normal" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">标准</ListBox.Item>
-            <ListBox.Item id="compact" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">紧凑</ListBox.Item>
+            <ListBox.Item
+              id="normal"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              标准
+            </ListBox.Item>
+            <ListBox.Item
+              id="compact"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              紧凑
+            </ListBox.Item>
           </SettingSelect>
         </SettingRow>
         <SettingRow title="侧边栏图标" desc="在侧边栏条目旁显示图标">
@@ -360,10 +418,30 @@ function VaultSection() {
         </SettingRow>
         <SettingRow title="同步间隔" desc="后台检查文件变化的频率">
           <SettingSelect defaultKey="5" isDisabled={!autoSync}>
-            <ListBox.Item id="1" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">每 1 分钟</ListBox.Item>
-            <ListBox.Item id="5" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">每 5 分钟</ListBox.Item>
-            <ListBox.Item id="15" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">每 15 分钟</ListBox.Item>
-            <ListBox.Item id="30" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">每 30 分钟</ListBox.Item>
+            <ListBox.Item
+              id="1"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              每 1 分钟
+            </ListBox.Item>
+            <ListBox.Item
+              id="5"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              每 5 分钟
+            </ListBox.Item>
+            <ListBox.Item
+              id="15"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              每 15 分钟
+            </ListBox.Item>
+            <ListBox.Item
+              id="30"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              每 30 分钟
+            </ListBox.Item>
           </SettingSelect>
         </SettingRow>
         <SettingRow title="索引隐藏文件" desc="将点开头的隐藏文件和文件夹纳入索引">
@@ -377,9 +455,24 @@ function VaultSection() {
         </SettingRow>
         <SettingRow title="缩略图质量" desc="生成的缩略图质量（影响磁盘占用）">
           <SettingSelect defaultKey="medium" className="w-28" isDisabled={!thumbnails}>
-            <ListBox.Item id="high" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">高质量</ListBox.Item>
-            <ListBox.Item id="medium" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">中等</ListBox.Item>
-            <ListBox.Item id="low" className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50">低质量</ListBox.Item>
+            <ListBox.Item
+              id="high"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              高质量
+            </ListBox.Item>
+            <ListBox.Item
+              id="medium"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              中等
+            </ListBox.Item>
+            <ListBox.Item
+              id="low"
+              className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
+            >
+              低质量
+            </ListBox.Item>
           </SettingSelect>
         </SettingRow>
       </SettingGroup>
@@ -400,7 +493,10 @@ function PrivacySection() {
         <SettingRow title="隐私资产" desc="开启后可将资产标记为私密，私密资产在默认视图中隐藏">
           <SettingSwitch value={privateEnabled} onChange={setPrivateEnabled} />
         </SettingRow>
-        <SettingRow title="匿名数据收集" desc="发送匿名使用统计，帮助改善 Post。不包含任何个人或资产信息">
+        <SettingRow
+          title="匿名数据收集"
+          desc="发送匿名使用统计，帮助改善 Post。不包含任何个人或资产信息"
+        >
           <SettingSwitch value={analytics} onChange={setAnalytics} />
         </SettingRow>
         <SettingRow title="崩溃报告" desc="应用崩溃时自动上报诊断信息，不含个人数据">
@@ -409,7 +505,17 @@ function PrivacySection() {
       </SettingGroup>
 
       <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3">
-        <svg className="mt-0.5 shrink-0 text-blue-500" width={14} height={14} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+        <svg
+          className="mt-0.5 shrink-0 text-blue-500"
+          width={14}
+          height={14}
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
           <circle cx="8" cy="8" r="6" />
           <line x1="8" y1="7.5" x2="8" y2="11" />
           <circle cx="8" cy="5.2" r="0.6" fill="currentColor" stroke="none" />
@@ -444,7 +550,10 @@ function ShortcutsSection() {
           <SettingRow key={label} title={label}>
             <div className="flex items-center gap-1">
               {keys.map((k) => (
-                <kbd key={k} className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 px-1.5 font-mono text-[11px] text-zinc-600">
+                <kbd
+                  key={k}
+                  className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 px-1.5 font-mono text-[11px] text-zinc-600"
+                >
                   {k}
                 </kbd>
               ))}

@@ -1,3 +1,10 @@
+/**
+ * @purpose Support asset manager storage behavior and data shaping.
+ * @role    Renderer asset manager support module for persisted UI preferences.
+ * @deps    Asset tRPC types, React/HeroUI where UI is present, local storage or URL helpers as needed.
+ * @gotcha  Keep asset kind/status/tag/view contracts synchronized with packages/db schema and saved-view JSON.
+ */
+
 export const SIDEBAR_ORDER_STORAGE_KEY = "post.assetManager.sidebarOrder.v1";
 export const ASSET_FILTER_OPEN_STORAGE_KEY = "post.assetManager.filterOpen.v1";
 export const OPEN_VAULT_TARGET_STORAGE_KEY = "post.assetManager.openVaultTarget.v1";

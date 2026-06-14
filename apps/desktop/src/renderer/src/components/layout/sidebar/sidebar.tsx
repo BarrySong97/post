@@ -1,3 +1,10 @@
+/**
+ * @purpose Render and manage the asset manager sidebar navigation.
+ * @role    Layout navigation component for vault, tag, saved view, and status sections.
+ * @deps    React, HeroUI/local UI primitives, asset manager atoms and renderer types.
+ * @gotcha  Sidebar item IDs must stay compatible with asset filter and active selection state.
+ */
+
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { useMutation } from "@tanstack/react-query";
@@ -14,7 +21,6 @@ import {
   ArrowUp,
   ArrowUpToLine,
   ChevronDown,
-  FolderKanban,
   Inbox,
   Megaphone,
   MoreHorizontal,
@@ -33,16 +39,16 @@ import {
   assetFiltersAtom,
   getDefaultAssetFilters,
 } from "@/store/asset-manager-atoms";
-import { getTagHue } from "@/features/assets/asset-model";
-import {
-  savedViewFiltersToAssetFilters,
-} from "@/features/assets/asset-filter-controls";
-import { SIDEBAR_ORDER_STORAGE_KEY } from "@/features/assets/storage";
-import type { AssetSummary, SidebarTag, SidebarView } from "@/features/assets/types";
-import { useConfirmModal } from "@/components/confirm-modal";
+import { getTagHue } from "@/lib/asset-manager/asset-model";
+import { savedViewFiltersToAssetFilters } from "@/components/asset-manager/asset-filter-controls";
+import { SIDEBAR_ORDER_STORAGE_KEY } from "@/lib/asset-manager/storage";
+import { ViewIconRenderer } from "@/components/asset-manager/view-icon-picker";
+import type { AssetSummary, SidebarTag, SidebarView } from "@/lib/asset-manager/types";
+import { useConfirmModal } from "@/components/common/confirm-modal";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { isMacWindow } from "@/lib/platform";
 import { toast } from "@/lib/toast";
+import { heroToast } from "@/lib/hero-toast";
 import { trpc } from "@/lib/trpc";
 
 type SidebarSectionId = "views" | "tags";
@@ -143,7 +149,7 @@ function mergeKnownOrder<T extends string>(
 }
 
 function normalizeSidebarOrder(value: unknown, defaults: SidebarOrderState): SidebarOrderState {
-  const stored = value && typeof value === "object" ? value as Partial<SidebarOrderState> : {};
+  const stored = value && typeof value === "object" ? (value as Partial<SidebarOrderState>) : {};
 
   return {
     sections: mergeKnownOrder(stored.sections, defaults.sections, isSidebarSectionId),
@@ -173,7 +179,13 @@ type SidebarSectionProps = {
   dragHandleRef?: (element: Element | null) => void;
 };
 
-function SidebarSection({ title, children, action, defaultOpen = true, dragHandleRef }: SidebarSectionProps) {
+function SidebarSection({
+  title,
+  children,
+  action,
+  defaultOpen = true,
+  dragHandleRef,
+}: SidebarSectionProps) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -222,6 +234,7 @@ type SidebarItemProps = {
   meta?: ReactNode;
   actions?: ReactNode;
   icon?: ComponentType<{ size?: number; className?: string }>;
+  renderIcon?: (className: string) => ReactNode;
   colorDot?: string;
   active?: boolean;
   onClick?: () => void;
@@ -234,7 +247,12 @@ type SidebarItemActionButtonProps = {
   onClick: () => void;
 };
 
-function SidebarItemActionButton({ label, icon: Icon, disabled = false, onClick }: SidebarItemActionButtonProps) {
+function SidebarItemActionButton({
+  label,
+  icon: Icon,
+  disabled = false,
+  onClick,
+}: SidebarItemActionButtonProps) {
   return (
     <button
       type="button"
@@ -334,11 +352,22 @@ function SidebarItemHoverActions({ children }: { children: ReactNode }) {
   );
 }
 
-function SidebarItem({ label, meta, actions, icon: Icon, colorDot, active = false, onClick }: SidebarItemProps) {
+function SidebarItem({
+  label,
+  meta,
+  actions,
+  icon: Icon,
+  renderIcon,
+  colorDot,
+  active = false,
+  onClick,
+}: SidebarItemProps) {
   const itemStateClass = active
     ? "bg-[var(--sidebar-item-selected)] font-medium text-zinc-950 shadow-[inset_0_0_0_1px_var(--sidebar-item-selected-border)] hover:bg-[var(--sidebar-item-selected-hover)] active:bg-[var(--sidebar-item-pressed)]"
     : "text-zinc-600 hover:bg-[var(--sidebar-item-hover)] hover:text-zinc-800 active:bg-[var(--sidebar-item-pressed)]";
-  const iconClass = active ? "shrink-0 text-zinc-700" : "shrink-0 text-zinc-400 group-hover/item:text-zinc-500";
+  const iconClass = active
+    ? "shrink-0 text-zinc-700"
+    : "shrink-0 text-zinc-400 group-hover/item:text-zinc-500";
   const metaClass = active ? "text-xs text-zinc-500" : "text-xs text-zinc-400";
   const interactionClass = onClick ? "cursor-pointer" : "";
 
@@ -359,13 +388,17 @@ function SidebarItem({ label, meta, actions, icon: Icon, colorDot, active = fals
       onClick={onClick}
       onKeyDown={handleKeyDown}
     >
-      {Icon ? <Icon size={14} className={iconClass} /> : null}
-      {colorDot ? <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: colorDot }} /> : null}
+      {renderIcon ? renderIcon(iconClass) : Icon ? <Icon size={14} className={iconClass} /> : null}
+      {colorDot ? (
+        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: colorDot }} />
+      ) : null}
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {meta !== undefined || actions !== undefined ? (
         <span className="relative ml-auto flex h-5 min-w-[70px] shrink-0 items-center justify-end overflow-hidden">
           {meta !== undefined ? (
-            <span className={`${metaClass} transition-all duration-150 ease-out ${actions !== undefined ? "group-hover/item:-translate-y-1 group-hover/item:opacity-0 group-focus-within/item:-translate-y-1 group-focus-within/item:opacity-0" : ""}`}>
+            <span
+              className={`${metaClass} transition-all duration-150 ease-out ${actions !== undefined ? "group-hover/item:-translate-y-1 group-hover/item:opacity-0 group-focus-within/item:-translate-y-1 group-focus-within/item:opacity-0" : ""}`}
+            >
               {meta}
             </span>
           ) : null}
@@ -466,11 +499,11 @@ function getTagViewImpact(tag: SidebarTag, views: readonly SidebarView[]) {
     }
 
     const shouldDelete =
-      view.filters.tagIds.length === 1
-      && view.filters.types.length === 0
-      && view.filters.sources.length === 0
-      && view.filters.time === "any"
-      && view.filters.status === "any";
+      view.filters.tagIds.length === 1 &&
+      view.filters.types.length === 0 &&
+      view.filters.sources.length === 0 &&
+      view.filters.time === "any" &&
+      view.filters.status === "any";
 
     if (shouldDelete) {
       deletedViews.push(view);
@@ -493,12 +526,20 @@ function TagDeleteDescription({
 }) {
   return (
     <div className="space-y-2">
-      <p>将删除 Tag「{tag.name}」，并从 {tag.count} 个资产上移除这个 Tag 关联。</p>
+      <p>
+        将删除 Tag「{tag.name}」，并从 {tag.count} 个资产上移除这个 Tag 关联。
+      </p>
       {updatedViews.length > 0 ? (
-        <p>这些 Views 会移除该 Tag 筛选后保留：{updatedViews.map((view) => `「${view.name}」`).join("、")}</p>
+        <p>
+          这些 Views 会移除该 Tag 筛选后保留：
+          {updatedViews.map((view) => `「${view.name}」`).join("、")}
+        </p>
       ) : null}
       {deletedViews.length > 0 ? (
-        <p>这些 Views 只包含该 Tag 筛选，会一起删除：{deletedViews.map((view) => `「${view.name}」`).join("、")}</p>
+        <p>
+          这些 Views 只包含该 Tag 筛选，会一起删除：
+          {deletedViews.map((view) => `「${view.name}」`).join("、")}
+        </p>
       ) : null}
     </div>
   );
@@ -573,7 +614,9 @@ export function Sidebar({
     () => getDefaultSidebarOrder(viewItems, tagItems),
     [viewItems, tagItems],
   );
-  const [sidebarOrder, setSidebarOrder] = useState(() => readSidebarOrderFromStorage(defaultSidebarOrder));
+  const [sidebarOrder, setSidebarOrder] = useState(() =>
+    readSidebarOrderFromStorage(defaultSidebarOrder),
+  );
 
   // When viewItems/tagItems first arrive (async data load), merge their IDs into
   // the stored order so newly-added views/tags actually appear in the sidebar.
@@ -612,14 +655,18 @@ export function Sidebar({
 
     void confirm({
       title: `删除 Tag「${tag.name}」？`,
-      description: <TagDeleteDescription tag={tag} updatedViews={updatedViews} deletedViews={deletedViews} />,
+      description: (
+        <TagDeleteDescription tag={tag} updatedViews={updatedViews} deletedViews={deletedViews} />
+      ),
       confirmLabel: "删除",
       cancelLabel: "取消",
       variant: "danger",
       onConfirm: async () => {
         await deleteTag.mutateAsync({ id: tag.id });
         await invalidateVaultState();
-        toast.success("Tag 已删除");
+        // Try HeroUI's notification system here (rest of the app still uses the custom toast).
+        // timeout: 0 disables the default 4s auto-dismiss so we can see it stay.
+        heroToast.success("Tag 已删除", { timeout: 0 });
       },
     });
   };
@@ -648,12 +695,20 @@ export function Sidebar({
     }
 
     if (sectionId === "views") {
-      const nextIds = arrayMove(orderedViews.map((view) => view.id), source.initialIndex, source.index);
+      const nextIds = arrayMove(
+        orderedViews.map((view) => view.id),
+        source.initialIndex,
+        source.index,
+      );
       reorderSavedViews.mutate({ vaultId, orderedIds: nextIds });
       return;
     }
 
-    const nextIds = arrayMove(orderedTags.map((tag) => tag.id), source.initialIndex, source.index);
+    const nextIds = arrayMove(
+      orderedTags.map((tag) => tag.id),
+      source.initialIndex,
+      source.index,
+    );
     reorderTags.mutate({ vaultId, orderedIds: nextIds });
   };
 
@@ -708,10 +763,16 @@ export function Sidebar({
             {orderedViews.map((view, index) => (
               <SortableSidebarItem key={view.id} sectionId="views" itemId={view.id} index={index}>
                 <SidebarItem
-                  icon={FolderKanban}
+                  renderIcon={(className) => (
+                    <ViewIconRenderer value={view.icon} size={14} className={className} />
+                  )}
                   label={view.name}
                   meta={view.count}
-                  active={!isNonHomeRoute && activeSidebarItem.kind === "view" && activeSidebarItem.id === view.id}
+                  active={
+                    !isNonHomeRoute &&
+                    activeSidebarItem.kind === "view" &&
+                    activeSidebarItem.id === view.id
+                  }
                   onClick={() => handleViewClick(view.id)}
                   actions={
                     <>
@@ -777,7 +838,11 @@ export function Sidebar({
                 colorDot={tag.color ?? `oklch(0.62 0.14 ${getTagHue(tag.name)})`}
                 label={tag.name}
                 meta={tag.count}
-                active={!isNonHomeRoute && activeSidebarItem.kind === "tag" && activeSidebarItem.id === tag.id}
+                active={
+                  !isNonHomeRoute &&
+                  activeSidebarItem.kind === "tag" &&
+                  activeSidebarItem.id === tag.id
+                }
                 onClick={() => handleTagClick(tag.id)}
                 actions={
                   <>
@@ -844,23 +909,32 @@ export function Sidebar({
         <SidebarSection
           title="资产管理"
           action={
-            <button type="button" className="window-no-drag flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5">
+            <button
+              type="button"
+              className="window-no-drag flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5"
+            >
               <Plus size={11} />
               新建
             </button>
           }
         >
           <div className="space-y-0.5">
-            {([
-              { id: "all" as const, icon: Archive, label: "全部资产", count: summary.total },
-              { id: "inbox" as const, icon: Inbox, label: "待整理", count: summary.untagged },
-            ] as const).map((item) => (
+            {(
+              [
+                { id: "all" as const, icon: Archive, label: "全部资产", count: summary.total },
+                { id: "inbox" as const, icon: Inbox, label: "待整理", count: summary.untagged },
+              ] as const
+            ).map((item) => (
               <SidebarItem
                 key={item.id}
                 icon={item.icon}
                 label={item.label}
                 meta={item.count}
-                active={!isNonHomeRoute && activeSidebarItem.kind === "mgmt" && activeSidebarItem.id === item.id}
+                active={
+                  !isNonHomeRoute &&
+                  activeSidebarItem.kind === "mgmt" &&
+                  activeSidebarItem.id === item.id
+                }
                 onClick={() => handleMgmtItemClick(item.id)}
               />
             ))}
@@ -895,8 +969,12 @@ export function Sidebar({
                 ];
               },
               preventActivation(event) {
-                return event.target instanceof Element &&
-                  event.target.closest("button, a, input, textarea, select, [contenteditable='true'], [data-no-drag]") !== null;
+                return (
+                  event.target instanceof Element &&
+                  event.target.closest(
+                    "button, a, input, textarea, select, [contenteditable='true'], [data-no-drag]",
+                  ) !== null
+                );
               },
             }),
           ]}

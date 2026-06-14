@@ -1,3 +1,10 @@
+/**
+ * @purpose Support asset manager types behavior and data shaping.
+ * @role    Renderer asset manager type module shared by pages, layout, and controls.
+ * @deps    Asset tRPC types, React/HeroUI where UI is present, local storage or URL helpers as needed.
+ * @gotcha  Keep asset kind/status/tag/view contracts synchronized with packages/db schema and saved-view JSON.
+ */
+
 import type { RouterOutputs } from "@/lib/trpc";
 
 export type AssetKind = "markdown" | "image" | "video" | "link" | "web" | "file";

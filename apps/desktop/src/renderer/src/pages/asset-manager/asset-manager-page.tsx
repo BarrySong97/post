@@ -1,3 +1,10 @@
+/**
+ * @purpose Render the asset manager surface for the desktop renderer.
+ * @role    App-level React component composed by routes, shell, or shared workflows.
+ * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
+ * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ */
+
 import React, {
   useState,
   useRef,
@@ -20,20 +27,15 @@ import {
   OPEN_VAULT_TARGET_STORAGE_KEY,
   readAssetFilterOpenFromStorage,
   writeAssetFilterOpenToStorage,
-} from "@/features/assets/storage";
+} from "@/lib/asset-manager/storage";
 import {
   getActiveFilterCount,
   getAssetSourceLabel,
   getTagHue,
   mapIndexedAsset,
-} from "@/features/assets/asset-model";
-import { resolveMarkdownImageUrl } from "@/features/assets/asset-url";
-import type {
-  Asset,
-  AssetKind,
-  SidebarTag,
-  SidebarView,
-} from "@/features/assets/types";
+} from "@/lib/asset-manager/asset-model";
+import { resolveMarkdownImageUrl } from "@/lib/asset-manager/asset-url";
+import type { Asset, AssetKind, SidebarTag, SidebarView } from "@/lib/asset-manager/types";
 import { isMacWindow } from "@/lib/platform";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { useMasonry, usePositioner, useResizeObserver as useMasonryResizeObserver } from "masonic";
@@ -85,13 +87,9 @@ import {
 } from "@heroui/react";
 import { toast } from "@/lib/toast";
 
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useAppLayout } from "@/components/app-layout-context";
+import { useAppLayout } from "@/components/layout/app-layout-context";
 import { trpc, type RouterInputs } from "@/lib/trpc";
 import { load as yamlLoad } from "js-yaml";
 import {
@@ -102,20 +100,14 @@ import {
   TYPE_FILTER_LABELS,
   savedViewFiltersToAssetFilters,
   sourceLabelsToTypes,
-} from "@/features/assets/asset-filter-controls";
-import { ViewFormModal } from "@/features/assets/asset-management-modals";
-
+} from "@/components/asset-manager/asset-filter-controls";
+import { ViewFormModal } from "@/components/asset-manager/asset-management-modals";
 
 type OpenVaultTarget = "vscode" | "cursor" | "zed" | "finder";
 type OpenVaultIcon = ComponentType<SVGProps<SVGSVGElement>>;
 
 const CursorEditorIcon: OpenVaultIcon = ({ className, ...props }) => (
-  <svg
-    {...props}
-    viewBox="0 0 466.73 532.09"
-    className={className}
-    fill="currentColor"
-  >
+  <svg {...props} viewBox="0 0 466.73 532.09" className={className} fill="currentColor">
     <path d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z" />
   </svg>
 );
@@ -258,7 +250,6 @@ function getOpenVaultTarget(id: OpenVaultTarget) {
   return OPEN_VAULT_TARGETS.find((target) => target.id === id) ?? DEFAULT_OPEN_VAULT_TARGET;
 }
 
-
 function getKindMeta(kind: AssetKind) {
   const map = {
     markdown: { label: "MD", icon: FileText },
@@ -294,7 +285,9 @@ function getSidebarSelectionTagIds(
   viewOptions: readonly SidebarView[],
 ) {
   if (activeSidebarItem.kind === "tag") {
-    return tagOptions.some((tag) => tag.id === activeSidebarItem.id) ? [activeSidebarItem.id] : [MISSING_TAG_ID];
+    return tagOptions.some((tag) => tag.id === activeSidebarItem.id)
+      ? [activeSidebarItem.id]
+      : [MISSING_TAG_ID];
   }
 
   if (activeSidebarItem.kind !== "view") {
@@ -302,9 +295,11 @@ function getSidebarSelectionTagIds(
   }
 
   const view = viewOptions.find((item) => item.id === activeSidebarItem.id);
-  return view?.conditions
-    .filter((condition) => condition.startsWith("tag:"))
-    .map((condition) => condition.slice(4)) ?? [];
+  return (
+    view?.conditions
+      .filter((condition) => condition.startsWith("tag:"))
+      .map((condition) => condition.slice(4)) ?? []
+  );
 }
 
 function getSourceTypes(sources: readonly string[]) {
@@ -327,7 +322,8 @@ function buildAssetListInput({
   const filterTagIds = getTagIdsFromNames(filters.tags, tagOptions);
   const selectionTagIds = getSidebarSelectionTagIds(activeSidebarItem, tagOptions, viewOptions);
   const tagIds = filterTagIds.length > 0 ? filterTagIds : selectionTagIds;
-  const untagged = tagIds.length === 0 && activeSidebarItem.kind === "mgmt" && activeSidebarItem.id === "inbox";
+  const untagged =
+    tagIds.length === 0 && activeSidebarItem.kind === "mgmt" && activeSidebarItem.id === "inbox";
 
   return {
     vaultId,
@@ -355,7 +351,6 @@ function TagPill({ name }: { name: string }) {
   );
 }
 
-
 function VisualBlock({ asset }: { asset: Asset }) {
   const heightCls = { short: "h-32", medium: "h-44", tall: "h-72" }[asset.height ?? "medium"];
   const grad = `linear-gradient(135deg, oklch(0.96 0.03 ${asset.accent}), oklch(0.91 0.05 ${asset.accent + 28}))`;
@@ -363,7 +358,12 @@ function VisualBlock({ asset }: { asset: Asset }) {
   const Hatch = () => (
     <div
       className="absolute inset-0"
-      style={{ backgroundImage: "repeating-linear-gradient(135deg, currentColor 0 1px, transparent 1px 14px)", color: hatch, opacity: 0.35 }}
+      style={{
+        backgroundImage:
+          "repeating-linear-gradient(135deg, currentColor 0 1px, transparent 1px 14px)",
+        color: hatch,
+        opacity: 0.35,
+      }}
     />
   );
 
@@ -383,7 +383,10 @@ function VisualBlock({ asset }: { asset: Asset }) {
     }
 
     return (
-      <div className={`relative ${heightCls} overflow-hidden border-b border-zinc-100`} style={{ background: grad }}>
+      <div
+        className={`relative ${heightCls} overflow-hidden border-b border-zinc-100`}
+        style={{ background: grad }}
+      >
         <Hatch />
         <div className="absolute inset-0 flex items-end p-3">
           <div className="flex items-center gap-1.5 rounded-md bg-white/70 px-2.5 py-1 text-[11px] font-medium text-zinc-700 shadow-sm backdrop-blur">
@@ -400,7 +403,10 @@ function VisualBlock({ asset }: { asset: Asset }) {
   // Video (local or linked)
   if (asset.kind === "video") {
     return (
-      <div className={`relative ${heightCls} overflow-hidden border-b border-zinc-100`} style={{ background: grad }}>
+      <div
+        className={`relative ${heightCls} overflow-hidden border-b border-zinc-100`}
+        style={{ background: grad }}
+      >
         {asset.thumbnailUrl ? (
           <img
             src={asset.thumbnailUrl}
@@ -437,7 +443,10 @@ function VisualBlock({ asset }: { asset: Asset }) {
   // Web with OG image cached
   if (asset.kind === "web" && asset.ogImage) {
     return (
-      <div className={`relative ${heightCls} overflow-hidden border-b border-zinc-100`} style={{ background: grad }}>
+      <div
+        className={`relative ${heightCls} overflow-hidden border-b border-zinc-100`}
+        style={{ background: grad }}
+      >
         <Hatch />
         <div className="absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-black/30 px-3 py-2 backdrop-blur-sm">
           <Globe size={11} className="shrink-0 text-white/70" />
@@ -449,9 +458,10 @@ function VisualBlock({ asset }: { asset: Asset }) {
 
   // File (PDF / CSV / DOCX / …)
   if (asset.kind === "file") {
-    const FileIcon = asset.fileExt === "csv" || asset.fileExt === "xls" || asset.fileExt === "xlsx"
-      ? FileSpreadsheet
-      : FileText;
+    const FileIcon =
+      asset.fileExt === "csv" || asset.fileExt === "xls" || asset.fileExt === "xlsx"
+        ? FileSpreadsheet
+        : FileText;
     const extColorMap: Record<string, string> = {
       pdf: "oklch(0.55 0.18 25)",
       csv: "oklch(0.50 0.16 148)",
@@ -462,7 +472,9 @@ function VisualBlock({ asset }: { asset: Asset }) {
     };
     const extColor = extColorMap[asset.fileExt ?? ""] ?? "oklch(0.50 0.08 250)";
     return (
-      <div className={`relative grid ${heightCls} place-items-center overflow-hidden border-b border-zinc-100 bg-zinc-50`}>
+      <div
+        className={`relative grid ${heightCls} place-items-center overflow-hidden border-b border-zinc-100 bg-zinc-50`}
+      >
         <div className="flex flex-col items-center gap-2">
           <FileIcon size={38} style={{ color: extColor }} strokeWidth={1.5} />
           <span className="rounded-md bg-zinc-200/80 px-2 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
@@ -508,10 +520,12 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
   const heightCls = { short: "h-32", medium: "h-44", tall: "h-72" }[asset.height ?? "medium"];
   const isVideo = asset.kind === "video";
   const Icon = asset.kind === "image" ? ImageIcon : asset.kind === "video" ? Play : LinkIcon;
-  const hasMediaThumbnail = (asset.kind === "image" || asset.kind === "video") && asset.thumbnailUrl;
-  const imageAspectRatio = hasMediaThumbnail && asset.imageWidth && asset.imageHeight
-    ? `${asset.imageWidth} / ${asset.imageHeight}`
-    : undefined;
+  const hasMediaThumbnail =
+    (asset.kind === "image" || asset.kind === "video") && asset.thumbnailUrl;
+  const imageAspectRatio =
+    hasMediaThumbnail && asset.imageWidth && asset.imageHeight
+      ? `${asset.imageWidth} / ${asset.imageHeight}`
+      : undefined;
 
   return (
     <div
@@ -560,9 +574,10 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
 }
 
 function AssetFilePreview({ asset }: { asset: Asset }) {
-  const FileIcon = asset.fileExt === "csv" || asset.fileExt === "xls" || asset.fileExt === "xlsx"
-    ? FileSpreadsheet
-    : FileText;
+  const FileIcon =
+    asset.fileExt === "csv" || asset.fileExt === "xls" || asset.fileExt === "xlsx"
+      ? FileSpreadsheet
+      : FileText;
   const extHueMap: Record<string, number> = {
     pdf: 12,
     csv: 150,
@@ -611,18 +626,27 @@ function AssetUrlPreview({ asset }: { asset: Asset }) {
 function AssetCardTagRow({ asset }: { asset: Asset }) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-      <Chip size="sm" className="h-auto min-h-0 gap-1.5 bg-transparent px-0 py-0 text-[11.5px] font-medium text-[#1c1b19]">
+      <Chip
+        size="sm"
+        className="h-auto min-h-0 gap-1.5 bg-transparent px-0 py-0 text-[11.5px] font-medium text-[#1c1b19]"
+      >
         <span
           className="h-[7px] w-[7px] rounded-full"
           style={{ background: `oklch(0.6 0.14 ${getTagHue(asset.tag)})` }}
         />
         {asset.tag}
       </Chip>
-      <Chip size="sm" className="h-auto min-h-0 bg-transparent px-0 py-0 text-[11.5px] text-zinc-400 before:mr-2 before:text-zinc-300 before:content-['·']">
+      <Chip
+        size="sm"
+        className="h-auto min-h-0 bg-transparent px-0 py-0 text-[11.5px] text-zinc-400 before:mr-2 before:text-zinc-300 before:content-['·']"
+      >
         {getAssetSourceLabel(asset)}
       </Chip>
       {asset.privacy === "private" ? (
-        <Chip size="sm" className="h-auto min-h-0 gap-1 bg-transparent px-0 py-0 text-[10.5px] font-semibold text-amber-700">
+        <Chip
+          size="sm"
+          className="h-auto min-h-0 gap-1 bg-transparent px-0 py-0 text-[10.5px] font-semibold text-amber-700"
+        >
           <ShieldCheck size={11} />
           私密
         </Chip>
@@ -633,9 +657,7 @@ function AssetCardTagRow({ asset }: { asset: Asset }) {
 
 const AssetCard = React.memo(function AssetCard({ asset }: { asset: Asset }) {
   const hasCover =
-    asset.kind === "image" ||
-    asset.kind === "video" ||
-    (asset.kind === "web" && asset.ogImage);
+    asset.kind === "image" || asset.kind === "video" || (asset.kind === "web" && asset.ogImage);
   const showUrlRow = asset.kind === "link" || (asset.kind === "web" && !asset.ogImage);
 
   return (
@@ -677,7 +699,6 @@ const AssetCard = React.memo(function AssetCard({ asset }: { asset: Asset }) {
     </article>
   );
 });
-
 
 type AssetBoardHeaderProps = {
   filterOpen: boolean;
@@ -730,7 +751,9 @@ function AssetBoardHeader({
   };
 
   return (
-    <div className={`${dragClassName} relative z-[75] flex h-14 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}>
+    <div
+      className={`${dragClassName} relative z-[75] flex h-14 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}
+    >
       <h1 className="mr-auto text-[15px] font-semibold tracking-normal text-zinc-950">全部资产</h1>
       <div className="window-no-drag relative z-[80] flex items-center gap-2.5 pointer-events-auto">
         <Button
@@ -767,7 +790,10 @@ function AssetBoardHeader({
               disabled={openVaultLocation.isPending}
               onClick={() => openVaultWithTarget(preferredOpenTarget.id, false)}
             >
-              <PreferredOpenIcon aria-hidden="true" className={`${HEADER_ICON_CLASS_NAME} text-zinc-600`} />
+              <PreferredOpenIcon
+                aria-hidden="true"
+                className={`${HEADER_ICON_CLASS_NAME} text-zinc-600`}
+              />
             </button>
             <Dropdown isOpen={openWithMenuOpen} onOpenChange={setOpenWithMenuOpen}>
               <Dropdown.Trigger
@@ -789,9 +815,7 @@ function AssetBoardHeader({
                   aria-label="打开资产库"
                   className="min-w-36 p-0 outline-none"
                   disabledKeys={
-                    openVaultLocation.isPending
-                      ? OPEN_VAULT_TARGETS.map((target) => target.id)
-                      : []
+                    openVaultLocation.isPending ? OPEN_VAULT_TARGETS.map((target) => target.id) : []
                   }
                   onAction={(key) => openVaultWithTarget(key as OpenVaultTarget, true)}
                 >
@@ -810,7 +834,10 @@ function AssetBoardHeader({
                           "data-[disabled]:opacity-45",
                         ].join(" ")}
                       >
-                        <Icon aria-hidden="true" className={`${HEADER_ICON_CLASS_NAME} text-zinc-500`} />
+                        <Icon
+                          aria-hidden="true"
+                          className={`${HEADER_ICON_CLASS_NAME} text-zinc-500`}
+                        />
                         <Label className="cursor-default text-[12.5px] font-medium text-inherit">
                           {target.label}
                         </Label>
@@ -884,25 +911,31 @@ function getActiveFilterChips(filters: AssetFilterState): ActiveFilterChip[] {
       value: source,
     })),
     ...(filters.time !== "any"
-      ? [{
-        key: "time",
-        label: TIME_FILTER_LABELS[filters.time],
-        group: "time" as const,
-      }]
+      ? [
+          {
+            key: "time",
+            label: TIME_FILTER_LABELS[filters.time],
+            group: "time" as const,
+          },
+        ]
       : []),
     ...(filters.status !== "any"
-      ? [{
-        key: "status",
-        label: STATUS_FILTER_LABELS[filters.status],
-        group: "status" as const,
-      }]
+      ? [
+          {
+            key: "status",
+            label: STATUS_FILTER_LABELS[filters.status],
+            group: "status" as const,
+          },
+        ]
       : []),
     ...(filters.sort !== "updated_desc"
-      ? [{
-        key: "sort",
-        label: SORT_OPTION_LABELS[filters.sort],
-        group: "sort" as const,
-      }]
+      ? [
+          {
+            key: "sort",
+            label: SORT_OPTION_LABELS[filters.sort],
+            group: "sort" as const,
+          },
+        ]
       : []),
   ];
 }
@@ -944,7 +977,10 @@ function AssetActiveFilterSummary({
         }
 
         if (chip.group === "source") {
-          return { ...nextFilters, sources: nextFilters.sources.filter((source) => source !== chip.value) };
+          return {
+            ...nextFilters,
+            sources: nextFilters.sources.filter((source) => source !== chip.value),
+          };
         }
 
         if (chip.group === "time") {
@@ -965,12 +1001,7 @@ function AssetActiveFilterSummary({
       <span className="mr-1 text-[11.5px] font-semibold text-zinc-500">
         已筛选 · {resultCount} / {totalCount} 项
       </span>
-      <TagGroup
-        aria-label="已筛选条件"
-        size="sm"
-        onRemove={removeChips}
-        className="gap-0"
-      >
+      <TagGroup aria-label="已筛选条件" size="sm" onRemove={removeChips} className="gap-0">
         <TagGroup.List className="flex flex-wrap gap-1.5">
           {chips.map((chip) => (
             <Tag
@@ -1001,25 +1032,30 @@ function AssetActiveFilterSummary({
   );
 }
 
-const MasonryCard = React.memo(function MasonryCard({ data }: { index: number; data: Asset; width: number }) {
+const MasonryCard = React.memo(function MasonryCard({
+  data,
+}: {
+  index: number;
+  data: Asset;
+  width: number;
+}) {
   return <AssetCard asset={data} />;
 });
 
-const AssetPaginationFooter = React.forwardRef<HTMLDivElement, {
-  loadedCount: number;
-  totalCount: number;
-  hasNextPage: boolean;
-  isFetchingNextPage: boolean;
-  errorMessage?: string;
-  onRetry: () => void;
-}>(function AssetPaginationFooter({
-  loadedCount,
-  totalCount,
-  hasNextPage,
-  isFetchingNextPage,
-  errorMessage,
-  onRetry,
-}, ref) {
+const AssetPaginationFooter = React.forwardRef<
+  HTMLDivElement,
+  {
+    loadedCount: number;
+    totalCount: number;
+    hasNextPage: boolean;
+    isFetchingNextPage: boolean;
+    errorMessage?: string;
+    onRetry: () => void;
+  }
+>(function AssetPaginationFooter(
+  { loadedCount, totalCount, hasNextPage, isFetchingNextPage, errorMessage, onRetry },
+  ref,
+) {
   const showLoadedCount = totalCount > loadedCount;
 
   return (
@@ -1035,7 +1071,9 @@ const AssetPaginationFooter = React.forwardRef<HTMLDivElement, {
       ) : isFetchingNextPage ? (
         <span>正在加载更多资产</span>
       ) : hasNextPage ? (
-        <span>{showLoadedCount ? `已加载 ${loadedCount} / ${totalCount} 项` : "继续滚动加载更多"}</span>
+        <span>
+          {showLoadedCount ? `已加载 ${loadedCount} / ${totalCount} 项` : "继续滚动加载更多"}
+        </span>
       ) : (
         <span>{totalCount > 0 ? `已加载全部 ${totalCount} 项` : ""}</span>
       )}
@@ -1175,10 +1213,10 @@ function AssetBoard({
 
   // subtract px-6 padding (24px * 2 = 48px)
   const innerWidth = Math.max(0, size.width - 48);
-  const positioner = usePositioner(
-    { width: innerWidth, columnGutter: 16, columnWidth: 260 },
-    [innerWidth, queryResetKey],
-  );
+  const positioner = usePositioner({ width: innerWidth, columnGutter: 16, columnWidth: 260 }, [
+    innerWidth,
+    queryResetKey,
+  ]);
   const resizeObserver = useMasonryResizeObserver(positioner);
 
   const masonry = useMasonry({
@@ -1267,7 +1305,9 @@ function AssetBoard({
                 {vaultAvailable ? "没有匹配的资产" : "选择一个文件夹开始索引"}
               </h2>
               <p className="mt-1 text-xs text-zinc-500">
-                {vaultAvailable ? "调整筛选条件后再试一次。" : "文件留在原地，标签和关系写入 SQLite。"}
+                {vaultAvailable
+                  ? "调整筛选条件后再试一次。"
+                  : "文件留在原地，标签和关系写入 SQLite。"}
               </p>
             </div>
           </div>
@@ -1337,7 +1377,8 @@ function AssetTerminalPanel({
       cursorBlink: true,
       cursorStyle: "bar",
       cursorWidth: 1,
-      fontFamily: '"JetBrains Mono", "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace',
+      fontFamily:
+        '"JetBrains Mono", "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace',
       fontSize: 10,
       fontWeight: 400,
       fontWeightBold: 700,
@@ -1370,11 +1411,13 @@ function AssetTerminalPanel({
         return;
       }
 
-      void window.api.terminal.resize({
-        sessionId,
-        cols: terminal.cols,
-        rows: terminal.rows,
-      }).catch(() => undefined);
+      void window.api.terminal
+        .resize({
+          sessionId,
+          cols: terminal.cols,
+          rows: terminal.rows,
+        })
+        .catch(() => undefined);
     };
 
     const scheduleFitAndResize = () => {
@@ -1394,7 +1437,10 @@ function AssetTerminalPanel({
       }
 
       void window.api.terminal.write({ sessionId, data }).catch((error) => {
-        writeTerminalSystemMessage(terminal, getTerminalErrorMessage(error, "Terminal write failed"));
+        writeTerminalSystemMessage(
+          terminal,
+          getTerminalErrorMessage(error, "Terminal write failed"),
+        );
       });
     });
 
@@ -1412,8 +1458,13 @@ function AssetTerminalPanel({
       const details = [
         typeof event.exitCode === "number" ? `code ${event.exitCode}` : null,
         event.signal ? `signal ${event.signal}` : null,
-      ].filter(Boolean).join(", ");
-      writeTerminalSystemMessage(terminal, details ? `Process exited (${details})` : "Process exited");
+      ]
+        .filter(Boolean)
+        .join(", ");
+      writeTerminalSystemMessage(
+        terminal,
+        details ? `Process exited (${details})` : "Process exited",
+      );
     });
 
     const startFrame = window.requestAnimationFrame(() => {
@@ -1423,7 +1474,8 @@ function AssetTerminalPanel({
         // The host can briefly report zero size while the side panel is mounting.
       }
 
-      void window.api.terminal.start({ cols: terminal.cols, rows: terminal.rows })
+      void window.api.terminal
+        .start({ cols: terminal.cols, rows: terminal.rows })
         .then((snapshot) => {
           if (disposed) {
             return;
@@ -1469,7 +1521,9 @@ function AssetTerminalPanel({
 
   return (
     <aside className="flex h-full min-w-0 flex-col border-l border-zinc-100 bg-white">
-      <div className={`${dragClassName} flex h-14 shrink-0 items-center gap-2 border-b border-zinc-100 px-3`}>
+      <div
+        className={`${dragClassName} flex h-14 shrink-0 items-center gap-2 border-b border-zinc-100 px-3`}
+      >
         <SquareTerminal size={14} className="shrink-0 text-zinc-500" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-semibold text-zinc-900">Terminal</div>
@@ -1524,9 +1578,15 @@ function DocPreviewSkeleton({ fileExt }: { fileExt?: string }) {
   return (
     <div className="overflow-hidden rounded-[13px] border border-zinc-200 shadow-sm">
       <div className="bg-zinc-100 px-[30px] pb-0 pt-[30px]">
-        <div className="rounded-t-md border border-zinc-200/60 bg-white px-10 pb-10 pt-8" style={{ boxShadow: "0 -8px 24px rgba(20,18,16,.06)" }}>
+        <div
+          className="rounded-t-md border border-zinc-200/60 bg-white px-10 pb-10 pt-8"
+          style={{ boxShadow: "0 -8px 24px rgba(20,18,16,.06)" }}
+        >
           <div className="mb-5 flex items-center gap-2.5">
-            <span className="rounded-[5px] px-[7px] py-[3px] font-mono text-[10.5px] font-semibold tracking-wider text-white" style={{ background: extColor }}>
+            <span
+              className="rounded-[5px] px-[7px] py-[3px] font-mono text-[10.5px] font-semibold tracking-wider text-white"
+              style={{ background: extColor }}
+            >
               {ext}
             </span>
             <div className="h-3 w-3/5 rounded-sm bg-gradient-to-r from-zinc-200 to-transparent" />
@@ -1543,9 +1603,10 @@ function DocPreviewSkeleton({ fileExt }: { fileExt?: string }) {
                 className="flex-1 rounded-t-sm"
                 style={{
                   height: `${h}%`,
-                  background: i === 6
-                    ? "oklch(0.55 0.13 256)"
-                    : "color-mix(in oklch, oklch(0.55 0.13 256), transparent 55%)",
+                  background:
+                    i === 6
+                      ? "oklch(0.55 0.13 256)"
+                      : "color-mix(in oklch, oklch(0.55 0.13 256), transparent 55%)",
                 }}
               />
             ))}
@@ -1764,7 +1825,9 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
                   markdownQuery.data!.vaultId,
                   markdownQuery.data!.fileDir,
                 );
-                return <img src={resolved} alt={alt ?? ""} className="my-5 max-w-full rounded-lg" />;
+                return (
+                  <img src={resolved} alt={alt ?? ""} className="my-5 max-w-full rounded-lg" />
+                );
               },
             }}
           >
@@ -1860,21 +1923,24 @@ function VideoDetailBody({ asset }: { asset: Asset }) {
       ...(asset.thumbnailUrl ? { poster: asset.thumbnailUrl } : {}),
     };
   }, [asset.fileExt, asset.mediaUrl, asset.thumbnailUrl, asset.title]);
-  const options = useMemo<PlyrOptions>(() => ({
-    ...(mediaRatio ? { ratio: mediaRatio.plyr } : {}),
-    controls: [
-      "play-large",
-      "play",
-      "progress",
-      "current-time",
-      "mute",
-      "volume",
-      "settings",
-      "pip",
-      "airplay",
-      "fullscreen",
-    ],
-  }), [mediaRatio]);
+  const options = useMemo<PlyrOptions>(
+    () => ({
+      ...(mediaRatio ? { ratio: mediaRatio.plyr } : {}),
+      controls: [
+        "play-large",
+        "play",
+        "progress",
+        "current-time",
+        "mute",
+        "volume",
+        "settings",
+        "pip",
+        "airplay",
+        "fullscreen",
+      ],
+    }),
+    [mediaRatio],
+  );
 
   return (
     <div className="max-w-[780px]">
@@ -1882,11 +1948,7 @@ function VideoDetailBody({ asset }: { asset: Asset }) {
         className="overflow-hidden rounded-[13px] border border-zinc-200 bg-black shadow-sm"
         style={mediaRatio ? { aspectRatio: mediaRatio.css } : undefined}
       >
-        {source ? (
-          <Plyr source={source} options={options} />
-        ) : (
-          <VisualBlock asset={asset} />
-        )}
+        {source ? <Plyr source={source} options={options} /> : <VisualBlock asset={asset} />}
       </div>
     </div>
   );
@@ -1909,7 +1971,11 @@ function LinkDetailBody({ asset, onOpen }: { asset: Asset; onOpen: () => void })
               <b className="font-semibold text-zinc-900">{asset.domain}</b>
               {asset.url && asset.domain ? asset.url.replace(asset.domain, "") : (asset.url ?? "")}
             </span>
-            <button type="button" className="shrink-0 text-[11.5px] font-semibold text-blue-600" onClick={onOpen}>
+            <button
+              type="button"
+              className="shrink-0 text-[11.5px] font-semibold text-blue-600"
+              onClick={onOpen}
+            >
               ↗ 打开
             </button>
           </div>
@@ -2038,12 +2104,16 @@ function AssetDetail({
   return (
     <main className="flex h-full min-w-0 flex-col bg-white">
       {/* ── Top bar: breadcrumb + actions on one line ── */}
-      <div className={`${dragClassName} relative z-[75] flex h-14 shrink-0 items-center gap-2 border-b border-zinc-100 bg-white px-6`}>
+      <div
+        className={`${dragClassName} relative z-[75] flex h-14 shrink-0 items-center gap-2 border-b border-zinc-100 bg-white px-6`}
+      >
         <Button
           size="sm"
           variant="ghost"
           className="window-no-drag h-7 gap-1 px-2 text-[12.5px] font-semibold text-zinc-800"
-          onPress={() => { window.location.hash = "/"; }}
+          onPress={() => {
+            window.location.hash = "/";
+          }}
         >
           <ArrowLeft size={13} />
           返回
@@ -2091,7 +2161,9 @@ function AssetDetail({
                 <Dropdown.Menu
                   aria-label="打开资产库"
                   className="min-w-36 p-0 outline-none"
-                  disabledKeys={openVaultLocationMutation.isPending ? OPEN_VAULT_TARGETS.map((t) => t.id) : []}
+                  disabledKeys={
+                    openVaultLocationMutation.isPending ? OPEN_VAULT_TARGETS.map((t) => t.id) : []
+                  }
                   onAction={(key) => openVaultWithTarget(key as OpenVaultTarget, true)}
                 >
                   {OPEN_VAULT_TARGETS.map((target) => {
@@ -2103,8 +2175,13 @@ function AssetDetail({
                         textValue={target.label}
                         className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100 data-[disabled]:opacity-45"
                       >
-                        <Icon aria-hidden="true" className={`${HEADER_ICON_CLASS_NAME} text-zinc-500`} />
-                        <Label className="cursor-default text-[12.5px] font-medium text-inherit">{target.label}</Label>
+                        <Icon
+                          aria-hidden="true"
+                          className={`${HEADER_ICON_CLASS_NAME} text-zinc-500`}
+                        />
+                        <Label className="cursor-default text-[12.5px] font-medium text-inherit">
+                          {target.label}
+                        </Label>
                       </Dropdown.Item>
                     );
                   })}
@@ -2208,7 +2285,6 @@ function AssetDetail({
   );
 }
 
-
 export function AssetManagerPage({ assetId }: { assetId?: string }) {
   const filters = useAtomValue(assetFiltersAtom);
   const activeSidebarItem = useAtomValue(activeSidebarItemAtom);
@@ -2222,14 +2298,21 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   });
 
   const listQueryInput = useMemo(
-    () => buildAssetListInput({
+    () =>
+      buildAssetListInput({
+        activeSidebarItem,
+        filters,
+        tagOptions: sidebarQuery.data?.tags ?? [],
+        viewOptions: sidebarQuery.data?.views ?? [],
+        vaultId: sidebarQuery.data?.vault?.id,
+      }),
+    [
       activeSidebarItem,
       filters,
-      tagOptions: sidebarQuery.data?.tags ?? [],
-      viewOptions: sidebarQuery.data?.views ?? [],
-      vaultId: sidebarQuery.data?.vault?.id,
-    }),
-    [activeSidebarItem, filters, sidebarQuery.data?.tags, sidebarQuery.data?.vault?.id, sidebarQuery.data?.views],
+      sidebarQuery.data?.tags,
+      sidebarQuery.data?.vault?.id,
+      sidebarQuery.data?.views,
+    ],
   );
   const listQueryResetKey = useMemo(() => JSON.stringify(listQueryInput), [listQueryInput]);
   const listQuery = useInfiniteQuery(
@@ -2244,7 +2327,9 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
     [listQuery.data?.pages],
   );
   const resultCount = listQuery.data?.pages[0]?.total ?? 0;
-  const activeAssetFromList = assetId ? assetItems.find((asset) => asset.id === assetId) : undefined;
+  const activeAssetFromList = assetId
+    ? assetItems.find((asset) => asset.id === assetId)
+    : undefined;
   const detailQuery = useQuery({
     ...trpc.assets.byId.queryOptions({ id: assetId ?? MISSING_TAG_ID }),
     enabled: Boolean(assetId),
@@ -2285,23 +2370,30 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
     };
   }, [activeAsset, sidebarQuery.data?.vault]);
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const getSaveViewInitialFilters = useCallback((currentFilters: AssetFilterState) => {
-    if (getActiveFilterCount(currentFilters) > 0) {
+  const getSaveViewInitialFilters = useCallback(
+    (currentFilters: AssetFilterState) => {
+      if (getActiveFilterCount(currentFilters) > 0) {
+        return currentFilters;
+      }
+
+      if (activeSidebarItem.kind === "tag") {
+        const tagName = sidebarQuery.data?.tags.find(
+          (tag) => tag.id === activeSidebarItem.id,
+        )?.name;
+        return tagName ? { ...currentFilters, tags: [tagName] } : currentFilters;
+      }
+
+      if (activeSidebarItem.kind === "view") {
+        const view = sidebarQuery.data?.views.find((item) => item.id === activeSidebarItem.id);
+        return view
+          ? savedViewFiltersToAssetFilters(view.filters, sidebarQuery.data?.tags ?? [], view.sort)
+          : currentFilters;
+      }
+
       return currentFilters;
-    }
-
-    if (activeSidebarItem.kind === "tag") {
-      const tagName = sidebarQuery.data?.tags.find((tag) => tag.id === activeSidebarItem.id)?.name;
-      return tagName ? { ...currentFilters, tags: [tagName] } : currentFilters;
-    }
-
-    if (activeSidebarItem.kind === "view") {
-      const view = sidebarQuery.data?.views.find((item) => item.id === activeSidebarItem.id);
-      return view ? savedViewFiltersToAssetFilters(view.filters, sidebarQuery.data?.tags ?? [], view.sort) : currentFilters;
-    }
-
-    return currentFilters;
-  }, [activeSidebarItem, sidebarQuery.data?.tags, sidebarQuery.data?.views]);
+    },
+    [activeSidebarItem, sidebarQuery.data?.tags, sidebarQuery.data?.views],
+  );
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = listQuery;
   const fetchNextAssetPage = useCallback(() => {
     if (!hasNextPage || isFetchingNextPage) {
@@ -2328,8 +2420,10 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
 
   const vaultAvailable = Boolean(sidebarQuery.data?.vault);
   const terminalAvailable = vaultAvailable && isMacWindow();
-  const boardErrorMessage = listQuery.isError && assetItems.length === 0 ? listQuery.error.message : undefined;
-  const paginationErrorMessage = listQuery.isError && assetItems.length > 0 ? listQuery.error.message : undefined;
+  const boardErrorMessage =
+    listQuery.isError && assetItems.length === 0 ? listQuery.error.message : undefined;
+  const paginationErrorMessage =
+    listQuery.isError && assetItems.length > 0 ? listQuery.error.message : undefined;
 
   return (
     <>
@@ -2339,61 +2433,63 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
         className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
         resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
       >
-      <ResizablePanel
-        id="main"
-        defaultSize={100}
-        minSize={assetId ? 34 : 42}
-        className="relative z-[60]"
-      >
-        {assetId ? (
-          activeAsset ? (
-            <AssetDetail
-              asset={activeAsset}
+        <ResizablePanel
+          id="main"
+          defaultSize={100}
+          minSize={assetId ? 34 : 42}
+          className="relative z-[60]"
+        >
+          {assetId ? (
+            activeAsset ? (
+              <AssetDetail
+                asset={activeAsset}
+                dragEnabled={backgroundWindowDragEnabled}
+                terminalAvailable={terminalAvailable}
+                terminalOpen={terminalOpen}
+                onToggleTerminal={() => setTerminalOpen((open) => !open)}
+              />
+            ) : (
+              <main className="grid h-full place-items-center bg-white text-sm text-zinc-400">
+                {detailQuery.error ? detailQuery.error.message : "正在读取资产"}
+              </main>
+            )
+          ) : (
+            <AssetBoard
+              assetItems={assetItems}
+              tagOptions={sidebarQuery.data?.tags ?? []}
+              sourceOptions={sidebarQuery.data?.sourceOptions ?? []}
+              resultCount={resultCount}
+              totalCount={sidebarQuery.data?.summary.total ?? resultCount}
               dragEnabled={backgroundWindowDragEnabled}
+              vaultAvailable={vaultAvailable}
               terminalAvailable={terminalAvailable}
               terminalOpen={terminalOpen}
               onToggleTerminal={() => setTerminalOpen((open) => !open)}
+              loading={listQuery.isLoading && assetItems.length === 0}
+              errorMessage={boardErrorMessage}
+              hasNextPage={Boolean(hasNextPage)}
+              isFetchingNextPage={isFetchingNextPage}
+              paginationErrorMessage={paginationErrorMessage}
+              onFetchNextPage={fetchNextAssetPage}
+              onSaveView={(currentFilters) =>
+                setViewModalFilters(getSaveViewInitialFilters(currentFilters))
+              }
+              queryResetKey={listQueryResetKey}
             />
-          ) : (
-            <main className="grid h-full place-items-center bg-white text-sm text-zinc-400">
-              {detailQuery.error ? detailQuery.error.message : "正在读取资产"}
-            </main>
-          )
-        ) : (
-          <AssetBoard
-            assetItems={assetItems}
-            tagOptions={sidebarQuery.data?.tags ?? []}
-            sourceOptions={sidebarQuery.data?.sourceOptions ?? []}
-            resultCount={resultCount}
-            totalCount={sidebarQuery.data?.summary.total ?? resultCount}
-            dragEnabled={backgroundWindowDragEnabled}
-            vaultAvailable={vaultAvailable}
-            terminalAvailable={terminalAvailable}
-            terminalOpen={terminalOpen}
-            onToggleTerminal={() => setTerminalOpen((open) => !open)}
-            loading={listQuery.isLoading && assetItems.length === 0}
-            errorMessage={boardErrorMessage}
-            hasNextPage={Boolean(hasNextPage)}
-            isFetchingNextPage={isFetchingNextPage}
-            paginationErrorMessage={paginationErrorMessage}
-            onFetchNextPage={fetchNextAssetPage}
-            onSaveView={(currentFilters) => setViewModalFilters(getSaveViewInitialFilters(currentFilters))}
-            queryResetKey={listQueryResetKey}
-          />
-        )}
-      </ResizablePanel>
+          )}
+        </ResizablePanel>
 
-      {!assetId && terminalOpen ? (
-        <>
-          <ResizableHandle withHandle />
-          <ResizablePanel id="asset-terminal" defaultSize={30} minSize={20} maxSize={48}>
-            <AssetTerminalPanel
-              dragEnabled={backgroundWindowDragEnabled}
-              onHide={() => setTerminalOpen(false)}
-            />
-          </ResizablePanel>
-        </>
-      ) : null}
+        {!assetId && terminalOpen ? (
+          <>
+            <ResizableHandle withHandle />
+            <ResizablePanel id="asset-terminal" defaultSize={30} minSize={20} maxSize={48}>
+              <AssetTerminalPanel
+                dragEnabled={backgroundWindowDragEnabled}
+                onHide={() => setTerminalOpen(false)}
+              />
+            </ResizablePanel>
+          </>
+        ) : null}
       </ResizablePanelGroup>
       <ViewFormModal
         isOpen={viewModalFilters !== null}

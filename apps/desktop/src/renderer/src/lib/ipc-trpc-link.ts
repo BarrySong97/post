@@ -1,3 +1,10 @@
+/**
+ * @purpose Provide renderer ipc trpc link utilities shared across pages and components.
+ * @role    Small renderer helper module outside page-specific ownership.
+ * @deps    Renderer runtime, tRPC/client/provider code, platform or toast libraries as appropriate.
+ * @gotcha  Keep helpers browser-safe unless they intentionally call preload-exposed APIs.
+ */
+
 import { TRPCClientError, type TRPCLink } from "@trpc/client";
 import { observable } from "@trpc/server/observable";
 
@@ -87,7 +94,9 @@ export function ipcTRPCLink(): TRPCLink<AppRouter> {
           })
           .catch((error: unknown) => {
             if (!isActive) return;
-            observer.error(TRPCClientError.from(error instanceof Error ? error : new Error(String(error))));
+            observer.error(
+              TRPCClientError.from(error instanceof Error ? error : new Error(String(error))),
+            );
           });
 
         return () => {

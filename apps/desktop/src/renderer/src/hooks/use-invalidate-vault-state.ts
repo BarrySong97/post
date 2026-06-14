@@ -1,3 +1,10 @@
+/**
+ * @purpose Provide the use invalidate vault state React hook for renderer workflows.
+ * @role    Reusable renderer hook that coordinates cache invalidation or shared UI behavior.
+ * @deps    React, tRPC/React Query clients, and related renderer state.
+ * @gotcha  Keep invalidation keys aligned with the router procedures that populate the affected views.
+ */
+
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 

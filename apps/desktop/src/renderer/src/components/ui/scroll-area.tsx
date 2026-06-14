@@ -1,3 +1,10 @@
+/**
+ * @purpose Wrap the scroll-area UI primitive for consistent renderer composition.
+ * @role    Local shared UI primitive used by app panels and pages.
+ * @deps    Radix/HeroUI/React primitives and Tailwind class composition.
+ * @gotcha  Preserve accessibility and sizing behavior expected by existing desktop layouts.
+ */
+
 import type { ComponentProps } from "react";
 import type { Ref } from "react";
 import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area";
@@ -24,7 +31,10 @@ export function ScrollArea({
 }: ScrollAreaProps) {
   return (
     <ScrollAreaPrimitive.Root className={cn("relative overflow-hidden", className)} {...props}>
-      <ScrollAreaPrimitive.Viewport ref={viewportRef} className={cn("h-full w-full rounded-[inherit]", viewportClassName)}>
+      <ScrollAreaPrimitive.Viewport
+        ref={viewportRef}
+        className={cn("h-full w-full rounded-[inherit]", viewportClassName)}
+      >
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar className={scrollbarClassName} thumbClassName={thumbClassName} />
@@ -55,7 +65,9 @@ export function ScrollBar({
       )}
       {...props}
     >
-      <ScrollAreaPrimitive.ScrollAreaThumb className={cn("relative flex-1 rounded-full bg-zinc-300/75", thumbClassName)} />
+      <ScrollAreaPrimitive.ScrollAreaThumb
+        className={cn("relative flex-1 rounded-full bg-zinc-300/75", thumbClassName)}
+      />
     </ScrollAreaPrimitive.ScrollAreaScrollbar>
   );
 }

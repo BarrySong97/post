@@ -1,10 +1,11 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+/**
+ * @purpose Render the app layout surface for the desktop renderer.
+ * @role    App-level React component composed by routes, shell, or shared workflows.
+ * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
+ * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ */
+
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
@@ -13,14 +14,10 @@ import { trpc } from "@/lib/trpc";
 import {
   SIDEBAR_COLLAPSED_STORAGE_KEY,
   SIDEBAR_WIDTH_STORAGE_KEY,
-} from "@/features/assets/storage";
-import type { AssetSummary, SidebarTag, SidebarView } from "@/features/assets/types";
-import { TagFormModal, ViewFormModal } from "@/features/assets/asset-management-modals";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+} from "@/lib/asset-manager/storage";
+import type { AssetSummary, SidebarTag, SidebarView } from "@/lib/asset-manager/types";
+import { TagFormModal, ViewFormModal } from "@/components/asset-manager/asset-management-modals";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import {
   Sidebar,
   SidebarEdgeHotspot,
@@ -28,12 +25,12 @@ import {
   syncWindowControlsWithSidebar,
   getSidebarPreviewWidth,
   SIDEBAR_PREVIEW_EXIT_PADDING,
-} from "@/features/assets/sidebar/sidebar";
+} from "@/components/layout/sidebar/sidebar";
 import {
   AppLayoutContext,
   useAppLayout,
   type AppLayoutContextValue,
-} from "@/components/app-layout-context";
+} from "@/components/layout/app-layout-context";
 
 export { useAppLayout };
 
@@ -67,13 +64,9 @@ const EMPTY_SUMMARY: AssetSummary & { untagged: number } = {
   archived: 0,
 };
 
-type SidebarTagModalState =
-  | { kind: "create" }
-  | { kind: "edit"; tag: SidebarTag };
+type SidebarTagModalState = { kind: "create" } | { kind: "edit"; tag: SidebarTag };
 
-type SidebarViewModalState =
-  | { kind: "create" }
-  | { kind: "edit"; view: SidebarView };
+type SidebarViewModalState = { kind: "create" } | { kind: "edit"; view: SidebarView };
 
 /**
  * The shared application shell: a persistent sidebar that switches the route
@@ -207,7 +200,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
               className="window-drag pointer-events-none absolute left-6 right-48 top-0 z-[74] h-14"
             />
           ) : null}
-          {sidebarCollapsed ? <SidebarEdgeHotspot onOpen={() => setSidebarPreviewOpen(true)} /> : null}
+          {sidebarCollapsed ? (
+            <SidebarEdgeHotspot onOpen={() => setSidebarPreviewOpen(true)} />
+          ) : null}
           {sidebarCollapsed ? (
             <motion.div
               key="sidebar-preview"
@@ -310,7 +305,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
               className={sidebarCollapsed ? "opacity-0 pointer-events-none" : ""}
             />
 
-            <ResizablePanel id="main" defaultSize={100 - sidebarInitPct} minSize={42} className="relative z-[60] min-w-0">
+            <ResizablePanel
+              id="main"
+              defaultSize={100 - sidebarInitPct}
+              minSize={42}
+              className="relative z-[60] min-w-0"
+            >
               {children}
             </ResizablePanel>
           </ResizablePanelGroup>

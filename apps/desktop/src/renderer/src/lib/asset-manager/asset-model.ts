@@ -1,13 +1,12 @@
-import type {
-  Asset,
-  AssetKind,
-  AssetStatus,
-  IndexedAsset,
-} from "@/features/assets/types";
-import {
-  buildAssetFileUrl,
-  buildAssetThumbnailUrl,
-} from "@/features/assets/asset-url";
+/**
+ * @purpose Support asset manager asset model behavior and data shaping.
+ * @role    Renderer asset manager model module shared by pages, layout, and controls.
+ * @deps    Asset tRPC types, React/HeroUI where UI is present, local storage or URL helpers as needed.
+ * @gotcha  Keep asset kind/status/tag/view contracts synchronized with packages/db schema and saved-view JSON.
+ */
+
+import type { Asset, AssetKind, AssetStatus, IndexedAsset } from "@/lib/asset-manager/types";
+import { buildAssetFileUrl, buildAssetThumbnailUrl } from "@/lib/asset-manager/asset-url";
 import type {
   AssetFilterState,
   AssetSortOrder,
@@ -83,13 +82,14 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
   const tag = asset.tags[0]?.name ?? "待整理";
   const kind = mapIndexedAssetKind(asset.kind, asset.extension);
   const extension = asset.extension ?? asset.fileName.split(".").pop() ?? "file";
-  const mediaUrl = kind === "image" || kind === "video"
-    ? buildAssetFileUrl(asset.id, asset.fileName)
-    : undefined;
+  const mediaUrl =
+    kind === "image" || kind === "video" ? buildAssetFileUrl(asset.id, asset.fileName) : undefined;
   const usesOriginalAsThumbnail = kind === "image" && extension.toLowerCase() === "svg";
   const thumbnailUrl = usesOriginalAsThumbnail
     ? mediaUrl
-    : (kind === "image" || kind === "video") && asset.image?.status === "ready" && asset.image.thumbnailPath
+    : (kind === "image" || kind === "video") &&
+        asset.image?.status === "ready" &&
+        asset.image.thumbnailPath
       ? buildAssetThumbnailUrl(asset.id, asset.fileName)
       : undefined;
   const metaPrefix = {
@@ -183,13 +183,15 @@ function filterAssets(assetItems: readonly Asset[], filters: AssetFilterState) {
   const predicates: Array<(asset: Asset) => boolean> = [];
 
   if (filters.types.length > 0) {
-    predicates.push((asset) => filters.types.some((type) => {
-      if (type === "link") {
-        return asset.kind === "link" || asset.kind === "web";
-      }
+    predicates.push((asset) =>
+      filters.types.some((type) => {
+        if (type === "link") {
+          return asset.kind === "link" || asset.kind === "web";
+        }
 
-      return asset.kind === type;
-    }));
+        return asset.kind === type;
+      }),
+    );
   }
 
   if (filters.tags.length > 0) {

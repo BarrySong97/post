@@ -1,14 +1,22 @@
+/**
+ * @purpose Render the app shell surface for the desktop renderer.
+ * @role    App-level React component composed by routes, shell, or shared workflows.
+ * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
+ * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ */
+
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Button, Popover } from "@heroui/react";
+import { Button, Popover, Toast } from "@heroui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { CheckCircle2, Info, Settings2, TriangleAlert, X, XCircle } from "lucide-react";
 import { getToastSnapshot, subscribeToasts, toast, type ToastItem } from "@/lib/toast";
+import { heroToastQueue } from "@/lib/hero-toast";
 
 import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
-import { ConfirmModalProvider } from "@/components/confirm-modal";
+import { ConfirmModalProvider } from "@/components/common/confirm-modal";
 
 type TaskSnapshot = RouterOutputs["tasks"]["snapshot"];
 type BackgroundTask = NonNullable<TaskSnapshot["activeTask"]>;
@@ -39,6 +47,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <ConfirmModalProvider>
       <GlobalToasts />
+      {/* HeroUI toast region wired to our custom queue (no view-transition wrapUpdate). */}
+      <Toast.Provider queue={heroToastQueue} placement="bottom end" />
       <div className="flex h-screen min-h-0 flex-col overflow-hidden text-zinc-950">
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
         <GlobalStatusLine />
@@ -78,7 +88,9 @@ function GlobalToast({ item }: { item: ToastItem }) {
       <div className="min-w-0 flex-1">
         <div className="truncate font-semibold leading-5">{item.title}</div>
         {item.description ? (
-          <div className="truncate text-[12px] font-medium leading-4 text-zinc-500">{item.description}</div>
+          <div className="truncate text-[12px] font-medium leading-4 text-zinc-500">
+            {item.description}
+          </div>
         ) : null}
       </div>
       <button
@@ -155,7 +167,9 @@ function GlobalStatusLine() {
     ...trpc.tasks.snapshot.queryOptions(),
     refetchInterval: (query) => {
       const snapshot = query.state.data as TaskSnapshot | undefined;
-      return selectFolder.isPending || reconcileVault.isPending || hasVisibleTaskActivity(snapshot) ? 1000 : 7000;
+      return selectFolder.isPending || reconcileVault.isPending || hasVisibleTaskActivity(snapshot)
+        ? 1000
+        : 7000;
     },
     refetchOnWindowFocus: true,
   });
@@ -176,9 +190,9 @@ function GlobalStatusLine() {
     const subscription = trpcClient.events.subscribe.subscribe(undefined, {
       onData: (event) => {
         if (
-          event.type === "task.updated"
-          || event.type === "task.completed"
-          || event.type === "task.failed"
+          event.type === "task.updated" ||
+          event.type === "task.completed" ||
+          event.type === "task.failed"
         ) {
           setEventTasks((current) => {
             const next = new Map(current);
@@ -190,8 +204,10 @@ function GlobalStatusLine() {
         }
 
         if (
-          event.type === "task.completed"
-          && (event.task.type === "sync" || event.task.type === "indexing" || event.task.type === "reconcile")
+          event.type === "task.completed" &&
+          (event.task.type === "sync" ||
+            event.task.type === "indexing" ||
+            event.task.type === "reconcile")
         ) {
           void invalidateVaultState();
         }
@@ -222,13 +238,11 @@ function GlobalStatusLine() {
     const runningThumbnailTask = snapshot.running.find((task) => task.type === "thumbnails");
     const thumbnailProgress = runningThumbnailTask?.progress?.current ?? 0;
     if (
-      runningThumbnailTask
-      && thumbnailProgress > 0
-      && (
-        runningThumbnailTask.id !== lastThumbnailProgressInvalidation.current.taskId
-        || thumbnailProgress !== lastThumbnailProgressInvalidation.current.progress
-      )
-      && thumbnailProgress % THUMBNAIL_REFRESH_BATCH_SIZE === 0
+      runningThumbnailTask &&
+      thumbnailProgress > 0 &&
+      (runningThumbnailTask.id !== lastThumbnailProgressInvalidation.current.taskId ||
+        thumbnailProgress !== lastThumbnailProgressInvalidation.current.progress) &&
+      thumbnailProgress % THUMBNAIL_REFRESH_BATCH_SIZE === 0
     ) {
       lastThumbnailProgressInvalidation.current = {
         taskId: runningThumbnailTask.id,
@@ -325,8 +339,11 @@ function GlobalStatusLine() {
   const activeVault = snapshot?.activeVault ?? null;
   const vaultName = activeVault?.name ?? null;
   const vaultPath = activeVault?.rootPath ?? null;
-  const syncRunning = reconcileVault.isPending
-    || running.some((task) => task.type === "reconcile" || task.type === "indexing" || task.type === "sync");
+  const syncRunning =
+    reconcileVault.isPending ||
+    running.some(
+      (task) => task.type === "reconcile" || task.type === "indexing" || task.type === "sync",
+    );
   const canSync = Boolean(activeVault) && !syncRunning;
   const dismissTask = (id: string) => {
     setDismissed((current) => new Set(current).add(id));
@@ -352,12 +369,16 @@ function GlobalStatusLine() {
     />
   ) : hasPop ? (
     <span className={`pf-pill pf-pill--stale ${open ? "is-open" : ""}`}>
-      <span className="pf-pill-glyph"><span className="pf-dot pf-dot--stale" /></span>
+      <span className="pf-pill-glyph">
+        <span className="pf-dot pf-dot--stale" />
+      </span>
       <span className="pf-pill-label">近期完成</span>
       <span className="pf-caret">▲</span>
     </span>
   ) : (
-    <span className="pf-idle"><PFCheck s={12} /> 已是最新</span>
+    <span className="pf-idle">
+      <PFCheck s={12} /> 已是最新
+    </span>
   );
 
   useEffect(() => {
@@ -391,7 +412,9 @@ function GlobalStatusLine() {
               className={`pf-folder ${vaultName ? "" : "pf-folder--empty"}`}
               title={vaultName ? (vaultPath ?? vaultName) : "未关联资产库"}
             >
-              <span className="pf-folder-ico"><PFFolderIco /></span>
+              <span className="pf-folder-ico">
+                <PFFolderIco />
+              </span>
               <span className="pf-folder-name">{vaultName ?? "No folder"}</span>
             </span>
           </Popover.Trigger>
@@ -456,14 +479,8 @@ function GlobalStatusLine() {
         ) : null}
         {hasPop ? (
           <Popover isOpen={open} onOpenChange={setOpen}>
-            <Popover.Trigger className="pf-popover-trigger">
-              {statusTrigger}
-            </Popover.Trigger>
-            <Popover.Content
-              className="pf-pop-content"
-              offset={6}
-              placement="top end"
-            >
+            <Popover.Trigger className="pf-popover-trigger">{statusTrigger}</Popover.Trigger>
+            <Popover.Content className="pf-pop-content" offset={6} placement="top end">
               <Popover.Dialog className="pf-pop-dialog">
                 <PFPopover
                   running={running}
@@ -502,7 +519,10 @@ function pruneEventTasks(tasks: Map<string, BackgroundTask>) {
   const cutoff = Date.now() - EVENT_TASK_RETENTION_MS;
 
   for (const [id, task] of tasks) {
-    if ((task.status === "completed" || task.status === "failed") && (task.completedAt ?? task.updatedAt) < cutoff) {
+    if (
+      (task.status === "completed" || task.status === "failed") &&
+      (task.completedAt ?? task.updatedAt) < cutoff
+    ) {
       tasks.delete(id);
     }
   }
@@ -522,17 +542,23 @@ function PFPill({
   open: boolean;
 }) {
   const activeTypeLabel = active ? PF_TYPE[active.type].label : "任务";
-  const label = kind === "run"
-    ? `正在${activeTypeLabel}`
-    : kind === "queue"
-      ? `${count ?? 0} 项排队`
-      : kind === "bad"
-        ? `${count ?? 0} 项失败`
-        : `${activeTypeLabel}已完成`;
+  const label =
+    kind === "run"
+      ? `正在${activeTypeLabel}`
+      : kind === "queue"
+        ? `${count ?? 0} 项排队`
+        : kind === "bad"
+          ? `${count ?? 0} 项失败`
+          : `${activeTypeLabel}已完成`;
   const countStr = kind === "run" && active ? getTaskProgressLabel(active) : null;
-  const glyph = kind === "run"
-    ? <span className="pf-spin" />
-    : <span className={`pf-dot ${kind === "bad" ? "pf-dot--bad" : kind === "good" ? "pf-dot--good" : "pf-dot--queue"}`} />;
+  const glyph =
+    kind === "run" ? (
+      <span className="pf-spin" />
+    ) : (
+      <span
+        className={`pf-dot ${kind === "bad" ? "pf-dot--bad" : kind === "good" ? "pf-dot--good" : "pf-dot--queue"}`}
+      />
+    );
 
   return (
     <span className={`pf-pill pf-pill--${kind} ${open ? "is-open" : ""}`}>
@@ -603,11 +629,15 @@ function PFRow({
 
   return (
     <div className={`pf-trow pf-trow--${group}`}>
-      <span className="pf-tico"><PFTaskIco t={t.type} /></span>
+      <span className="pf-tico">
+        <PFTaskIco t={t.type} />
+      </span>
       <div className="pf-tmain">
         <div className="pf-tlabel">{PF_TYPE[t.type].label}</div>
         {group === "running" ? (
-          <div className="pf-tbar"><i style={{ width: `${progress}%` }} /></div>
+          <div className="pf-tbar">
+            <i style={{ width: `${progress}%` }} />
+          </div>
         ) : (
           <div className={`pf-tsub ${group === "failed" ? "pf-tsub--bad" : ""}`}>
             {group === "queued" ? "排队中" : group === "failed" ? (t.reason ?? "失败") : "已完成"}
@@ -619,7 +649,14 @@ function PFRow({
         {group === "queued" ? <span style={{ color: "var(--faint,#b6b6b2)" }}>等待</span> : null}
         {group === "completed" ? <PFCheck s={13} /> : null}
         {group === "failed" ? (
-          <button type="button" className="pf-tdismiss" title="忽略" onClick={() => onDismiss(t.id)}>✕</button>
+          <button
+            type="button"
+            className="pf-tdismiss"
+            title="忽略"
+            onClick={() => onDismiss(t.id)}
+          >
+            ✕
+          </button>
         ) : null}
       </div>
     </div>
@@ -681,7 +718,6 @@ function PFTaskIco({ t, size = 13 }: { t: FooterTaskType; size?: number }) {
     </svg>
   );
 }
-
 
 function PFFolderIco() {
   return (

@@ -1,3 +1,10 @@
+/**
+ * @purpose Provide renderer toast utilities shared across pages and components.
+ * @role    Small renderer helper module outside page-specific ownership.
+ * @deps    Renderer runtime, tRPC/client/provider code, platform or toast libraries as appropriate.
+ * @gotcha  Keep helpers browser-safe unless they intentionally call preload-exposed APIs.
+ */
+
 import type { ReactNode } from "react";
 
 type ToastVariant = "default" | "accent" | "success" | "warning" | "danger";
@@ -43,15 +50,21 @@ function closeToast(id: string) {
 
 function addToast(title: ReactNode, options?: ToastOptions) {
   const id = `toast_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
-  items = [{ id, title, description: options?.description, variant: options?.variant ?? "default" }, ...items].slice(0, 3);
+  items = [
+    { id, title, description: options?.description, variant: options?.variant ?? "default" },
+    ...items,
+  ].slice(0, 3);
   emit();
 
   const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
   if (timeout > 0) {
-    timers.set(id, setTimeout(() => {
-      closeToast(id);
-      options?.onClose?.();
-    }, timeout));
+    timers.set(
+      id,
+      setTimeout(() => {
+        closeToast(id);
+        options?.onClose?.();
+      }, timeout),
+    );
   }
 
   return id;
@@ -71,10 +84,14 @@ export function getToastSnapshot() {
 function createToast() {
   const fn = (message: ReactNode, options?: ToastOptions) => addToast(message, options);
 
-  fn.success = (message: ReactNode, options?: ToastOptions) => fn(message, { ...options, variant: "success" });
-  fn.danger = (message: ReactNode, options?: ToastOptions) => fn(message, { ...options, variant: "danger" });
-  fn.info = (message: ReactNode, options?: ToastOptions) => fn(message, { ...options, variant: "accent" });
-  fn.warning = (message: ReactNode, options?: ToastOptions) => fn(message, { ...options, variant: "warning" });
+  fn.success = (message: ReactNode, options?: ToastOptions) =>
+    fn(message, { ...options, variant: "success" });
+  fn.danger = (message: ReactNode, options?: ToastOptions) =>
+    fn(message, { ...options, variant: "danger" });
+  fn.info = (message: ReactNode, options?: ToastOptions) =>
+    fn(message, { ...options, variant: "accent" });
+  fn.warning = (message: ReactNode, options?: ToastOptions) =>
+    fn(message, { ...options, variant: "warning" });
   fn.close = closeToast;
   fn.clear = () => {
     for (const timer of timers.values()) {

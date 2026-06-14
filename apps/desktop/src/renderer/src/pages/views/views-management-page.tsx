@@ -1,3 +1,10 @@
+/**
+ * @purpose Render the views management surface for the desktop renderer.
+ * @role    App-level React component composed by routes, shell, or shared workflows.
+ * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
+ * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ */
+
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { DragDropProvider, type DragEndEvent } from "@dnd-kit/react";
@@ -5,20 +12,29 @@ import { isSortable, useSortable } from "@dnd-kit/react/sortable";
 import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
 import { arrayMove } from "@dnd-kit/helpers";
 import { Button, Dropdown } from "@heroui/react";
-import { ArrowDown, ArrowUp, ArrowUpToLine, FolderKanban, GripVertical, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpToLine,
+  FolderKanban,
+  GripVertical,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
-import { PageChrome } from "@/components/app-layout";
-import { useConfirmModal } from "@/components/confirm-modal";
+import { PageChrome } from "@/components/layout/app-layout";
+import { useConfirmModal } from "@/components/common/confirm-modal";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ViewFormModal } from "@/features/assets/asset-management-modals";
-import type { SidebarView } from "@/features/assets/types";
+import { ViewFormModal } from "@/components/asset-manager/asset-management-modals";
+import { ViewIconRenderer } from "@/components/asset-manager/view-icon-picker";
+import type { SidebarView } from "@/lib/asset-manager/types";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 
-type ViewModalState =
-  | { kind: "create" }
-  | { kind: "edit"; view: SidebarView };
+type ViewModalState = { kind: "create" } | { kind: "edit"; view: SidebarView };
 
 const VIEW_ROW_TYPE = "views-management-row";
 const ROW_ACTION_BUTTON_CLASS_NAME =
@@ -85,11 +101,13 @@ function SortableViewRow({
         <GripVertical size={15} />
       </button>
       <div className="grid h-8 w-8 place-items-center rounded-lg bg-zinc-100 text-[13px] font-semibold text-zinc-700">
-        {view.icon ?? "#"}
+        <ViewIconRenderer value={view.icon} size={16} className="text-zinc-700" />
       </div>
       <div className="min-w-0">
         <div className="truncate text-[13.5px] font-semibold text-zinc-900">{view.name}</div>
-        <div className="mt-0.5 truncate text-[11.5px] text-zinc-400">{view.conditions.length} 个条件</div>
+        <div className="mt-0.5 truncate text-[11.5px] text-zinc-400">
+          {view.conditions.length} 个条件
+        </div>
       </div>
       <div className="justify-self-end text-[12px] font-medium text-zinc-500">{view.count} 项</div>
       <div className="flex justify-end gap-1">
@@ -131,7 +149,9 @@ function IconButton({
       aria-label={label}
       disabled={disabled}
       className={`${ROW_ACTION_BUTTON_CLASS_NAME} ${
-        danger ? "text-zinc-400 hover:bg-red-50 hover:text-red-600" : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+        danger
+          ? "text-zinc-400 hover:bg-red-50 hover:text-red-600"
+          : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
       }`}
       onClick={(event) => {
         event.stopPropagation();
@@ -259,7 +279,12 @@ export function ViewsManagementPage() {
 
     const currentIds = orderedViews.map((view) => view.id);
     const { source } = event.operation;
-    if (!isSortable(source) || source.initialGroup !== source.group || source.initialIndex === source.index) return;
+    if (
+      !isSortable(source) ||
+      source.initialGroup !== source.group ||
+      source.initialIndex === source.index
+    )
+      return;
 
     const nextIds = arrayMove(currentIds, source.initialIndex, source.index);
 
@@ -330,7 +355,11 @@ export function ViewsManagementPage() {
                       return false;
                     }
 
-                    return event.target.closest("button, a, input, textarea, select, [contenteditable='true']") !== null;
+                    return (
+                      event.target.closest(
+                        "button, a, input, textarea, select, [contenteditable='true']",
+                      ) !== null
+                    );
                   },
                 }),
               ]}

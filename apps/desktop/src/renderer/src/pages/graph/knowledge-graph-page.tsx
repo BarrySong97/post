@@ -1,11 +1,22 @@
+/**
+ * @purpose Render the knowledge graph surface for the desktop renderer.
+ * @role    App-level React component composed by routes, shell, or shared workflows.
+ * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
+ * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ */
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Network } from "lucide-react";
-import ForceGraph2D, { type NodeObject, type LinkObject, type ForceGraphMethods } from "react-force-graph-2d";
+import ForceGraph2D, {
+  type NodeObject,
+  type LinkObject,
+  type ForceGraphMethods,
+} from "react-force-graph-2d";
 import { useNavigate } from "@tanstack/react-router";
 
 import { trpc } from "@/lib/trpc";
-import { PageChrome } from "@/components/app-layout";
+import { PageChrome } from "@/components/layout/app-layout";
 
 type GraphNode = { id: string; title: string; kind: string; status: string };
 type GraphEdge = { source: string; target: string; relationType: string };
@@ -44,7 +55,8 @@ export function KnowledgeGraphPage() {
     if (!canvasRef.current) return;
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (entry) setCanvasSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+      if (entry)
+        setCanvasSize({ width: entry.contentRect.width, height: entry.contentRect.height });
     });
     ro.observe(canvasRef.current);
     return () => ro.disconnect();
@@ -69,7 +81,8 @@ export function KnowledgeGraphPage() {
   );
 
   const linkColor = useCallback(
-    (link: LinkObject) => LINK_COLORS[(link as unknown as GraphEdge).relationType] ?? "rgba(148,163,184,0.3)",
+    (link: LinkObject) =>
+      LINK_COLORS[(link as unknown as GraphEdge).relationType] ?? "rgba(148,163,184,0.3)",
     [],
   );
 

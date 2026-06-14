@@ -1,3 +1,10 @@
+/**
+ * @purpose Render the tags management surface for the desktop renderer.
+ * @role    App-level React component composed by routes, shell, or shared workflows.
+ * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
+ * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ */
+
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { DragDropProvider, type DragEndEvent } from "@dnd-kit/react";
@@ -5,21 +12,29 @@ import { isSortable, useSortable } from "@dnd-kit/react/sortable";
 import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
 import { arrayMove } from "@dnd-kit/helpers";
 import { Button, Dropdown } from "@heroui/react";
-import { ArrowDown, ArrowUp, ArrowUpToLine, GripVertical, Hash, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpToLine,
+  GripVertical,
+  Hash,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 
-import { PageChrome } from "@/components/app-layout";
-import { useConfirmModal } from "@/components/confirm-modal";
+import { PageChrome } from "@/components/layout/app-layout";
+import { useConfirmModal } from "@/components/common/confirm-modal";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { TagFormModal } from "@/features/assets/asset-management-modals";
-import { getTagHue } from "@/features/assets/asset-model";
-import type { SidebarTag, SidebarView } from "@/features/assets/types";
+import { TagFormModal } from "@/components/asset-manager/asset-management-modals";
+import { getTagHue } from "@/lib/asset-manager/asset-model";
+import type { SidebarTag, SidebarView } from "@/lib/asset-manager/types";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 
-type TagModalState =
-  | { kind: "create" }
-  | { kind: "edit"; tag: SidebarTag };
+type TagModalState = { kind: "create" } | { kind: "edit"; tag: SidebarTag };
 
 type TagDeleteImpact = {
   updatedViews: SidebarView[];
@@ -52,11 +67,11 @@ function getTagDeleteImpact(tag: SidebarTag, views: readonly SidebarView[]): Tag
     }
 
     const shouldDelete =
-      view.filters.tagIds.length === 1
-      && view.filters.types.length === 0
-      && view.filters.sources.length === 0
-      && view.filters.time === "any"
-      && view.filters.status === "any";
+      view.filters.tagIds.length === 1 &&
+      view.filters.types.length === 0 &&
+      view.filters.sources.length === 0 &&
+      view.filters.time === "any" &&
+      view.filters.status === "any";
 
     if (shouldDelete) {
       deletedViews.push(view);
@@ -122,7 +137,9 @@ function SortableTagRow({
       </div>
       <div className="min-w-0">
         <div className="truncate text-[13.5px] font-semibold text-zinc-900">{tag.name}</div>
-        <div className="mt-0.5 truncate text-[11.5px] text-zinc-400">{tag.color ? "自定义颜色" : "自动颜色"}</div>
+        <div className="mt-0.5 truncate text-[11.5px] text-zinc-400">
+          {tag.color ? "自定义颜色" : "自动颜色"}
+        </div>
       </div>
       <div className="justify-self-end text-[12px] font-medium text-zinc-500">{tag.count} 项</div>
       <div className="flex justify-end gap-1">
@@ -164,7 +181,9 @@ function IconButton({
       aria-label={label}
       disabled={disabled}
       className={`${ROW_ACTION_BUTTON_CLASS_NAME} ${
-        danger ? "text-zinc-400 hover:bg-red-50 hover:text-red-600" : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+        danger
+          ? "text-zinc-400 hover:bg-red-50 hover:text-red-600"
+          : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
       }`}
       onClick={(event) => {
         event.stopPropagation();
@@ -315,7 +334,12 @@ export function TagsManagementPage() {
 
     const currentIds = orderedTags.map((tag) => tag.id);
     const { source } = event.operation;
-    if (!isSortable(source) || source.initialGroup !== source.group || source.initialIndex === source.index) return;
+    if (
+      !isSortable(source) ||
+      source.initialGroup !== source.group ||
+      source.initialIndex === source.index
+    )
+      return;
 
     const nextIds = arrayMove(currentIds, source.initialIndex, source.index);
 
@@ -388,7 +412,11 @@ export function TagsManagementPage() {
                       return false;
                     }
 
-                    return event.target.closest("button, a, input, textarea, select, [contenteditable='true']") !== null;
+                    return (
+                      event.target.closest(
+                        "button, a, input, textarea, select, [contenteditable='true']",
+                      ) !== null
+                    );
                   },
                 }),
               ]}

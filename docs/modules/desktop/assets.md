@@ -6,8 +6,10 @@ The asset manager is the primary browsing and organization surface for vault con
 
 ## File Map
 
-- `apps/desktop/src/renderer/src/components/asset-manager-page.tsx` - main asset manager screen and panel orchestration.
-- `apps/desktop/src/renderer/src/features/assets/` - asset-specific models, filters, forms, URL helpers, storage helpers, and sidebar components.
+- `apps/desktop/src/renderer/src/pages/asset-manager/asset-manager-page.tsx` - main asset manager screen and panel orchestration.
+- `apps/desktop/src/renderer/src/components/asset-manager/` - reusable asset manager controls such as filters, tag/view modals, and saved-view icon picker.
+- `apps/desktop/src/renderer/src/components/layout/sidebar/` - shared sidebar navigation for vaults, saved views, tags, and status sections.
+- `apps/desktop/src/renderer/src/lib/asset-manager/` - asset manager models, form schemas, URL helpers, storage helpers, and shared renderer types.
 - `apps/desktop/src/renderer/src/store/asset-manager-atoms.ts` - cross-component asset manager UI state.
 - `apps/desktop/src/main/trpc/routers/assets.ts` - asset tRPC procedures.
 - `apps/desktop/src/main/repositories/assets-repository.ts` - asset database query and write helpers.

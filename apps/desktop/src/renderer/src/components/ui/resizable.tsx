@@ -1,3 +1,10 @@
+/**
+ * @purpose Wrap the resizable UI primitive for consistent renderer composition.
+ * @role    Local shared UI primitive used by app panels and pages.
+ * @deps    Radix/HeroUI/React primitives and Tailwind class composition.
+ * @gotcha  Preserve accessibility and sizing behavior expected by existing desktop layouts.
+ */
+
 import type { ComponentProps } from "react";
 import { GripVertical } from "lucide-react";
 import { Group, Panel, Separator } from "react-resizable-panels";
@@ -51,11 +58,7 @@ type ResizableHandleProps = ComponentProps<typeof Separator> & {
   withHandle?: boolean;
 };
 
-export function ResizableHandle({
-  className,
-  withHandle,
-  ...props
-}: ResizableHandleProps) {
+export function ResizableHandle({ className, withHandle, ...props }: ResizableHandleProps) {
   return (
     <Separator
       className={cn(

@@ -1,11 +1,11 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+/**
+ * @purpose Render the confirm modal surface for the desktop renderer.
+ * @role    App-level React component composed by routes, shell, or shared workflows.
+ * @deps    React, HeroUI/local UI primitives, and shared renderer modules as needed.
+ * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ */
+
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { Button, Modal, useOverlayState } from "@heroui/react";
 import { Loader2, TriangleAlert } from "lucide-react";
 
@@ -95,9 +95,10 @@ export function ConfirmModalProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ConfirmModalContextValue>(() => ({ confirm }), [confirm]);
   const variant = request?.variant ?? "default";
-  const confirmClassName = variant === "danger"
-    ? "min-w-20 rounded-lg bg-red-600 px-3 text-[12px] font-semibold text-white hover:bg-red-700"
-    : "min-w-20 rounded-lg px-3 text-[12px] font-semibold";
+  const confirmClassName =
+    variant === "danger"
+      ? "min-w-20 rounded-lg bg-red-600 text-[12px] font-semibold text-white hover:bg-red-700"
+      : "min-w-20 rounded-lg text-[12px] font-semibold";
 
   return (
     <ConfirmModalContext.Provider value={value}>
@@ -106,7 +107,7 @@ export function ConfirmModalProvider({ children }: { children: ReactNode }) {
         <Modal.Backdrop isDismissable={!busyAction} variant="opaque" className="z-[200]">
           <Modal.Container size="sm" placement="center">
             <Modal.Dialog className="outline-none">
-              <Modal.Header className="flex items-start gap-3 px-5 pb-2 pt-5">
+              <Modal.Header className="items-start px-5 pb-2 pt-5">
                 {variant === "danger" ? (
                   <Modal.Icon className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-red-50 text-red-600">
                     <TriangleAlert size={17} />
@@ -128,11 +129,11 @@ export function ConfirmModalProvider({ children }: { children: ReactNode }) {
                   </div>
                 ) : null}
               </Modal.Body>
-              <Modal.Footer className="flex items-center justify-end gap-2 px-5 pb-5 pt-3">
+              <Modal.Footer>
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-8 min-h-0 rounded-lg px-3 text-[12px] text-zinc-600"
+                  className="rounded-lg text-[12px] text-zinc-600"
                   isDisabled={Boolean(busyAction)}
                   onPress={() => void handleCancel()}
                 >
@@ -142,7 +143,7 @@ export function ConfirmModalProvider({ children }: { children: ReactNode }) {
                 <Button
                   size="sm"
                   variant={variant === "danger" ? "secondary" : "primary"}
-                  className={`h-8 min-h-0 ${confirmClassName}`}
+                  className={confirmClassName}
                   isDisabled={Boolean(busyAction)}
                   onPress={() => void handleConfirm()}
                 >
