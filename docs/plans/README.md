@@ -2,15 +2,18 @@
 
 Use this directory for implementation plans that should remain visible to future agents.
 
-## Current Harness Migration Plan
+## Harness Migration Status
 
-1. Keep `AGENTS.md`, `docs/`, `design.md`, and `scripts/check-docs.mjs` as the active knowledge layer.
-2. Keep `check-docs.config.json` in bootstrap mode while only harness scripts have AI file headers.
-3. Add file headers to source files module by module, starting with frequently edited areas:
-   - `apps/desktop/src/renderer/src/features/assets/`
-   - `apps/desktop/src/main/trpc/routers/`
-   - `packages/db/src/`
-   - `crates/post-indexer/src/`
-4. After each module is migrated, add or refine its module documentation.
-5. Expand `check-docs.config.json` from `scripts/` to the migrated roots.
-6. Enable `.claude` / `.codex` Stop hooks only after `node scripts/check-docs.mjs` is clean for the selected roots.
+Completed:
+
+- `AGENTS.md`, `docs/`, `design.md`, and `scripts/check-docs.mjs` are the active knowledge layer.
+- Source file headers have been added across `apps/`, `packages/`, `crates/`, and `scripts/`.
+- `check-docs.config.json` now checks the full source roots and ignores only generated `routeTree.gen.ts`.
+- Claude Code and Codex hook configs have been added at `.claude/settings.json` and `.codex/`.
+- Oxlint and Oxfmt are installed as root devDependencies and wired into root scripts plus staged-file hooks.
+
+Remaining:
+
+- In Codex, open `/hooks` once, review the configured commands, and trust them for this project.
+- Consider a one-time full `pnpm format` cleanup commit when the team is ready for broad formatting churn.
+- Add focused automated tests for asset filtering, repository queries, and Rust indexer fixtures.

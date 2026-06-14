@@ -1,3 +1,10 @@
+/**
+ * @purpose Define main-process tRPC procedures for watcher domain operations.
+ * @role    IPC-facing application API layer called by renderer tRPC hooks.
+ * @deps    trpc.ts base procedures, repositories/services, Drizzle schema types.
+ * @gotcha  Validate inputs and keep side effects in repositories/services rather than renderer components.
+ */
+
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";

@@ -27,7 +27,8 @@
 
 - All packages extend `packages/config/tsconfig.base.json`.
 - Strict mode, unused checks, and `noUncheckedIndexedAccess` are expected to pass.
-- Prefer shared types from the tRPC router, Drizzle schema, or local feature model files over duplicate hand-written shapes.
+- Prefer shared types from the tRPC router, Drizzle schema, or local renderer model files over duplicate hand-written shapes.
+- Run `pnpm lint` for Oxlint checks and `pnpm format` or `pnpm format:check` for Oxfmt formatting.
 
 ## Frontend
 
@@ -42,7 +43,8 @@
 - Module-level behavior lives in `docs/modules/<module>/`.
 - Cross-module flows live in `docs/topics/`.
 - File-level purpose belongs in the source file header with `@purpose`, `@role`, `@deps`, and `@gotcha`.
-- The current bootstrap phase checks harness scripts first; migrating legacy source headers is tracked in [plans](plans/README.md).
+- `check-docs` covers `apps/`, `packages/`, `crates/`, and `scripts/`.
+- PostToolUse hooks format changed JS/TS/JSON/CSS files with Oxfmt and lint changed JS/TS files with Oxlint. The pre-commit hook runs the same checks on staged files.
 
 ## Commits
 

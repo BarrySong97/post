@@ -1,0 +1,6 @@
+# Codex project configuration.
+#
+# Hooks are an experimental feature in some Codex versions. After enabling this,
+# open /hooks once in Codex, review the commands, and trust them for this project.
+[features]
+codex_hooks = true

@@ -1,3 +1,10 @@
+/**
+ * @purpose Scan, watch, reconcile, parse, and thumbnail vault files for the Electron app.
+ * @role    Rust sidecar CLI that owns indexing commands and structured progress events.
+ * @deps    SQLite, notify, image crate, filesystem paths, stdout JSON event contract.
+ * @gotcha  Keep CLI arguments, vault-relative paths, and emitted event shapes stable for Electron callers.
+ */
+
 use std::{
     collections::{HashMap, HashSet},
     env,

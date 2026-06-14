@@ -1,3 +1,10 @@
+/**
+ * @purpose Locate, spawn, and coordinate the Rust post-indexer sidecar for vault work.
+ * @role    Main-process bridge between Electron tasks and the Rust indexing CLI.
+ * @deps    child_process, app resources, database path, thumbnail cache paths.
+ * @gotcha  Keep packaged and dev binary resolution working across platforms.
+ */
+
 import { app, dialog } from "electron";
 import { is } from "@electron-toolkit/utils";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -59,7 +66,13 @@ export async function chooseVaultFolder(): Promise<string | null> {
 
 export async function runIndexer(
   command: IndexerCommand,
-  input: { vaultId: string; rootPath: string; assetIds?: string[]; paths?: string[]; limit?: number },
+  input: {
+    vaultId: string;
+    rootPath: string;
+    assetIds?: string[];
+    paths?: string[];
+    limit?: number;
+  },
   options: RunIndexerOptions = {},
 ): Promise<IndexerResult> {
   const { executable, args, cwd } = resolveIndexerInvocation(command, input);
@@ -108,9 +121,7 @@ export async function runIndexer(
       }
 
       reject(
-        new Error(
-          `post-indexer exited with code ${code ?? "unknown"}: ${stderr.join("").trim()}`,
-        ),
+        new Error(`post-indexer exited with code ${code ?? "unknown"}: ${stderr.join("").trim()}`),
       );
     });
   });
@@ -223,7 +234,13 @@ function resolveBundledFfmpegPath(): string | undefined {
 
 function resolveIndexerInvocation(
   command: IndexerCommand,
-  input: { vaultId: string; rootPath: string; assetIds?: string[]; paths?: string[]; limit?: number },
+  input: {
+    vaultId: string;
+    rootPath: string;
+    assetIds?: string[];
+    paths?: string[];
+    limit?: number;
+  },
   options: { daemon?: boolean } = {},
 ) {
   const indexerArgs = [
@@ -296,7 +313,10 @@ function findRepoRoot(start: string): string {
   let current = start;
 
   for (;;) {
-    if (existsSync(path.join(current, "Cargo.toml")) && existsSync(path.join(current, "pnpm-workspace.yaml"))) {
+    if (
+      existsSync(path.join(current, "Cargo.toml")) &&
+      existsSync(path.join(current, "pnpm-workspace.yaml"))
+    ) {
       return current;
     }
 

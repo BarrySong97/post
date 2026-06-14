@@ -27,3 +27,4 @@ Main-process code imports schema and database helpers, opens the SQLite database
 - Commit generated SQL and Drizzle metadata together.
 - Keep WAL and foreign keys enabled on every connection.
 - Treat string union arrays such as `assetKinds` and `assetStatuses` as public contracts for renderer code and indexer behavior.
+- TypeScript source files in this package have AI file headers. Update them when schema or connection responsibilities move.

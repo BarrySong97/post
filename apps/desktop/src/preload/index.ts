@@ -1,3 +1,10 @@
+/**
+ * @purpose Expose the narrow renderer-safe API surface through Electron contextBridge.
+ * @role    Security boundary between renderer React code and main-process native capabilities.
+ * @deps    electron contextBridge/ipcRenderer, @electron-toolkit/preload.
+ * @gotcha  Add renderer capabilities here instead of enabling direct Node or Electron access in the renderer.
+ */
+
 import { contextBridge, ipcRenderer } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
 

@@ -1,3 +1,10 @@
+/**
+ * @purpose Describe the window.api contract exposed by the preload bridge.
+ * @role    Renderer-facing TypeScript contract for platform, terminal, database, and tRPC IPC methods.
+ * @deps    @electron-toolkit/preload ElectronAPI and preload/index.ts implementation.
+ * @gotcha  Keep this declaration synchronized whenever preload channels or payload shapes change.
+ */
+
 import type { ElectronAPI } from "@electron-toolkit/preload";
 
 type TerminalSnapshot = {
@@ -60,11 +67,7 @@ declare global {
         onData: (callback: (event: TerminalDataEvent) => void) => () => void;
         onExit: (callback: (event: TerminalExitEvent) => void) => () => void;
       };
-      trpcRequest: (request: {
-        type: string;
-        path: string;
-        input: unknown;
-      }) => Promise<unknown>;
+      trpcRequest: (request: { type: string; path: string; input: unknown }) => Promise<unknown>;
       trpcSubscribe: (request: { id: string; path: string; input: unknown }) => void;
       trpcUnsubscribe: (request: { id: string }) => void;
       onTRPCSubscriptionEvent: (callback: (event: TRPCSubscriptionEvent) => void) => () => void;

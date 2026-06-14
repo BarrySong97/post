@@ -1,3 +1,10 @@
+/**
+ * @purpose Centralize SQLite reads and writes for tags data.
+ * @role    Main-process persistence boundary between tRPC routers/services and Drizzle tables.
+ * @deps    @post/db schema, drizzle-orm query helpers, main db connection utilities.
+ * @gotcha  Keep query result shapes stable for routers and renderer models that consume them.
+ */
+
 import { randomUUID } from "node:crypto";
 
 import { and, eq } from "drizzle-orm";

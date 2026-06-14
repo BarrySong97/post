@@ -1,3 +1,10 @@
+/**
+ * @purpose Configure electron-vite builds for main, preload, and renderer bundles.
+ * @role    Desktop build pipeline config shared by dev, build, package, and dist scripts.
+ * @deps    electron-vite, Vite React plugin, TanStack Router plugin, Tailwind Vite plugin.
+ * @gotcha  Main/preload/renderer aliases and plugin ordering affect both dev startup and packaged builds.
+ */
+
 import { resolve } from "node:path";
 
 import react from "@vitejs/plugin-react";

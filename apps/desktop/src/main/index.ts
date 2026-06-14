@@ -1,3 +1,10 @@
+/**
+ * @purpose Boot the Electron main process, windows, custom protocols, and IPC/tRPC handlers.
+ * @role    Application lifecycle coordinator and native boundary for the desktop app.
+ * @deps    Electron app/browser APIs, @post/db, appRouter, terminal, indexer, watcher manager.
+ * @gotcha  There is no HTTP server; renderer communication must keep flowing through preload and IPC.
+ */
+
 import { app, BrowserWindow, ipcMain, protocol, shell, type WebContents } from "electron";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import path, { join } from "node:path";
@@ -116,9 +123,9 @@ function serializeError(error: unknown): { message: string } {
 
 function isObservableLike(value: unknown): value is ObservableLike {
   return (
-    value != null
-    && typeof value === "object"
-    && typeof (value as { subscribe?: unknown }).subscribe === "function"
+    value != null &&
+    typeof value === "object" &&
+    typeof (value as { subscribe?: unknown }).subscribe === "function"
   );
 }
 
@@ -247,9 +254,8 @@ function registerTRPCHandler(): void {
           subscriptions.delete(key);
         },
       });
-      const unsubscribe = typeof subscription === "function"
-        ? subscription
-        : () => subscription?.unsubscribe();
+      const unsubscribe =
+        typeof subscription === "function" ? subscription : () => subscription?.unsubscribe();
 
       subscriptions.set(key, {
         senderId,
@@ -288,7 +294,10 @@ function registerAssetProtocol(): void {
 
         const thumbnailRoot = path.resolve(getThumbnailCacheRoot());
         const absolutePath = path.resolve(row.thumbnailPath);
-        if (absolutePath !== thumbnailRoot && !absolutePath.startsWith(`${thumbnailRoot}${path.sep}`)) {
+        if (
+          absolutePath !== thumbnailRoot &&
+          !absolutePath.startsWith(`${thumbnailRoot}${path.sep}`)
+        ) {
           callback({ error: -10 });
           return;
         }

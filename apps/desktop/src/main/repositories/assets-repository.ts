@@ -1,3 +1,10 @@
+/**
+ * @purpose Centralize SQLite reads and writes for assets data.
+ * @role    Main-process persistence boundary between tRPC routers/services and Drizzle tables.
+ * @deps    @post/db schema, drizzle-orm query helpers, main db connection utilities.
+ * @gotcha  Keep query result shapes stable for routers and renderer models that consume them.
+ */
+
 import {
   and,
   asc,
@@ -80,7 +87,13 @@ const EMPTY_SAVED_VIEW_FILTERS: SavedViewFilters = {
   status: "any",
 };
 
-const ASSET_LIST_TYPE_FILTERS = new Set<AssetListTypeFilter>(["markdown", "image", "video", "link", "file"]);
+const ASSET_LIST_TYPE_FILTERS = new Set<AssetListTypeFilter>([
+  "markdown",
+  "image",
+  "video",
+  "link",
+  "file",
+]);
 const ASSET_LIST_TIME_FILTERS = new Set<AssetListTimeFilter>(["any", "today", "week", "m30"]);
 const ASSET_LIST_SOURCE_TYPES = new Set<AssetListSourceType>(["vault", "external_file", "url"]);
 const ASSET_LIST_STATUS_FILTERS = new Set<AssetListStatusFilter>([
@@ -223,11 +236,16 @@ function getTagExistsCondition(tagId: string) {
     getDatabase()
       .select({ id: schema.assetTags.assetId })
       .from(schema.assetTags)
-      .where(and(eq(schema.assetTags.assetId, schema.assets.id), eq(schema.assetTags.tagId, tagId))),
+      .where(
+        and(eq(schema.assetTags.assetId, schema.assets.id), eq(schema.assetTags.tagId, tagId)),
+      ),
   );
 }
 
-function getTagFilterCondition(tagIds: readonly string[] | undefined, tagMatch: AssetListTagMatch = "and") {
+function getTagFilterCondition(
+  tagIds: readonly string[] | undefined,
+  tagMatch: AssetListTagMatch = "and",
+) {
   if (!tagIds?.length) {
     return undefined;
   }
@@ -237,7 +255,12 @@ function getTagFilterCondition(tagIds: readonly string[] | undefined, tagMatch: 
       getDatabase()
         .select({ id: schema.assetTags.assetId })
         .from(schema.assetTags)
-        .where(and(eq(schema.assetTags.assetId, schema.assets.id), inArray(schema.assetTags.tagId, [...tagIds]))),
+        .where(
+          and(
+            eq(schema.assetTags.assetId, schema.assets.id),
+            inArray(schema.assetTags.tagId, [...tagIds]),
+          ),
+        ),
     );
   }
 
@@ -279,7 +302,10 @@ function getTypeFilterCondition(typeFilters: readonly AssetListTypeFilter[] | un
     return [
       and(
         notInArray(schema.assets.kind, [...NON_FILE_ASSET_KINDS]),
-        or(isNull(schema.assetFiles.extension), notInArray(schema.assetFiles.extension, [...URL_FILE_EXTENSIONS])),
+        or(
+          isNull(schema.assetFiles.extension),
+          notInArray(schema.assetFiles.extension, [...URL_FILE_EXTENSIONS]),
+        ),
       )!,
     ];
   });
@@ -335,8 +361,12 @@ function getCursorCondition(sort: AssetListSort, cursor: AssetListCursor | undef
 
   const sortValue = getSortValueExpression(sort);
   const isDescending = sort.endsWith("desc");
-  const valueComparator = isDescending ? lt(sortValue, cursor.valueMs) : gt(sortValue, cursor.valueMs);
-  const idComparator = isDescending ? lt(schema.assets.id, cursor.id) : gt(schema.assets.id, cursor.id);
+  const valueComparator = isDescending
+    ? lt(sortValue, cursor.valueMs)
+    : gt(sortValue, cursor.valueMs);
+  const idComparator = isDescending
+    ? lt(schema.assets.id, cursor.id)
+    : gt(schema.assets.id, cursor.id);
 
   return or(valueComparator, and(eq(sortValue, cursor.valueMs), idComparator));
 }
@@ -389,9 +419,9 @@ export function getAssetPage(input: AssetListPageInput) {
     total: getAssetCount(input),
     nextCursor: overflowRow
       ? {
-        valueMs: Number(overflowRow.sortValue),
-        id: overflowRow.asset.id,
-      }
+          valueMs: Number(overflowRow.sortValue),
+          id: overflowRow.asset.id,
+        }
       : null,
   };
 }
@@ -568,7 +598,9 @@ export function savedViewFiltersToAssetListFilters(
 }
 
 function getStringArray(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }
 
 function uniqueStrings<T extends string>(values: readonly T[]) {
@@ -618,13 +650,15 @@ export function getAssetSummary(vaultId?: string) {
     .where(and(...getExistingAssetConditions(vaultId)))
     .get();
 
-  return row ? {
-    total: row.total,
-    untagged: row.untagged ?? 0,
-    inbox: row.inbox ?? 0,
-    organized: row.organized ?? 0,
-    draft: row.draft ?? 0,
-    published: row.published ?? 0,
-    archived: row.archived ?? 0,
-  } : { ...EMPTY_ASSET_SUMMARY };
+  return row
+    ? {
+        total: row.total,
+        untagged: row.untagged ?? 0,
+        inbox: row.inbox ?? 0,
+        organized: row.organized ?? 0,
+        draft: row.draft ?? 0,
+        published: row.published ?? 0,
+        archived: row.archived ?? 0,
+      }
+    : { ...EMPTY_ASSET_SUMMARY };
 }

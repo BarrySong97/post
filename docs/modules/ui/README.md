@@ -22,3 +22,4 @@ The desktop renderer imports shared styles from this package, then composes app-
 
 - Do not move feature-specific component behavior here unless it is genuinely shared.
 - Keep design decisions synchronized with [../../../design.md](../../../design.md).
+- Source files in this package have AI file headers. Keep them high-level and avoid duplicating implementation details.

@@ -1,4 +1,16 @@
-import { appEventBus, type WatcherFileChange, type WatcherScope, type WatcherStatus } from "./events";
+/**
+ * @purpose Manage active vault watcher processes and their renderer-visible state.
+ * @role    Main-process coordinator for filesystem watch scopes and indexer watch commands.
+ * @deps    indexer sidecar, events, vault/task routers.
+ * @gotcha  Ensure watchers are stopped when vaults, scopes, or windows change to avoid orphan work.
+ */
+
+import {
+  appEventBus,
+  type WatcherFileChange,
+  type WatcherScope,
+  type WatcherStatus,
+} from "./events";
 import { backgroundTaskManager } from "./background-tasks";
 import {
   runIndexer,
@@ -111,11 +123,13 @@ class VaultWatcherManager {
     };
   }
 
-  private ensureActiveWatcher(scope: Exclude<VaultWatcherScopeInput, { type: "idle" }>): ActiveWatcher {
+  private ensureActiveWatcher(
+    scope: Exclude<VaultWatcherScopeInput, { type: "idle" }>,
+  ): ActiveWatcher {
     if (
-      this.active
-      && this.active.vaultId === scope.vaultId
-      && this.active.rootPath === scope.rootPath
+      this.active &&
+      this.active.vaultId === scope.vaultId &&
+      this.active.rootPath === scope.rootPath
     ) {
       return this.active;
     }
@@ -293,8 +307,10 @@ class VaultWatcherManager {
         },
       );
       const completed = findLastEvent(result.events, "completed");
-      const filesSeen = typeof completed?.filesSeen === "number" ? completed.filesSeen : state.filesSeen;
-      const filesMissing = typeof completed?.filesMissing === "number" ? completed.filesMissing : state.filesMissing;
+      const filesSeen =
+        typeof completed?.filesSeen === "number" ? completed.filesSeen : state.filesSeen;
+      const filesMissing =
+        typeof completed?.filesMissing === "number" ? completed.filesMissing : state.filesMissing;
       this.queueThumbnailGeneration(
         scope,
         parseStringArray(completed?.thumbnailAssetIds ?? completed?.imageAssetIds),
@@ -316,7 +332,11 @@ class VaultWatcherManager {
     }
   }
 
-  private setStatus(status: WatcherStatus, scope: VaultWatcherScopeInput = this.scope, message?: string): void {
+  private setStatus(
+    status: WatcherStatus,
+    scope: VaultWatcherScopeInput = this.scope,
+    message?: string,
+  ): void {
     this.status = status;
     if (status !== "error") {
       this.lastError = undefined;
@@ -385,7 +405,11 @@ class VaultWatcherManager {
   }
 
   private runPendingThumbnailGeneration(): void {
-    if (this.thumbnailRunning || this.pendingThumbnailAssetIds.size === 0 || !this.pendingThumbnailVault) {
+    if (
+      this.thumbnailRunning ||
+      this.pendingThumbnailAssetIds.size === 0 ||
+      !this.pendingThumbnailVault
+    ) {
       return;
     }
 
@@ -434,7 +458,9 @@ class VaultWatcherManager {
   }
 }
 
-function toIndexerScope(scope: Exclude<VaultWatcherScopeInput, { type: "idle" }>): IndexerWatchScope {
+function toIndexerScope(
+  scope: Exclude<VaultWatcherScopeInput, { type: "idle" }>,
+): IndexerWatchScope {
   if (scope.type === "note") {
     return {
       type: "note",
@@ -471,18 +497,25 @@ function parseWatcherChanges(value: unknown): WatcherFileChange[] {
   }
 
   return value.flatMap((item) => {
-    if (!isRecord(item) || typeof item.relativePath !== "string" || !isWatcherChangeKind(item.kind)) {
+    if (
+      !isRecord(item) ||
+      typeof item.relativePath !== "string" ||
+      !isWatcherChangeKind(item.kind)
+    ) {
       return [];
     }
 
-    return [{
-      kind: item.kind,
-      vaultId: typeof item.vaultId === "string" ? item.vaultId : "",
-      relativePath: item.relativePath,
-      previousRelativePath: typeof item.previousRelativePath === "string" ? item.previousRelativePath : undefined,
-      contentHash: typeof item.contentHash === "string" ? item.contentHash : undefined,
-      mtimeMs: typeof item.mtimeMs === "number" ? item.mtimeMs : undefined,
-    }];
+    return [
+      {
+        kind: item.kind,
+        vaultId: typeof item.vaultId === "string" ? item.vaultId : "",
+        relativePath: item.relativePath,
+        previousRelativePath:
+          typeof item.previousRelativePath === "string" ? item.previousRelativePath : undefined,
+        contentHash: typeof item.contentHash === "string" ? item.contentHash : undefined,
+        mtimeMs: typeof item.mtimeMs === "number" ? item.mtimeMs : undefined,
+      },
+    ];
   });
 }
 

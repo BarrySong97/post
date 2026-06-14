@@ -1,3 +1,10 @@
+/**
+ * @purpose Resolve the app database path and initialize the desktop SQLite database.
+ * @role    Main-process database bootstrap used before routers and services access data.
+ * @deps    Electron app userData path, @post/db connection helpers.
+ * @gotcha  Dev/prod database filenames differ; avoid hardcoding paths outside this layer.
+ */
+
 import { app } from "electron";
 import { is } from "@electron-toolkit/utils";
 import { existsSync } from "node:fs";
@@ -41,4 +48,3 @@ export function getDatabase(): Database {
 
   return db;
 }
-

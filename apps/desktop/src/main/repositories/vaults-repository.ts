@@ -1,3 +1,10 @@
+/**
+ * @purpose Centralize SQLite reads and writes for vaults data.
+ * @role    Main-process persistence boundary between tRPC routers/services and Drizzle tables.
+ * @deps    @post/db schema, drizzle-orm query helpers, main db connection utilities.
+ * @gotcha  Keep query result shapes stable for routers and renderer models that consume them.
+ */
+
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -12,7 +19,11 @@ export function listVaults() {
 }
 
 export function getOrCreateVaultId(rootPath: string, name?: string) {
-  const existing = getDatabase().select().from(schema.vaults).where(eq(schema.vaults.rootPath, rootPath)).get();
+  const existing = getDatabase()
+    .select()
+    .from(schema.vaults)
+    .where(eq(schema.vaults.rootPath, rootPath))
+    .get();
   if (existing) {
     const now = new Date();
     getDatabase()
@@ -47,11 +58,18 @@ export function getRequestedOrActiveVault(vaultId: string | undefined) {
     return getVaultOrThrow(vaultId);
   }
 
-  return getDatabase().select().from(schema.vaults).orderBy(desc(schema.vaults.lastOpenedAt)).get() ?? null;
+  return (
+    getDatabase().select().from(schema.vaults).orderBy(desc(schema.vaults.lastOpenedAt)).get() ??
+    null
+  );
 }
 
 export function getVaultOrThrow(vaultId: string): VaultRecord {
-  const vault = getDatabase().select().from(schema.vaults).where(eq(schema.vaults.id, vaultId)).get();
+  const vault = getDatabase()
+    .select()
+    .from(schema.vaults)
+    .where(eq(schema.vaults.id, vaultId))
+    .get();
   if (!vault) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Vault not found" });
   }

@@ -1,3 +1,10 @@
+/**
+ * @purpose Provide renderer-controlled shell sessions through safe Electron IPC handlers.
+ * @role    Main-process terminal service backed by node-pty.
+ * @deps    node-pty, Electron ipcMain/WebContents event delivery.
+ * @gotcha  Always clean up sessions and avoid exposing arbitrary Node APIs to renderer code.
+ */
+
 import { BrowserWindow, app, ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import { existsSync, chmodSync } from "node:fs";
@@ -85,7 +92,11 @@ function getShellCommand() {
     return shell;
   }
 
-  return process.platform === "darwin" ? "/bin/zsh" : os.platform() === "win32" ? "pwsh.exe" : "/bin/bash";
+  return process.platform === "darwin"
+    ? "/bin/zsh"
+    : os.platform() === "win32"
+      ? "pwsh.exe"
+      : "/bin/bash";
 }
 
 function getShellArgs(shell: string) {
@@ -94,7 +105,10 @@ function getShellArgs(shell: string) {
     return ["-o", "nopromptsp"];
   }
 
-  if (process.platform === "win32" && (shellName === "pwsh.exe" || shellName === "powershell.exe")) {
+  if (
+    process.platform === "win32" &&
+    (shellName === "pwsh.exe" || shellName === "powershell.exe")
+  ) {
     return ["-NoLogo"];
   }
 
@@ -110,7 +124,10 @@ function getNodePty() {
 }
 
 function unpackedAsarPath(candidate: string) {
-  return candidate.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
+  return candidate.replace(
+    `${path.sep}app.asar${path.sep}`,
+    `${path.sep}app.asar.unpacked${path.sep}`,
+  );
 }
 
 function resolveSpawnHelperPath() {
@@ -303,7 +320,9 @@ export function registerTerminalHandlers() {
   ipcMain.handle("terminal:start", (event, input: TerminalStartInput | undefined) =>
     startTerminalSession(event, input),
   );
-  ipcMain.handle("terminal:write", (_event, input: TerminalWriteInput) => writeTerminalInput(input));
+  ipcMain.handle("terminal:write", (_event, input: TerminalWriteInput) =>
+    writeTerminalInput(input),
+  );
   ipcMain.handle("terminal:resize", (_event, input: TerminalResizeInput) => resizeTerminal(input));
   ipcMain.handle("terminal:close", (_event, input: TerminalCloseInput) => closeTerminal(input));
 

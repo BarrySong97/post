@@ -6,22 +6,26 @@
  * @gotcha  纯 node 无三方依赖;非 git 仓库自动跳过漂移检查;templates/ 与忽略目录不参与检查。
  */
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { join, relative, dirname, resolve, sep } from 'node:path';
-import { execSync } from 'node:child_process';
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { join, relative, dirname, resolve, sep } from "node:path";
+import { execSync } from "node:child_process";
 
 const ROOT = process.cwd();
 const rawArgs = process.argv.slice(2);
-const STRICT = rawArgs.includes('--strict');
-const HOOK = rawArgs.includes('--hook');            // Stop hook 模式:硬错误 exit 2,让 Claude/Codex 真正拦截收尾
-let BASE = null;                                     // 对比基准 ref:git diff <BASE>...HEAD(供 CI / 审一个分支)
+const STRICT = rawArgs.includes("--strict");
+const HOOK = rawArgs.includes("--hook"); // Stop hook 模式:硬错误 exit 2,让 Claude/Codex 真正拦截收尾
+let BASE = null; // 对比基准 ref:git diff <BASE>...HEAD(供 CI / 审一个分支)
 {
-  const i = rawArgs.findIndex((a) => a === '--base' || a.startsWith('--base='));
-  if (i !== -1) BASE = rawArgs[i].includes('=') ? rawArgs[i].slice('--base='.length) : rawArgs[i + 1];
-  if (BASE && !/^[\w./@~^-]+$/.test(BASE)) { console.error('⚠️  --base 引用含非法字符,已忽略'); BASE = null; }
+  const i = rawArgs.findIndex((a) => a === "--base" || a.startsWith("--base="));
+  if (i !== -1)
+    BASE = rawArgs[i].includes("=") ? rawArgs[i].slice("--base=".length) : rawArgs[i + 1];
+  if (BASE && !/^[\w./@~^-]+$/.test(BASE)) {
+    console.error("⚠️  --base 引用含非法字符,已忽略");
+    BASE = null;
+  }
 }
 
-if (rawArgs.includes('--help') || rawArgs.includes('-h')) {
+if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
   console.log(`check-docs — AI-Doc-System 防漂移检查器
 用法: node scripts/check-docs.mjs [--strict] [--hook] [--base <ref>]
   --strict       把警告(⚠️)也算作失败
@@ -36,30 +40,85 @@ if (rawArgs.includes('--help') || rawArgs.includes('-h')) {
 }
 
 const DEFAULTS = {
-  sourceExts: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.vue', '.svelte', '.py', '.go', '.rs', '.java', '.kt', '.swift'],
-  sourceRoots: [],            // 空 → 自动:有 src/ 则用 ['src'],否则用 ['.']
-  ignoreDirs: ['node_modules', '.git', 'dist', 'build', '.next', 'out', 'coverage', '.turbo', '.cache', 'vendor', '.venv', 'venv', '__pycache__', '.idea', '.vscode', 'templates'],
-  nonModuleDirs: ['scripts', 'test', 'tests', '__tests__', 'spec', 'bin', 'config', 'public', 'assets', 'types', 'typings', 'migrations'],
-  headerMarker: '@purpose',
+  sourceExts: [
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".cjs",
+    ".vue",
+    ".svelte",
+    ".py",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".swift",
+    ".css",
+  ],
+  sourceRoots: [], // 空 → 自动:有 src/ 则用 ['src'],否则用 ['.']
+  ignoreFiles: [],
+  ignoreDirs: [
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    ".next",
+    "out",
+    "coverage",
+    ".turbo",
+    ".cache",
+    "vendor",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".idea",
+    ".vscode",
+    "templates",
+  ],
+  nonModuleDirs: [
+    "scripts",
+    "test",
+    "tests",
+    "__tests__",
+    "spec",
+    "bin",
+    "config",
+    "public",
+    "assets",
+    "types",
+    "typings",
+    "migrations",
+  ],
+  headerMarker: "@purpose",
   headerScanLines: 20,
-  docsDir: 'docs',
+  docsDir: "docs",
 };
 
 let CONFIG = { ...DEFAULTS };
-const cfgPath = join(ROOT, 'check-docs.config.json');
+const cfgPath = join(ROOT, "check-docs.config.json");
 if (existsSync(cfgPath)) {
-  try { CONFIG = { ...DEFAULTS, ...JSON.parse(readFileSync(cfgPath, 'utf8')) }; }
-  catch (e) { console.error('⚠️  check-docs.config.json 解析失败,改用默认配置:', e.message); }
+  try {
+    CONFIG = { ...DEFAULTS, ...JSON.parse(readFileSync(cfgPath, "utf8")) };
+  } catch (e) {
+    console.error("⚠️  check-docs.config.json 解析失败,改用默认配置:", e.message);
+  }
 }
 
 const IGNORE = new Set(CONFIG.ignoreDirs);
+const IGNORE_FILES = new Set(CONFIG.ignoreFiles);
 const NON_MODULE = new Set(CONFIG.nonModuleDirs);
 const hasSourceExt = (f) => CONFIG.sourceExts.some((e) => f.endsWith(e));
-const toPosix = (p) => p.split(sep).join('/');
+const toPosix = (p) => p.split(sep).join("/");
 
 function walk(dir, acc = []) {
   let entries;
-  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return acc; }
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return acc;
+  }
   for (const ent of entries) {
     const full = join(dir, ent.name);
     if (ent.isDirectory()) {
@@ -75,19 +134,28 @@ function walk(dir, acc = []) {
 // ── 收集源文件 ──────────────────────────────────────────────
 const roots = CONFIG.sourceRoots.length
   ? CONFIG.sourceRoots
-  : (existsSync(join(ROOT, 'src')) ? ['src'] : ['.']);
+  : existsSync(join(ROOT, "src"))
+    ? ["src"]
+    : ["."];
 
 const sourceFiles = [];
 for (const r of roots) {
   const base = join(ROOT, r);
-  if (existsSync(base)) for (const f of walk(base)) if (hasSourceExt(f)) sourceFiles.push(f);
+  if (existsSync(base)) {
+    for (const f of walk(base)) {
+      const rel = toPosix(relative(ROOT, f));
+      if (hasSourceExt(f) && !IGNORE_FILES.has(rel)) sourceFiles.push(f);
+    }
+  }
 }
 
 // ── 检查 ①:缺文件头 ────────────────────────────────────────
 function readHead(file) {
   try {
-    return readFileSync(file, 'utf8').split(/\r?\n/).slice(0, CONFIG.headerScanLines).join('\n');
-  } catch { return ''; }
+    return readFileSync(file, "utf8").split(/\r?\n/).slice(0, CONFIG.headerScanLines).join("\n");
+  } catch {
+    return "";
+  }
 }
 const missingHeaders = sourceFiles
   .filter((f) => !readHead(f).includes(CONFIG.headerMarker))
@@ -95,42 +163,49 @@ const missingHeaders = sourceFiles
 
 // ── 检查 ②:文档漂移(需 git) ──────────────────────────────
 function gitChangedFiles(base) {
-  try { execSync('git rev-parse --is-inside-work-tree', { cwd: ROOT, stdio: 'ignore' }); }
-  catch { return null; }
+  try {
+    execSync("git rev-parse --is-inside-work-tree", { cwd: ROOT, stdio: "ignore" });
+  } catch {
+    return null;
+  }
   const files = new Set();
-  const unquote = (p) => p.replace(/^"|"$/g, '');
+  const unquote = (p) => p.replace(/^"|"$/g, "");
   // 已提交差异(对比 base):供 CI / 审分支。base 已校验为安全 ref,可安全拼接。
   if (base) {
     try {
-      const out = execSync(`git diff --name-only ${base}...HEAD`, { cwd: ROOT, encoding: 'utf8' });
+      const out = execSync(`git diff --name-only ${base}...HEAD`, { cwd: ROOT, encoding: "utf8" });
       for (const l of out.split(/\r?\n/)) if (l.trim()) files.add(toPosix(unquote(l.trim())));
-    } catch (e) { console.error(`⚠️  git diff ${base}...HEAD 失败(base 是否存在?):`, e.message); }
+    } catch (e) {
+      console.error(`⚠️  git diff ${base}...HEAD 失败(base 是否存在?):`, e.message);
+    }
   }
   // 未提交工作区(始终并入)
   try {
-    const out = execSync('git status --porcelain', { cwd: ROOT, encoding: 'utf8' });
+    const out = execSync("git status --porcelain", { cwd: ROOT, encoding: "utf8" });
     for (const line of out.split(/\r?\n/)) {
       if (!line.trim()) continue;
       let p = line.slice(3);
-      if (p.includes(' -> ')) p = p.split(' -> ')[1];   // 重命名取新名
+      if (p.includes(" -> ")) p = p.split(" -> ")[1]; // 重命名取新名
       files.add(toPosix(unquote(p)));
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return files;
 }
 
 const changed = gitChangedFiles(BASE);
 const driftWarnings = [];
 if (changed) {
-  const prefixes = roots.map((r) => (r === '.' ? '' : toPosix(r) + '/'));
+  const prefixes = roots.map((r) => (r === "." ? "" : toPosix(r) + "/"));
   const seen = new Set();
   for (const cf of changed) {
     if (!hasSourceExt(cf)) continue;
-    const pre = prefixes.find((p) => p === '' || cf.startsWith(p));
+    const pre = prefixes.find((p) => p === "" || cf.startsWith(p));
     if (pre === undefined) continue;
     const rel = pre ? cf.slice(pre.length) : cf;
-    const parts = rel.split('/');
-    if (parts.length < 2) continue;                   // 直接在根下的文件,无模块目录
+    const parts = rel.split("/");
+    if (parts.length < 2) continue; // 直接在根下的文件,无模块目录
     const mod = parts[0];
     if (NON_MODULE.has(mod) || seen.has(mod)) continue;
     seen.add(mod);
@@ -139,12 +214,14 @@ if (changed) {
     const flatInModules = `${folder}.md`;
     const flatLegacy = `${CONFIG.docsDir}/${mod}.md`;
     if (existsSync(join(ROOT, folder))) {
-      if (![...changed].some((f) => f.startsWith(folder + '/')))
+      if (![...changed].some((f) => f.startsWith(folder + "/")))
         driftWarnings.push(`改动了 ${mod} 模块代码,但 ${folder}/ 下文档未同步更新`);
     } else if (existsSync(join(ROOT, flatInModules))) {
-      if (!changed.has(flatInModules)) driftWarnings.push(`改动了 ${mod} 模块代码,但 ${flatInModules} 未同步更新`);
+      if (!changed.has(flatInModules))
+        driftWarnings.push(`改动了 ${mod} 模块代码,但 ${flatInModules} 未同步更新`);
     } else if (existsSync(join(ROOT, flatLegacy))) {
-      if (!changed.has(flatLegacy)) driftWarnings.push(`改动了 ${mod} 模块代码,但 ${flatLegacy} 未同步更新`);
+      if (!changed.has(flatLegacy))
+        driftWarnings.push(`改动了 ${mod} 模块代码,但 ${flatLegacy} 未同步更新`);
     } else {
       driftWarnings.push(`模块 "${mod}" 有代码改动,但缺 ${folder}/README.md`);
     }
@@ -154,16 +231,21 @@ if (changed) {
 // ── 检查 ③:失效引用 ────────────────────────────────────────
 const brokenRefs = new Set();
 const linkRe = /\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-const isSkippableTarget = (t) => !t || /^(https?:|mailto:|tel:|data:|#)/i.test(t) || /[<>*]/.test(t);
+const isSkippableTarget = (t) =>
+  !t || /^(https?:|mailto:|tel:|data:|#)/i.test(t) || /[<>*]/.test(t);
 
-for (const md of walk(ROOT).filter((f) => f.endsWith('.md'))) {
+for (const md of walk(ROOT).filter((f) => f.endsWith(".md"))) {
   let content;
-  try { content = readFileSync(md, 'utf8'); } catch { continue; }
+  try {
+    content = readFileSync(md, "utf8");
+  } catch {
+    continue;
+  }
   let m;
   while ((m = linkRe.exec(content)) !== null) {
     let t = m[1].trim();
     if (isSkippableTarget(t)) continue;
-    t = t.split('#')[0].split('?')[0];
+    t = t.split("#")[0].split("?")[0];
     if (!t) continue;
     if (!existsSync(resolve(dirname(md), t))) {
       brokenRefs.add(`${toPosix(relative(ROOT, md))} → 引用不存在: ${t}`);
@@ -178,12 +260,13 @@ for (const f of sourceFiles) {
   while ((m = docRefRe.exec(head)) !== null) {
     const t = m[0];
     if (/[<>*]/.test(t)) continue;
-    if (!existsSync(join(ROOT, t))) brokenRefs.add(`${toPosix(relative(ROOT, f))} 文件头 → 引用不存在: ${t}`);
+    if (!existsSync(join(ROOT, t)))
+      brokenRefs.add(`${toPosix(relative(ROOT, f))} 文件头 → 引用不存在: ${t}`);
   }
 }
 
 // ── 输出 ────────────────────────────────────────────────────
-const lines = ['── check-docs ──', ''];
+const lines = ["── check-docs ──", ""];
 let hard = 0;
 let soft = 0;
 
@@ -191,31 +274,33 @@ if (missingHeaders.length) {
   hard += missingHeaders.length;
   lines.push(`❌ 缺 AI 文件头 (${missingHeaders.length})`);
   for (const f of missingHeaders) lines.push(`   · ${f}`);
-  lines.push('');
+  lines.push("");
 }
 if (brokenRefs.size) {
   hard += brokenRefs.size;
   lines.push(`❌ 失效引用 (${brokenRefs.size})`);
   for (const r of brokenRefs) lines.push(`   · ${r}`);
-  lines.push('');
+  lines.push("");
 }
 if (driftWarnings.length) {
   soft += driftWarnings.length;
   lines.push(`⚠️  疑似文档漂移 (${driftWarnings.length})`);
   for (const w of driftWarnings) lines.push(`   · ${w}`);
-  lines.push('');
+  lines.push("");
 }
 
-lines.push(!hard && !soft ? '✅ 全部通过' : `小结: ${hard} 个错误, ${soft} 个警告`);
-if (changed === null) lines.push('(提示: 非 git 仓库或 git 不可用,已跳过文档漂移检查)');
+lines.push(!hard && !soft ? "✅ 全部通过" : `小结: ${hard} 个错误, ${soft} 个警告`);
+if (changed === null) lines.push("(提示: 非 git 仓库或 git 不可用,已跳过文档漂移检查)");
 
-const report = lines.join('\n');
+const report = lines.join("\n");
 console.log(report);
 
 const failed = hard > 0 || (STRICT && soft > 0);
 if (HOOK && failed) {
   // 只有 exit 2 才会被 Claude/Codex 当作"阻止收尾",并把 stderr 反馈给模型
-  process.stderr.write(`${report}\n\n[check-docs] 以上问题需先解决再结束本次任务(补文件头 / 修引用 / 同步模块文档)。\n`);
+  process.stderr.write(
+    `${report}\n\n[check-docs] 以上问题需先解决再结束本次任务(补文件头 / 修引用 / 同步模块文档)。\n`,
+  );
   process.exit(2);
 }
 process.exit(failed ? 1 : 0);

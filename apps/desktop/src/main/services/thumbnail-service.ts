@@ -1,3 +1,10 @@
+/**
+ * @purpose Implement main-process thumbnail service behavior for desktop workflows.
+ * @role    Native capability service called by tRPC routers, tasks, or Electron lifecycle code.
+ * @deps    Electron main process APIs, filesystem/process utilities, repositories as needed.
+ * @gotcha  Keep native side effects out of renderer code and return preload-safe data shapes.
+ */
+
 import { existsSync } from "node:fs";
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
@@ -45,12 +52,14 @@ function hasThumbnailWork(vault: VaultRecord) {
     .from(schema.assets)
     .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
     .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
-    .where(and(
-      eq(schema.assets.vaultId, vault.id),
-      inArray(schema.assets.kind, ["image", "video"]),
-      isNull(schema.assets.deletedAt),
-      eq(schema.assetFiles.fileExists, true),
-    ))
+    .where(
+      and(
+        eq(schema.assets.vaultId, vault.id),
+        inArray(schema.assets.kind, ["image", "video"]),
+        isNull(schema.assets.deletedAt),
+        eq(schema.assetFiles.fileExists, true),
+      ),
+    )
     .all();
 
   return rows.some((row) => {
@@ -59,19 +68,15 @@ function hasThumbnailWork(vault: VaultRecord) {
     }
 
     const sourceMatches =
-      row.sourceSizeBytes === row.sizeBytes
-      && getTimestampMs(row.sourceMtimeMs) === getTimestampMs(row.mtimeMs)
-      && row.sourceQuickFingerprint === row.quickFingerprint;
+      row.sourceSizeBytes === row.sizeBytes &&
+      getTimestampMs(row.sourceMtimeMs) === getTimestampMs(row.mtimeMs) &&
+      row.sourceQuickFingerprint === row.quickFingerprint;
 
     if (row.cacheStatus === "failed") {
       return !sourceMatches || isRetryableThumbnailFailure(row.errorMessage);
     }
 
-    return (
-      !sourceMatches
-      || !row.thumbnailPath
-      || !existsSync(row.thumbnailPath)
-    );
+    return !sourceMatches || !row.thumbnailPath || !existsSync(row.thumbnailPath);
   });
 }
 

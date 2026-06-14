@@ -35,3 +35,4 @@ pnpm indexer:build
 - Keep parser and indexer version constants meaningful when behavior changes.
 - Thumbnail output must remain under the configured thumbnail root.
 - Path handling must preserve vault-relative paths.
+- The Rust entrypoint has an AI file header. Keep it aligned with command, dependency, and event-contract changes.

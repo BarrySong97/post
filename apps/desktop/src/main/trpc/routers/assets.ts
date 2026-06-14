@@ -1,3 +1,10 @@
+/**
+ * @purpose Define main-process tRPC procedures for assets domain operations.
+ * @role    IPC-facing application API layer called by renderer tRPC hooks.
+ * @deps    trpc.ts base procedures, repositories/services, Drizzle schema types.
+ * @gotcha  Validate inputs and keep side effects in repositories/services rather than renderer components.
+ */
+
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -49,6 +56,8 @@ const ASSET_LIST_DEFAULT_LIMIT = 80;
 const ASSET_LIST_MAX_LIMIT = 160;
 const TAG_NAME_MAX_LENGTH = 60;
 const SAVED_VIEW_NAME_MAX_LENGTH = 80;
+const SAVED_VIEW_ICON_MAX_LENGTH = 80;
+const DEFAULT_SAVED_VIEW_ICON = "lucide:folder-kanban";
 
 const assetListInput = vaultInput
   .extend({
@@ -62,10 +71,12 @@ const assetListInput = vaultInput
     sourceTypes: z.array(z.enum(["vault", "external_file", "url"])).optional(),
     sort: z.enum(["updated_desc", "updated_asc", "created_desc", "created_asc"]).optional(),
     limit: z.number().int().min(1).max(ASSET_LIST_MAX_LIMIT).optional(),
-    cursor: z.object({
-      valueMs: z.number(),
-      id: z.string().min(1),
-    }).optional(),
+    cursor: z
+      .object({
+        valueMs: z.number(),
+        id: z.string().min(1),
+      })
+      .optional(),
   })
   .optional();
 
@@ -82,7 +93,7 @@ const savedViewFiltersInput = z.object({
 const savedViewInput = z.object({
   vaultId: z.string().min(1).optional(),
   name: z.string().trim().min(1).max(SAVED_VIEW_NAME_MAX_LENGTH),
-  icon: z.string().trim().max(6).optional(),
+  icon: z.string().trim().max(SAVED_VIEW_ICON_MAX_LENGTH).optional(),
   filters: savedViewFiltersInput,
   sort: assetListSortInput.default("updated_desc"),
 });
@@ -117,14 +128,17 @@ function normalizeNullableText(value: string | null | undefined) {
 
 function normalizeSavedViewIcon(value: string | null | undefined) {
   const trimmed = value?.trim();
-  return trimmed ? trimmed.slice(0, 6) : "#";
+  return trimmed || DEFAULT_SAVED_VIEW_ICON;
 }
 
 function uniqueStrings<T extends string>(values: readonly T[]) {
   return Array.from(new Set(values));
 }
 
-function normalizeSavedViewFilters(vaultId: string, filters: z.infer<typeof savedViewFiltersInput>): SavedViewFilters {
+function normalizeSavedViewFilters(
+  vaultId: string,
+  filters: z.infer<typeof savedViewFiltersInput>,
+): SavedViewFilters {
   const tagIds = uniqueStrings(filters.tagIds);
   if (tagIds.length > 0) {
     const rows = getDatabase()
@@ -199,7 +213,11 @@ function getTagOrThrow(id: string) {
 }
 
 function getSavedViewOrThrow(id: string) {
-  const view = getDatabase().select().from(schema.savedViews).where(eq(schema.savedViews.id, id)).get();
+  const view = getDatabase()
+    .select()
+    .from(schema.savedViews)
+    .where(eq(schema.savedViews.id, id))
+    .get();
   if (!view) {
     throw new TRPCError({ code: "NOT_FOUND", message: "View not found" });
   }
@@ -258,11 +276,12 @@ function deleteTagAndCleanViews(tagId: string) {
   const db = getDatabase();
   const now = new Date();
 
-  const affectedAssetCount = db
-    .select({ total: count() })
-    .from(schema.assetTags)
-    .where(eq(schema.assetTags.tagId, tag.id))
-    .get()?.total ?? 0;
+  const affectedAssetCount =
+    db
+      .select({ total: count() })
+      .from(schema.assetTags)
+      .where(eq(schema.assetTags.tagId, tag.id))
+      .get()?.total ?? 0;
 
   const viewRows = db
     .select()
@@ -284,11 +303,11 @@ function deleteTagAndCleanViews(tagId: string) {
         tagIds: filters.tagIds.filter((id) => id !== tag.id),
       };
       const hasOnlyDeletedTag =
-        filters.tagIds.length === 1
-        && filters.types.length === 0
-        && filters.sources.length === 0
-        && filters.time === "any"
-        && filters.status === "any";
+        filters.tagIds.length === 1 &&
+        filters.types.length === 0 &&
+        filters.sources.length === 0 &&
+        filters.time === "any" &&
+        filters.status === "any";
 
       if (hasOnlyDeletedTag) {
         tx.delete(schema.savedViews).where(eq(schema.savedViews.id, view.id)).run();
@@ -433,33 +452,31 @@ export const assetsRouter = router({
     };
   }),
 
-  list: publicProcedure
-    .input(assetListInput)
-    .query(({ input }) => {
-      const vault = getRequestedOrActiveVault(input?.vaultId);
-      if (!vault) {
-        return {
-          items: [],
-          total: 0,
-          nextCursor: null,
-        };
-      }
+  list: publicProcedure.input(assetListInput).query(({ input }) => {
+    const vault = getRequestedOrActiveVault(input?.vaultId);
+    if (!vault) {
+      return {
+        items: [],
+        total: 0,
+        nextCursor: null,
+      };
+    }
 
-      startThumbnailPrewarm(vault);
-      return getAssetPage({
-        vaultId: vault.id,
-        tagIds: input?.tagIds ?? (input?.tagId ? [input.tagId] : undefined),
-        tagMatch: input?.tagMatch,
-        statusFilter: input?.statusFilter,
-        untagged: input?.untagged,
-        typeFilters: input?.typeFilters,
-        timeFilter: input?.timeFilter,
-        sourceTypes: input?.sourceTypes,
-        sort: input?.sort,
-        cursor: input?.cursor,
-        limit: input?.limit ?? ASSET_LIST_DEFAULT_LIMIT,
-      });
-    }),
+    startThumbnailPrewarm(vault);
+    return getAssetPage({
+      vaultId: vault.id,
+      tagIds: input?.tagIds ?? (input?.tagId ? [input.tagId] : undefined),
+      tagMatch: input?.tagMatch,
+      statusFilter: input?.statusFilter,
+      untagged: input?.untagged,
+      typeFilters: input?.typeFilters,
+      timeFilter: input?.timeFilter,
+      sourceTypes: input?.sourceTypes,
+      sort: input?.sort,
+      cursor: input?.cursor,
+      limit: input?.limit ?? ASSET_LIST_DEFAULT_LIMIT,
+    });
+  }),
 
   byId: publicProcedure.input(z.object({ id: z.string().min(1) })).query(({ input }) => {
     const rows = getAssetRows(undefined, input.id);
@@ -472,81 +489,81 @@ export const assetsRouter = router({
     return asset;
   }),
 
-  graphData: publicProcedure
-    .input(vaultInput.optional())
-    .query(({ input }) => {
-      const vault = getRequestedOrActiveVault(input?.vaultId);
-      if (!vault) return { nodes: [], edges: [] };
+  graphData: publicProcedure.input(vaultInput.optional()).query(({ input }) => {
+    const vault = getRequestedOrActiveVault(input?.vaultId);
+    if (!vault) return { nodes: [], edges: [] };
 
-      const db = getDatabase();
+    const db = getDatabase();
 
-      const assetRows = db
-        .select({
-          id: schema.assets.id,
-          kind: schema.assets.kind,
-          status: schema.assets.status,
-          title: schema.assets.title,
-          fileName: schema.assetFiles.fileName,
-          markdownTitle: schema.markdownCache.title,
-        })
-        .from(schema.assets)
-        .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
-        .leftJoin(schema.markdownCache, eq(schema.markdownCache.assetId, schema.assets.id))
-        .where(eq(schema.assets.vaultId, vault.id))
-        .all();
+    const assetRows = db
+      .select({
+        id: schema.assets.id,
+        kind: schema.assets.kind,
+        status: schema.assets.status,
+        title: schema.assets.title,
+        fileName: schema.assetFiles.fileName,
+        markdownTitle: schema.markdownCache.title,
+      })
+      .from(schema.assets)
+      .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
+      .leftJoin(schema.markdownCache, eq(schema.markdownCache.assetId, schema.assets.id))
+      .where(eq(schema.assets.vaultId, vault.id))
+      .all();
 
-      const nodes = assetRows.map((r) => ({
-        id: r.id,
-        title: r.markdownTitle ?? r.title ?? r.fileName,
-        kind: r.kind,
-        status: r.status,
+    const nodes = assetRows.map((r) => ({
+      id: r.id,
+      title: r.markdownTitle ?? r.title ?? r.fileName,
+      kind: r.kind,
+      status: r.status,
+    }));
+
+    const linkRows = db
+      .select({
+        sourceAssetId: schema.assetLinks.sourceAssetId,
+        targetAssetId: schema.assetLinks.targetAssetId,
+        relationType: schema.assetLinks.relationType,
+      })
+      .from(schema.assetLinks)
+      .where(
+        and(
+          eq(schema.assetLinks.vaultId, vault.id),
+          eq(schema.assetLinks.resolvedStatus, "resolved"),
+          isNotNull(schema.assetLinks.targetAssetId),
+        ),
+      )
+      .all();
+
+    const edges = linkRows
+      .filter((l) => l.targetAssetId != null)
+      .map((l) => ({
+        source: l.sourceAssetId,
+        target: l.targetAssetId!,
+        relationType: l.relationType,
       }));
 
-      const linkRows = db
-        .select({
-          sourceAssetId: schema.assetLinks.sourceAssetId,
-          targetAssetId: schema.assetLinks.targetAssetId,
-          relationType: schema.assetLinks.relationType,
-        })
-        .from(schema.assetLinks)
-        .where(
-          and(
-            eq(schema.assetLinks.vaultId, vault.id),
-            eq(schema.assetLinks.resolvedStatus, "resolved"),
-            isNotNull(schema.assetLinks.targetAssetId),
-          ),
-        )
-        .all();
-
-      const edges = linkRows
-        .filter((l) => l.targetAssetId != null)
-        .map((l) => ({
-          source: l.sourceAssetId,
-          target: l.targetAssetId!,
-          relationType: l.relationType,
-        }));
-
-      return { nodes, edges };
-    }),
-
-  markdownContent: publicProcedure.input(z.object({ id: z.string().min(1) })).query(({ input }) =>
-    readMarkdownContent(input.id),
-  ),
-
-  openFile: publicProcedure.input(z.object({ id: z.string().min(1) })).mutation(async ({ input }) => {
-    const row = getAssetRows(undefined, input.id)[0];
-    if (!row) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
-    }
-
-    const absolutePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
-    const error = await shell.openPath(absolutePath);
-    if (error) {
-      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error });
-    }
-
-    return { absolutePath };
+    return { nodes, edges };
   }),
+
+  markdownContent: publicProcedure
+    .input(z.object({ id: z.string().min(1) }))
+    .query(({ input }) => readMarkdownContent(input.id)),
+
+  openFile: publicProcedure
+    .input(z.object({ id: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const row = getAssetRows(undefined, input.id)[0];
+      if (!row) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
+      }
+
+      const absolutePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
+      const error = await shell.openPath(absolutePath);
+      if (error) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error });
+      }
+
+      return { absolutePath };
+    }),
 
   openVaultLocation: publicProcedure
     .input(z.object({ target: z.enum(["vscode", "cursor", "zed", "finder"]) }))
@@ -614,9 +631,12 @@ export const assetsRouter = router({
         return { events: [], requested: 0 };
       }
 
-      const result = await runThumbnailTask(vault, input.assetIds.length > 0
-        ? { assetIds: input.assetIds, limit: input.assetIds.length }
-        : undefined);
+      const result = await runThumbnailTask(
+        vault,
+        input.assetIds.length > 0
+          ? { assetIds: input.assetIds, limit: input.assetIds.length }
+          : undefined,
+      );
 
       return {
         events: result.events,
@@ -673,7 +693,9 @@ export const assetsRouter = router({
   }),
 
   reorderTags: publicProcedure
-    .input(z.object({ vaultId: z.string().min(1).optional(), orderedIds: z.array(z.string().min(1)) }))
+    .input(
+      z.object({ vaultId: z.string().min(1).optional(), orderedIds: z.array(z.string().min(1)) }),
+    )
     .mutation(({ input }) => {
       const vault = getActiveVaultOrThrow(input.vaultId);
       return reorderTags(vault.id, input.orderedIds);
@@ -729,22 +751,26 @@ export const assetsRouter = router({
       return nextView;
     }),
 
-  deleteSavedView: publicProcedure.input(z.object({ id: z.string().min(1) })).mutation(({ input }) => {
-    const view = getDatabase()
-      .delete(schema.savedViews)
-      .where(eq(schema.savedViews.id, input.id))
-      .returning({ id: schema.savedViews.id })
-      .get();
+  deleteSavedView: publicProcedure
+    .input(z.object({ id: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const view = getDatabase()
+        .delete(schema.savedViews)
+        .where(eq(schema.savedViews.id, input.id))
+        .returning({ id: schema.savedViews.id })
+        .get();
 
-    if (!view) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "View not found" });
-    }
+      if (!view) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "View not found" });
+      }
 
-    return view;
-  }),
+      return view;
+    }),
 
   reorderSavedViews: publicProcedure
-    .input(z.object({ vaultId: z.string().min(1).optional(), orderedIds: z.array(z.string().min(1)) }))
+    .input(
+      z.object({ vaultId: z.string().min(1).optional(), orderedIds: z.array(z.string().min(1)) }),
+    )
     .mutation(({ input }) => {
       const vault = getActiveVaultOrThrow(input.vaultId);
       return reorderSavedViews(vault.id, input.orderedIds);
@@ -774,10 +800,11 @@ export const assetsRouter = router({
     .mutation(({ input }) => {
       getDatabase()
         .delete(schema.assetTags)
-        .where(and(eq(schema.assetTags.assetId, input.assetId), eq(schema.assetTags.tagId, input.tagId)))
+        .where(
+          and(eq(schema.assetTags.assetId, input.assetId), eq(schema.assetTags.tagId, input.tagId)),
+        )
         .run();
 
       return { assetId: input.assetId, tagId: input.tagId };
     }),
-
 });

@@ -1,3 +1,10 @@
+/**
+ * @purpose Implement main-process indexer task service behavior for desktop workflows.
+ * @role    Native capability service called by tRPC routers, tasks, or Electron lifecycle code.
+ * @deps    Electron main process APIs, filesystem/process utilities, repositories as needed.
+ * @gotcha  Keep native side effects out of renderer code and return preload-safe data shapes.
+ */
+
 import { backgroundTaskManager } from "../background-tasks";
 import { type IndexerCommand, type IndexerEvent, runIndexer } from "../indexer";
 
@@ -42,7 +49,10 @@ export async function runIndexerTask(
         },
       },
     );
-    backgroundTaskManager.completeTask(task.id, getTaskCompletionSummary(type, state, result.events));
+    backgroundTaskManager.completeTask(
+      task.id,
+      getTaskCompletionSummary(type, state, result.events),
+    );
     return result;
   } catch (error) {
     backgroundTaskManager.failTask(task.id, error);
@@ -80,12 +90,14 @@ function getTaskCompletionSummary(
 ) {
   if (type === "indexing") {
     const completed = findLastEvent(events, "completed");
-    const filesSeen = typeof completed?.filesSeen === "number" ? completed.filesSeen : state.filesSeen;
+    const filesSeen =
+      typeof completed?.filesSeen === "number" ? completed.filesSeen : state.filesSeen;
     return `Indexed ${filesSeen} files`;
   }
 
   const completed = findLastEvent(events, "completed");
-  const filesSeen = typeof completed?.filesSeen === "number" ? completed.filesSeen : state.filesSeen;
+  const filesSeen =
+    typeof completed?.filesSeen === "number" ? completed.filesSeen : state.filesSeen;
   return `Reindexed ${filesSeen} files`;
 }
 

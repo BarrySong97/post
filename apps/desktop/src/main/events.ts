@@ -1,3 +1,10 @@
+/**
+ * @purpose Publish and subscribe to main-process app events for renderer-facing updates.
+ * @role    Event coordination utility for background tasks, watchers, and tRPC subscriptions.
+ * @deps    Node event primitives and typed event payload contracts.
+ * @gotcha  Keep event payloads serializable because they cross Electron IPC boundaries.
+ */
+
 import type { BackgroundTask } from "./background-tasks";
 
 export type WatcherStatus = "idle" | "starting" | "watching" | "auditing" | "stopped" | "error";

@@ -31,6 +31,17 @@ pnpm check-types
 pnpm build
 ```
 
+## Lint And Format
+
+```bash
+pnpm lint
+pnpm lint:fix
+pnpm format
+pnpm format:check
+```
+
+Oxlint checks JavaScript and TypeScript under `apps/`, `packages/`, and `scripts/`. Oxfmt formats supported source and config files in those roots. Generated `apps/desktop/src/renderer/src/routeTree.gen.ts` is ignored.
+
 ## Database
 
 ```bash
@@ -66,4 +77,6 @@ node scripts/check-docs.mjs
 node scripts/check-docs.mjs --strict
 ```
 
-The check is currently scoped to `scripts/` while the legacy source tree is migrated to AI file headers. Expand `check-docs.config.json` after completing the plan in [plans](plans/README.md).
+`check-docs.config.json` covers `apps/`, `packages/`, `crates/`, and `scripts/`, while ignoring generated `routeTree.gen.ts`.
+
+Claude Code and Codex hooks call the shared scripts in `scripts/hooks/`. Codex users should run `/hooks` once, review the commands, and trust them for this project.

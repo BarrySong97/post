@@ -1,3 +1,10 @@
+/**
+ * @purpose Manage thumbnail generation work for indexed assets.
+ * @role    Background task coordinator between asset records, indexer thumbnails, and UI events.
+ * @deps    indexer utilities, database repositories, background task/event services.
+ * @gotcha  Avoid blocking app startup; thumbnail work should remain incremental and cancellable where possible.
+ */
+
 import { backgroundTaskManager } from "./background-tasks";
 import { runIndexer, type IndexerEvent } from "./indexer";
 
@@ -19,10 +26,7 @@ type ThumbnailTaskState = {
   failed: number;
 };
 
-export function runThumbnailTask(
-  vault: ThumbnailVault,
-  input: ThumbnailTaskInput = {},
-) {
+export function runThumbnailTask(vault: ThumbnailVault, input: ThumbnailTaskInput = {}) {
   const task = backgroundTaskManager.createTask({
     type: "thumbnails",
     title: "Generating thumbnails",
@@ -62,11 +66,7 @@ export function runThumbnailTask(
     });
 }
 
-function applyThumbnailEventToTask(
-  taskId: string,
-  event: IndexerEvent,
-  state: ThumbnailTaskState,
-) {
+function applyThumbnailEventToTask(taskId: string, event: IndexerEvent, state: ThumbnailTaskState) {
   if (event.type === "started" && typeof event.requested === "number") {
     state.requested = event.requested;
   }
@@ -94,9 +94,7 @@ function applyThumbnailEventToTask(
     progress: {
       current,
       total: state.requested || undefined,
-      label: state.requested > 0
-        ? `${current} / ${state.requested}`
-        : `${current} thumbnails`,
+      label: state.requested > 0 ? `${current} / ${state.requested}` : `${current} thumbnails`,
     },
   });
 }

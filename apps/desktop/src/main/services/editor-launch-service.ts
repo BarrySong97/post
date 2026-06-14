@@ -1,3 +1,10 @@
+/**
+ * @purpose Implement main-process editor launch service behavior for desktop workflows.
+ * @role    Native capability service called by tRPC routers, tasks, or Electron lifecycle code.
+ * @deps    Electron main process APIs, filesystem/process utilities, repositories as needed.
+ * @gotcha  Keep native side effects out of renderer code and return preload-safe data shapes.
+ */
+
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -25,7 +32,11 @@ const VAULT_EDITOR_TARGETS = {
   },
 } satisfies Record<VaultEditorTarget, { label: string; appName: string; commands: string[] }>;
 
-export async function openVaultInEditor(target: VaultEditorTarget, rootPath: string, filePath?: string) {
+export async function openVaultInEditor(
+  target: VaultEditorTarget,
+  rootPath: string,
+  filePath?: string,
+) {
   const editor = VAULT_EDITOR_TARGETS[target];
   const errors: string[] = [];
   const args = filePath ? [rootPath, filePath] : [rootPath];
@@ -43,7 +54,9 @@ export async function openVaultInEditor(target: VaultEditorTarget, rootPath: str
     await execFileAsync("open", ["-a", editor.appName, rootPath], { timeout: 5000 });
     return;
   } catch (error) {
-    errors.push(`open -a ${editor.appName}: ${error instanceof Error ? error.message : String(error)}`);
+    errors.push(
+      `open -a ${editor.appName}: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 
   throw new TRPCError({

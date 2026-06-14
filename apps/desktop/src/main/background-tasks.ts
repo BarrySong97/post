@@ -1,3 +1,10 @@
+/**
+ * @purpose Track long-running main-process work and expose task state to the app.
+ * @role    Background task registry for indexing, thumbnails, and other asynchronous workflows.
+ * @deps    events module, task router consumers, native services.
+ * @gotcha  Update task status consistently so renderer indicators do not get stuck.
+ */
+
 import { app } from "electron";
 
 import { appEventBus } from "./events";
@@ -83,7 +90,10 @@ class BackgroundTaskManager {
     this.patch(taskId, { status: "running" });
   }
 
-  updateTask(taskId: string, patch: Partial<Pick<BackgroundTask, "progress" | "summary" | "title">>): void {
+  updateTask(
+    taskId: string,
+    patch: Partial<Pick<BackgroundTask, "progress" | "summary" | "title">>,
+  ): void {
     this.patch(taskId, patch);
   }
 
@@ -118,7 +128,11 @@ class BackgroundTaskManager {
     });
   }
 
-  hasRecentCompletedTask(type: BackgroundTaskType, vaultId: string | undefined, ttlMs: number): boolean {
+  hasRecentCompletedTask(
+    type: BackgroundTaskType,
+    vaultId: string | undefined,
+    ttlMs: number,
+  ): boolean {
     const now = Date.now();
     return Array.from(this.tasks.values()).some((task) => {
       if (task.type !== type || task.status !== "completed") {
@@ -136,13 +150,18 @@ class BackgroundTaskManager {
   getSnapshot(context: SnapshotContext = {}): BackgroundTaskSnapshot {
     this.prune();
 
-    const tasks = Array.from(this.tasks.values()).sort((left, right) => right.updatedAt - left.updatedAt);
+    const tasks = Array.from(this.tasks.values()).sort(
+      (left, right) => right.updatedAt - left.updatedAt,
+    );
     const running = tasks.filter((task) => task.status === "running");
     const queued = tasks.filter((task) => task.status === "queued");
     const failed = tasks.filter((task) => task.status === "failed");
     const recentlyCompleted = tasks
       .filter((task) => task.status === "completed")
-      .sort((left, right) => (right.completedAt ?? right.updatedAt) - (left.completedAt ?? left.updatedAt))
+      .sort(
+        (left, right) =>
+          (right.completedAt ?? right.updatedAt) - (left.completedAt ?? left.updatedAt),
+      )
       .slice(0, RECENT_COMPLETED_LIMIT);
 
     return {
@@ -204,7 +223,10 @@ class BackgroundTaskManager {
     const now = Date.now();
     const completed = Array.from(this.tasks.values())
       .filter((task) => task.status === "completed")
-      .sort((left, right) => (right.completedAt ?? right.updatedAt) - (left.completedAt ?? left.updatedAt));
+      .sort(
+        (left, right) =>
+          (right.completedAt ?? right.updatedAt) - (left.completedAt ?? left.updatedAt),
+      );
     const keepCompletedIds = new Set(
       completed
         .filter((task) => now - (task.completedAt ?? task.updatedAt) <= RECENT_COMPLETED_TTL_MS)

@@ -1,5 +1,6 @@
 {
-  "sourceRoots": ["scripts"],
+  "sourceRoots": ["apps", "packages", "crates", "scripts"],
+  "ignoreFiles": ["apps/desktop/src/renderer/src/routeTree.gen.ts"],
   "nonModuleDirs": [
     "scripts",
     "test",

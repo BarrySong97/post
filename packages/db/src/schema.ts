@@ -1,4 +1,19 @@
-import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+/**
+ * @purpose Define the SQLite data model, enum contracts, indexes, and table relationships for Post.
+ * @role    Shared schema contract consumed by Electron repositories and the Rust indexer.
+ * @deps    drizzle-orm/sqlite-core; migrations in packages/db/drizzle.
+ * @gotcha  After schema edits run pnpm db:generate and keep string unions compatible with UI/indexer code.
+ */
+
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 export const assetKinds = [
   "markdown",
@@ -53,7 +68,15 @@ export type SyncRunStatus = (typeof syncRunStatuses)[number];
 export const syncRunOwners = ["electron_main", "rust_indexer"] as const;
 export type SyncRunOwner = (typeof syncRunOwners)[number];
 
-export const syncEventTypes = ["added", "updated", "moved", "missing", "restored", "conflict", "deleted"] as const;
+export const syncEventTypes = [
+  "added",
+  "updated",
+  "moved",
+  "missing",
+  "restored",
+  "conflict",
+  "deleted",
+] as const;
 export type SyncEventType = (typeof syncEventTypes)[number];
 
 export const savedViewKinds = ["manual", "smart"] as const;
@@ -260,7 +283,10 @@ export const assetLinks = sqliteTable(
     resolvedStatus: text("resolved_status").$type<AssetLinkResolvedStatus>().notNull(),
     sourceSpanStart: integer("source_span_start"),
     sourceSpanEnd: integer("source_span_end"),
-    createdFrom: text("created_from").$type<AssetLinkCreatedFrom>().notNull().default("markdown_parse"),
+    createdFrom: text("created_from")
+      .$type<AssetLinkCreatedFrom>()
+      .notNull()
+      .default("markdown_parse"),
     discoveredAt: integer("discovered_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
