@@ -8,6 +8,7 @@ import { getToastSnapshot, subscribeToasts, toast, type ToastItem } from "@/lib/
 
 import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
+import { ConfirmModalProvider } from "@/components/confirm-modal";
 
 type TaskSnapshot = RouterOutputs["tasks"]["snapshot"];
 type BackgroundTask = NonNullable<TaskSnapshot["activeTask"]>;
@@ -36,13 +37,13 @@ const PF_TYPE: Record<FooterTaskType, { label: string }> = {
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
-    <>
+    <ConfirmModalProvider>
       <GlobalToasts />
       <div className="flex h-screen min-h-0 flex-col overflow-hidden text-zinc-950">
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
         <GlobalStatusLine />
       </div>
-    </>
+    </ConfirmModalProvider>
   );
 }
 

@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { clipboard, shell } from "electron";
 import { TRPCError } from "@trpc/server";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 
 import { schema } from "@post/db";
@@ -15,6 +16,10 @@ import {
   getAssetSummary,
   getSavedViews,
   getSidebarTags,
+  parseSavedViewFilters,
+  serializeSavedViewFilters,
+  serializeSavedViewSort,
+  type SavedViewFilters,
 } from "../../repositories/assets-repository";
 import {
   getOrCreateVaultId,
@@ -42,6 +47,8 @@ const importPathInput = z.object({
 
 const ASSET_LIST_DEFAULT_LIMIT = 80;
 const ASSET_LIST_MAX_LIMIT = 160;
+const TAG_NAME_MAX_LENGTH = 60;
+const SAVED_VIEW_NAME_MAX_LENGTH = 80;
 
 const assetListInput = vaultInput
   .extend({
@@ -62,12 +69,249 @@ const assetListInput = vaultInput
   })
   .optional();
 
+const assetListSortInput = z.enum(["updated_desc", "updated_asc", "created_desc", "created_asc"]);
+const savedViewFiltersInput = z.object({
+  match: z.enum(["and", "or"]).default("and"),
+  tagIds: z.array(z.string().min(1)).default([]),
+  types: z.array(z.enum(["markdown", "image", "video", "link", "file"])).default([]),
+  sources: z.array(z.enum(["vault", "external_file", "url"])).default([]),
+  time: z.enum(["any", "today", "week", "m30"]).default("any"),
+  status: z.enum(["any", "inbox", "organized", "draft", "published", "archived"]).default("any"),
+});
+
+const savedViewInput = z.object({
+  vaultId: z.string().min(1).optional(),
+  name: z.string().trim().min(1).max(SAVED_VIEW_NAME_MAX_LENGTH),
+  icon: z.string().trim().max(6).optional(),
+  filters: savedViewFiltersInput,
+  sort: assetListSortInput.default("updated_desc"),
+});
+
+const tagInput = z.object({
+  vaultId: z.string().min(1).optional(),
+  name: z.string().trim().min(1).max(TAG_NAME_MAX_LENGTH),
+  color: z.string().trim().max(80).optional().nullable(),
+});
+
 function getConflictCount(vaultId: string) {
   return getDatabase()
     .select()
     .from(schema.syncEvents)
     .where(and(eq(schema.syncEvents.vaultId, vaultId), eq(schema.syncEvents.eventType, "conflict")))
     .all().length;
+}
+
+function getActiveVaultOrThrow(vaultId?: string) {
+  const vault = getRequestedOrActiveVault(vaultId);
+  if (!vault) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "No active vault selected" });
+  }
+
+  return vault;
+}
+
+function normalizeNullableText(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeSavedViewIcon(value: string | null | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, 6) : "#";
+}
+
+function uniqueStrings<T extends string>(values: readonly T[]) {
+  return Array.from(new Set(values));
+}
+
+function normalizeSavedViewFilters(vaultId: string, filters: z.infer<typeof savedViewFiltersInput>): SavedViewFilters {
+  const tagIds = uniqueStrings(filters.tagIds);
+  if (tagIds.length > 0) {
+    const rows = getDatabase()
+      .select({ id: schema.tags.id })
+      .from(schema.tags)
+      .where(and(eq(schema.tags.vaultId, vaultId), inArray(schema.tags.id, tagIds)))
+      .all();
+    const knownIds = new Set(rows.map((row) => row.id));
+    const missingIds = tagIds.filter((tagId) => !knownIds.has(tagId));
+    if (missingIds.length > 0) {
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Saved view references unknown tags" });
+    }
+  }
+
+  return {
+    match: filters.match,
+    tagIds,
+    types: uniqueStrings(filters.types),
+    sources: uniqueStrings(filters.sources),
+    time: filters.time,
+    status: filters.status,
+  };
+}
+
+function assertUniqueTagName(vaultId: string, name: string, excludeId?: string) {
+  const existing = getDatabase()
+    .select({ id: schema.tags.id })
+    .from(schema.tags)
+    .where(and(eq(schema.tags.vaultId, vaultId), eq(schema.tags.name, name)))
+    .get();
+  if (existing && existing.id !== excludeId) {
+    throw new TRPCError({ code: "CONFLICT", message: "Tag name already exists" });
+  }
+}
+
+function assertUniqueSavedViewName(vaultId: string, name: string, excludeId?: string) {
+  const existing = getDatabase()
+    .select({ id: schema.savedViews.id })
+    .from(schema.savedViews)
+    .where(and(eq(schema.savedViews.vaultId, vaultId), eq(schema.savedViews.name, name)))
+    .get();
+  if (existing && existing.id !== excludeId) {
+    throw new TRPCError({ code: "CONFLICT", message: "View name already exists" });
+  }
+}
+
+function getNextTagSortOrder(vaultId: string) {
+  const row = getDatabase()
+    .select({ total: count() })
+    .from(schema.tags)
+    .where(eq(schema.tags.vaultId, vaultId))
+    .get();
+  return row?.total ?? 0;
+}
+
+function getNextSavedViewSortOrder(vaultId: string) {
+  const row = getDatabase()
+    .select({ total: count() })
+    .from(schema.savedViews)
+    .where(eq(schema.savedViews.vaultId, vaultId))
+    .get();
+  return row?.total ?? 0;
+}
+
+function getTagOrThrow(id: string) {
+  const tag = getDatabase().select().from(schema.tags).where(eq(schema.tags.id, id)).get();
+  if (!tag) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Tag not found" });
+  }
+
+  return tag;
+}
+
+function getSavedViewOrThrow(id: string) {
+  const view = getDatabase().select().from(schema.savedViews).where(eq(schema.savedViews.id, id)).get();
+  if (!view) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "View not found" });
+  }
+
+  return view;
+}
+
+function reorderTags(vaultId: string, orderedIds: readonly string[]) {
+  const currentRows = getDatabase()
+    .select({ id: schema.tags.id })
+    .from(schema.tags)
+    .where(eq(schema.tags.vaultId, vaultId))
+    .orderBy(asc(schema.tags.sortOrder), asc(schema.tags.name))
+    .all();
+  const knownIds = new Set(currentRows.map((row) => row.id));
+  const requestedIds = uniqueStrings(orderedIds).filter((id) => knownIds.has(id));
+  const remainingIds = currentRows.map((row) => row.id).filter((id) => !requestedIds.includes(id));
+  const nextIds = [...requestedIds, ...remainingIds];
+
+  for (const [sortOrder, id] of nextIds.entries()) {
+    getDatabase()
+      .update(schema.tags)
+      .set({ sortOrder, updatedAt: new Date() })
+      .where(eq(schema.tags.id, id))
+      .run();
+  }
+
+  return { orderedIds: nextIds };
+}
+
+function reorderSavedViews(vaultId: string, orderedIds: readonly string[]) {
+  const currentRows = getDatabase()
+    .select({ id: schema.savedViews.id })
+    .from(schema.savedViews)
+    .where(eq(schema.savedViews.vaultId, vaultId))
+    .orderBy(asc(schema.savedViews.sortOrder), desc(schema.savedViews.updatedAt))
+    .all();
+  const knownIds = new Set(currentRows.map((row) => row.id));
+  const requestedIds = uniqueStrings(orderedIds).filter((id) => knownIds.has(id));
+  const remainingIds = currentRows.map((row) => row.id).filter((id) => !requestedIds.includes(id));
+  const nextIds = [...requestedIds, ...remainingIds];
+
+  for (const [sortOrder, id] of nextIds.entries()) {
+    getDatabase()
+      .update(schema.savedViews)
+      .set({ sortOrder, updatedAt: new Date() })
+      .where(eq(schema.savedViews.id, id))
+      .run();
+  }
+
+  return { orderedIds: nextIds };
+}
+
+function deleteTagAndCleanViews(tagId: string) {
+  const tag = getTagOrThrow(tagId);
+  const db = getDatabase();
+  const now = new Date();
+
+  const affectedAssetCount = db
+    .select({ total: count() })
+    .from(schema.assetTags)
+    .where(eq(schema.assetTags.tagId, tag.id))
+    .get()?.total ?? 0;
+
+  const viewRows = db
+    .select()
+    .from(schema.savedViews)
+    .where(eq(schema.savedViews.vaultId, tag.vaultId))
+    .all();
+  const updatedViews: Array<{ id: string; name: string }> = [];
+  const deletedViews: Array<{ id: string; name: string }> = [];
+
+  db.transaction((tx) => {
+    for (const view of viewRows) {
+      const filters = parseSavedViewFilters(view.filterJson);
+      if (!filters.tagIds.includes(tag.id)) {
+        continue;
+      }
+
+      const nextFilters = {
+        ...filters,
+        tagIds: filters.tagIds.filter((id) => id !== tag.id),
+      };
+      const hasOnlyDeletedTag =
+        filters.tagIds.length === 1
+        && filters.types.length === 0
+        && filters.sources.length === 0
+        && filters.time === "any"
+        && filters.status === "any";
+
+      if (hasOnlyDeletedTag) {
+        tx.delete(schema.savedViews).where(eq(schema.savedViews.id, view.id)).run();
+        deletedViews.push({ id: view.id, name: view.name });
+      } else {
+        tx.update(schema.savedViews)
+          .set({ filterJson: serializeSavedViewFilters(nextFilters), updatedAt: now })
+          .where(eq(schema.savedViews.id, view.id))
+          .run();
+        updatedViews.push({ id: view.id, name: view.name });
+      }
+    }
+
+    tx.delete(schema.tags).where(eq(schema.tags.id, tag.id)).run();
+  });
+
+  return {
+    id: tag.id,
+    name: tag.name,
+    affectedAssetCount,
+    updatedViews,
+    deletedViews,
+  };
 }
 
 export const assetsRouter = router({
@@ -378,6 +622,132 @@ export const assetsRouter = router({
         events: result.events,
         requested: input.assetIds.length,
       };
+    }),
+
+  createTag: publicProcedure.input(tagInput).mutation(({ input }) => {
+    const vault = getActiveVaultOrThrow(input.vaultId);
+    assertUniqueTagName(vault.id, input.name);
+    const now = new Date();
+
+    return getDatabase()
+      .insert(schema.tags)
+      .values({
+        id: randomUUID(),
+        vaultId: vault.id,
+        name: input.name,
+        color: normalizeNullableText(input.color),
+        sortOrder: getNextTagSortOrder(vault.id),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+  }),
+
+  updateTag: publicProcedure
+    .input(tagInput.extend({ id: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const tag = getTagOrThrow(input.id);
+      assertUniqueTagName(tag.vaultId, input.name, tag.id);
+
+      const nextTag = getDatabase()
+        .update(schema.tags)
+        .set({
+          name: input.name,
+          color: normalizeNullableText(input.color),
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.tags.id, tag.id))
+        .returning()
+        .get();
+
+      if (!nextTag) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Tag not found" });
+      }
+
+      return nextTag;
+    }),
+
+  deleteTag: publicProcedure.input(z.object({ id: z.string().min(1) })).mutation(({ input }) => {
+    return deleteTagAndCleanViews(input.id);
+  }),
+
+  reorderTags: publicProcedure
+    .input(z.object({ vaultId: z.string().min(1).optional(), orderedIds: z.array(z.string().min(1)) }))
+    .mutation(({ input }) => {
+      const vault = getActiveVaultOrThrow(input.vaultId);
+      return reorderTags(vault.id, input.orderedIds);
+    }),
+
+  createSavedView: publicProcedure.input(savedViewInput).mutation(({ input }) => {
+    const vault = getActiveVaultOrThrow(input.vaultId);
+    assertUniqueSavedViewName(vault.id, input.name);
+    const filters = normalizeSavedViewFilters(vault.id, input.filters);
+    const now = new Date();
+
+    return getDatabase()
+      .insert(schema.savedViews)
+      .values({
+        id: randomUUID(),
+        vaultId: vault.id,
+        name: input.name,
+        icon: normalizeSavedViewIcon(input.icon),
+        filterJson: serializeSavedViewFilters(filters),
+        sortJson: serializeSavedViewSort(input.sort),
+        sortOrder: getNextSavedViewSortOrder(vault.id),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
+  }),
+
+  updateSavedView: publicProcedure
+    .input(savedViewInput.extend({ id: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const view = getSavedViewOrThrow(input.id);
+      assertUniqueSavedViewName(view.vaultId, input.name, view.id);
+      const filters = normalizeSavedViewFilters(view.vaultId, input.filters);
+
+      const nextView = getDatabase()
+        .update(schema.savedViews)
+        .set({
+          name: input.name,
+          icon: normalizeSavedViewIcon(input.icon),
+          filterJson: serializeSavedViewFilters(filters),
+          sortJson: serializeSavedViewSort(input.sort),
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.savedViews.id, view.id))
+        .returning()
+        .get();
+
+      if (!nextView) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "View not found" });
+      }
+
+      return nextView;
+    }),
+
+  deleteSavedView: publicProcedure.input(z.object({ id: z.string().min(1) })).mutation(({ input }) => {
+    const view = getDatabase()
+      .delete(schema.savedViews)
+      .where(eq(schema.savedViews.id, input.id))
+      .returning({ id: schema.savedViews.id })
+      .get();
+
+    if (!view) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "View not found" });
+    }
+
+    return view;
+  }),
+
+  reorderSavedViews: publicProcedure
+    .input(z.object({ vaultId: z.string().min(1).optional(), orderedIds: z.array(z.string().min(1)) }))
+    .mutation(({ input }) => {
+      const vault = getActiveVaultOrThrow(input.vaultId);
+      return reorderSavedViews(vault.id, input.orderedIds);
     }),
 
   addTag: publicProcedure

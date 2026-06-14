@@ -6,7 +6,6 @@ import React, {
   useId,
   useCallback,
   type ComponentType,
-  type ReactNode,
   type SVGProps,
 } from "react";
 import { useAtom, useAtomValue } from "jotai";
@@ -16,11 +15,6 @@ import {
   getEmptyAssetFilters,
   type ActiveSidebarItem,
   type AssetFilterState,
-  type AssetTypeFilter,
-  type AssetFilterMatch,
-  type AssetTimeFilter,
-  type AssetStatusFilter,
-  type AssetSortOrder,
 } from "@/store/asset-manager-atoms";
 import {
   OPEN_VAULT_TARGET_STORAGE_KEY,
@@ -88,7 +82,6 @@ import {
   Label,
   Tag,
   TagGroup,
-  Tabs,
 } from "@heroui/react";
 import { toast } from "@/lib/toast";
 
@@ -101,6 +94,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppLayout } from "@/components/app-layout-context";
 import { trpc, type RouterInputs } from "@/lib/trpc";
 import { load as yamlLoad } from "js-yaml";
+import {
+  AssetFilterPanel,
+  SORT_OPTION_LABELS,
+  STATUS_FILTER_LABELS,
+  TIME_FILTER_LABELS,
+  TYPE_FILTER_LABELS,
+  savedViewFiltersToAssetFilters,
+  sourceLabelsToTypes,
+} from "@/features/assets/asset-filter-controls";
+import { ViewFormModal } from "@/features/assets/asset-management-modals";
 
 
 type OpenVaultTarget = "vscode" | "cursor" | "zed" | "finder";
@@ -269,66 +272,10 @@ function getKindMeta(kind: AssetKind) {
   return map[kind];
 }
 
-
-
-const ASSET_TYPE_FILTERS = [
-  { value: "markdown", label: "文字", icon: FileText },
-  { value: "image", label: "图片", icon: ImageIcon },
-  { value: "video", label: "视频", icon: Video },
-  { value: "link", label: "链接", icon: LinkIcon },
-  { value: "file", label: "文件", icon: FileText },
-] satisfies Array<{ value: AssetTypeFilter; label: string; icon: typeof FileText }>;
-
-const MATCH_FILTERS = [
-  { value: "and", label: "全部条件" },
-  { value: "or", label: "任意条件" },
-] satisfies Array<{ value: AssetFilterMatch; label: string }>;
-
-const TIME_FILTERS = [
-  { value: "any", label: "不限" },
-  { value: "today", label: "今天" },
-  { value: "week", label: "本周" },
-  { value: "m30", label: "近 30 天" },
-  { value: "custom", label: "自定义" },
-] satisfies Array<{ value: AssetTimeFilter; label: string }>;
-
-const STATUS_FILTERS = [
-  { value: "any", label: "不限" },
-  { value: "inbox", label: "待整理" },
-  { value: "draft", label: "草稿" },
-  { value: "published", label: "已发布" },
-] satisfies Array<{ value: AssetStatusFilter; label: string }>;
-
-const SORT_OPTIONS = [
-  { value: "updated_desc", label: "更新时间 · 降序" },
-  { value: "updated_asc", label: "更新时间 · 升序" },
-  { value: "created_desc", label: "创建时间 · 降序" },
-  { value: "created_asc", label: "创建时间 · 升序" },
-] satisfies Array<{ value: AssetSortOrder; label: string }>;
-
-const TYPE_FILTER_LABELS = Object.fromEntries(
-  ASSET_TYPE_FILTERS.map((item) => [item.value, item.label]),
-) as Record<AssetTypeFilter, string>;
-const TIME_FILTER_LABELS = Object.fromEntries(
-  TIME_FILTERS.map((item) => [item.value, item.label]),
-) as Record<AssetTimeFilter, string>;
-const STATUS_FILTER_LABELS = Object.fromEntries(
-  STATUS_FILTERS.map((item) => [item.value, item.label]),
-) as Record<AssetStatusFilter, string>;
-const SORT_OPTION_LABELS = Object.fromEntries(
-  SORT_OPTIONS.map((item) => [item.value, item.label]),
-) as Record<AssetSortOrder, string>;
-
 type AssetListInput = Extract<NonNullable<RouterInputs["assets"]["list"]>, Record<string, unknown>>;
-type AssetSourceType = NonNullable<AssetListInput["sourceTypes"]>[number];
 
 const ASSET_PAGE_LIMIT = 80;
 const MISSING_TAG_ID = "__missing_tag__";
-const SOURCE_LABEL_TO_TYPE = {
-  资产库: "vault",
-  本地文件: "external_file",
-  链接: "url",
-} satisfies Record<string, AssetSourceType>;
 
 function getTagIdsFromNames(tagNames: readonly string[], tagOptions: readonly SidebarTag[]) {
   if (tagNames.length === 0) {
@@ -361,11 +308,7 @@ function getSidebarSelectionTagIds(
 }
 
 function getSourceTypes(sources: readonly string[]) {
-  if (sources.length === 0) {
-    return undefined;
-  }
-
-  return sources.map((source) => SOURCE_LABEL_TO_TYPE[source] ?? "external_file");
+  return sourceLabelsToTypes(sources);
 }
 
 function buildAssetListInput({
@@ -911,221 +854,6 @@ function AssetBoardHeader({
   );
 }
 
-type FilterSegmentProps<T extends string> = {
-  options: Array<{ value: T; label: string }>;
-  value: T;
-  onChange: (value: T) => void;
-};
-
-function FilterSegment<T extends string>({ options, value, onChange }: FilterSegmentProps<T>) {
-  return (
-    <Tabs.Root
-      selectedKey={value}
-      onSelectionChange={(key) => onChange(String(key) as T)}
-      className="gap-0"
-    >
-      <Tabs.ListContainer className="inline-flex">
-        <Tabs.List className="w-auto rounded-lg bg-zinc-100 p-0.5">
-          {options.map((option) => (
-            <Tabs.Tab
-              key={option.value}
-              id={option.value}
-              className="h-5 w-auto whitespace-nowrap rounded-md px-2 text-[10.5px] font-medium text-zinc-500 data-[selected=true]:text-zinc-950"
-            >
-              <Tabs.Indicator className="rounded-md bg-white shadow-[0_1px_2px_rgba(20,18,14,0.06)]" />
-              {option.label}
-            </Tabs.Tab>
-          ))}
-        </Tabs.List>
-      </Tabs.ListContainer>
-    </Tabs.Root>
-  );
-}
-
-type AssetFilterTagOption<T extends string = string> = {
-  value: T;
-  label: string;
-  icon?: ComponentType<{ size?: number; className?: string }>;
-  dotHue?: number;
-};
-
-type AssetFilterTagGroupProps<T extends string> = {
-  label: string;
-  options: readonly AssetFilterTagOption<T>[];
-  selectedValues: readonly T[];
-  onSelectedValuesChange: (values: T[]) => void;
-};
-
-function AssetFilterTagGroup<T extends string>({
-  label,
-  options,
-  selectedValues,
-  onSelectedValuesChange,
-}: AssetFilterTagGroupProps<T>) {
-  return (
-    <TagGroup
-      aria-label={label}
-      size="sm"
-      selectionMode="multiple"
-      selectedKeys={new Set(selectedValues)}
-      onSelectionChange={(keys) => {
-        const nextValues = keys === "all"
-          ? options.map((option) => option.value)
-          : Array.from(keys, (key) => String(key) as T);
-
-        onSelectedValuesChange(nextValues);
-      }}
-      className="gap-0"
-    >
-      <TagGroup.List className="flex flex-wrap gap-1">
-        {options.map(({ value, label: optionLabel, icon: Icon, dotHue }) => (
-          <Tag
-            key={value}
-            id={value}
-            className="h-5 min-h-0 cursor-default gap-1 rounded-full bg-zinc-100 px-2 py-0 text-[10.5px] font-medium text-zinc-500 transition-colors hover:bg-zinc-200/70 hover:text-zinc-700 data-[selected=true]:bg-blue-50 data-[selected=true]:font-semibold data-[selected=true]:text-blue-700 data-[selected=true]:shadow-[inset_0_0_0_1px_rgba(37,99,235,0.24)]"
-          >
-            {Icon ? <Icon size={11} /> : null}
-            {dotHue !== undefined ? (
-              <span
-                className="h-1.5 w-1.5 rounded-full"
-                style={{ background: `oklch(0.6 0.14 ${dotHue})` }}
-              />
-            ) : null}
-            {optionLabel}
-          </Tag>
-        ))}
-      </TagGroup.List>
-    </TagGroup>
-  );
-}
-
-function AssetFilterField({ label, children, wide = true }: { label: string; children: ReactNode; wide?: boolean }) {
-  return (
-    <div className={`flex gap-3 ${wide ? "items-start" : "flex-col"}`}>
-      <span className={`shrink-0 text-[10.5px] font-semibold tracking-wide text-zinc-400 ${wide ? "w-8 pt-1" : ""}`}>
-        {label}
-      </span>
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">{children}</div>
-    </div>
-  );
-}
-
-type AssetFilterPanelProps = {
-  filters: AssetFilterState;
-  onFiltersChange: React.Dispatch<React.SetStateAction<AssetFilterState>>;
-  tagOptions: SidebarTag[];
-  sourceOptions: string[];
-  resultCount: number;
-};
-
-function AssetFilterPanel({
-  filters,
-  onFiltersChange,
-  tagOptions,
-  sourceOptions,
-  resultCount,
-}: AssetFilterPanelProps) {
-  return (
-    <AccordionPanel id="asset-filter-panel" className="overflow-hidden border-b border-zinc-200 bg-[#fbfbfa]">
-      <AccordionBody className="space-y-3 px-6 py-3">
-        <div className="flex items-center gap-2.5">
-          <span className="text-[10.5px] font-semibold tracking-wide text-zinc-400">符合</span>
-          <FilterSegment
-            options={MATCH_FILTERS}
-            value={filters.match}
-            onChange={(match) => onFiltersChange((current) => ({ ...current, match }))}
-          />
-        </div>
-
-        <AssetFilterField label="类型">
-          <AssetFilterTagGroup
-            label="资产类型"
-            options={ASSET_TYPE_FILTERS}
-            selectedValues={filters.types}
-            onSelectedValuesChange={(types) => onFiltersChange((current) => ({ ...current, types }))}
-          />
-        </AssetFilterField>
-
-        <AssetFilterField label="标签">
-          <AssetFilterTagGroup
-            label="资产标签"
-            options={tagOptions.map((tag) => ({
-              value: tag.name,
-              label: tag.name,
-              dotHue: getTagHue(tag.name),
-            }))}
-            selectedValues={filters.tags}
-            onSelectedValuesChange={(tags) => onFiltersChange((current) => ({ ...current, tags }))}
-          />
-        </AssetFilterField>
-
-        <AssetFilterField label="来源">
-          <AssetFilterTagGroup
-            label="资产来源"
-            options={sourceOptions.map((source) => ({ value: source, label: source }))}
-            selectedValues={filters.sources}
-            onSelectedValuesChange={(sources) => onFiltersChange((current) => ({ ...current, sources }))}
-          />
-        </AssetFilterField>
-
-        <AssetFilterField label="时间">
-          <FilterSegment
-            options={TIME_FILTERS}
-            value={filters.time}
-            onChange={(time) => onFiltersChange((current) => ({ ...current, time }))}
-          />
-        </AssetFilterField>
-
-        <AssetFilterField label="状态">
-          <FilterSegment
-            options={STATUS_FILTERS}
-            value={filters.status}
-            onChange={(status) => onFiltersChange((current) => ({ ...current, status }))}
-          />
-        </AssetFilterField>
-
-        <AssetFilterField label="排序">
-          <FilterSegment
-            options={SORT_OPTIONS}
-            value={filters.sort}
-            onChange={(sort) => onFiltersChange((current) => ({ ...current, sort }))}
-          />
-        </AssetFilterField>
-
-        <div className="flex items-center border-t border-zinc-100 pt-2.5">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 min-h-0 px-1 text-[11.5px] text-zinc-500"
-            onPress={() => onFiltersChange((current) => getEmptyAssetFilters(current.match))}
-          >
-            重置全部
-          </Button>
-          <div className="ml-auto flex items-center gap-1.5">
-            <Button
-              size="sm"
-              variant="secondary"
-              className="h-7 min-h-0 rounded-lg border border-zinc-200 bg-white px-2.5 text-[11.5px] text-zinc-500"
-              onPress={() => {}}
-            >
-              <Plus size={13} />
-              存为视图
-            </Button>
-            <Button
-              size="sm"
-              variant="primary"
-              className="h-7 min-h-0 rounded-lg px-3 text-[11.5px] font-semibold"
-              onPress={() => {}}
-            >
-              应用筛选 · {resultCount} 项
-            </Button>
-          </div>
-        </div>
-      </AccordionBody>
-    </AccordionPanel>
-  );
-}
-
 type ActiveFilterChip = {
   key: string;
   label: string;
@@ -1331,6 +1059,7 @@ function AssetBoard({
   paginationErrorMessage,
   onToggleTerminal,
   onFetchNextPage,
+  onSaveView,
   dragEnabled = true,
   queryResetKey,
 }: {
@@ -1349,6 +1078,7 @@ function AssetBoard({
   paginationErrorMessage?: string;
   onToggleTerminal: () => void;
   onFetchNextPage: () => void;
+  onSaveView: (filters: AssetFilterState) => void;
   dragEnabled?: boolean;
   queryResetKey: string;
 }) {
@@ -1490,6 +1220,7 @@ function AssetBoard({
             tagOptions={tagOptions}
             sourceOptions={sourceOptions}
             resultCount={resultCount}
+            onSaveView={() => onSaveView(filters)}
           />
         </AccordionItem>
       </AccordionRoot>
@@ -2482,6 +2213,7 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   const filters = useAtomValue(assetFiltersAtom);
   const activeSidebarItem = useAtomValue(activeSidebarItemAtom);
   const { backgroundWindowDragEnabled } = useAppLayout();
+  const [viewModalFilters, setViewModalFilters] = useState<AssetFilterState | null>(null);
 
   const sidebarQuery = useQuery({
     ...trpc.assets.sidebarMeta.queryOptions(),
@@ -2553,6 +2285,23 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
     };
   }, [activeAsset, sidebarQuery.data?.vault]);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const getSaveViewInitialFilters = useCallback((currentFilters: AssetFilterState) => {
+    if (getActiveFilterCount(currentFilters) > 0) {
+      return currentFilters;
+    }
+
+    if (activeSidebarItem.kind === "tag") {
+      const tagName = sidebarQuery.data?.tags.find((tag) => tag.id === activeSidebarItem.id)?.name;
+      return tagName ? { ...currentFilters, tags: [tagName] } : currentFilters;
+    }
+
+    if (activeSidebarItem.kind === "view") {
+      const view = sidebarQuery.data?.views.find((item) => item.id === activeSidebarItem.id);
+      return view ? savedViewFiltersToAssetFilters(view.filters, sidebarQuery.data?.tags ?? [], view.sort) : currentFilters;
+    }
+
+    return currentFilters;
+  }, [activeSidebarItem, sidebarQuery.data?.tags, sidebarQuery.data?.views]);
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = listQuery;
   const fetchNextAssetPage = useCallback(() => {
     if (!hasNextPage || isFetchingNextPage) {
@@ -2583,12 +2332,13 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   const paginationErrorMessage = listQuery.isError && assetItems.length > 0 ? listQuery.error.message : undefined;
 
   return (
-    <ResizablePanelGroup
-      id="asset-main-layout"
-      direction="horizontal"
-      className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
-      resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
-    >
+    <>
+      <ResizablePanelGroup
+        id="asset-main-layout"
+        direction="horizontal"
+        className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
+        resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
+      >
       <ResizablePanel
         id="main"
         defaultSize={100}
@@ -2627,6 +2377,7 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
             isFetchingNextPage={isFetchingNextPage}
             paginationErrorMessage={paginationErrorMessage}
             onFetchNextPage={fetchNextAssetPage}
+            onSaveView={(currentFilters) => setViewModalFilters(getSaveViewInitialFilters(currentFilters))}
             queryResetKey={listQueryResetKey}
           />
         )}
@@ -2643,6 +2394,17 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
           </ResizablePanel>
         </>
       ) : null}
-    </ResizablePanelGroup>
+      </ResizablePanelGroup>
+      <ViewFormModal
+        isOpen={viewModalFilters !== null}
+        mode={{ kind: "create", initialFilters: viewModalFilters ?? filters }}
+        vaultId={sidebarQuery.data?.vault?.id}
+        tagOptions={sidebarQuery.data?.tags ?? []}
+        sourceOptions={sidebarQuery.data?.sourceOptions ?? []}
+        onOpenChange={(open) => {
+          if (!open) setViewModalFilters(null);
+        }}
+      />
+    </>
   );
 }

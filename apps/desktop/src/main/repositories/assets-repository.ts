@@ -25,6 +25,7 @@ export type AssetListTimeFilter = "any" | "today" | "week" | "m30";
 export type AssetListSourceType = "vault" | "external_file" | "url";
 export type AssetListTagMatch = "and" | "or";
 export type AssetListSort = "updated_desc" | "updated_asc" | "created_desc" | "created_asc";
+export type AssetListStatusFilter = "inbox" | "organized" | "draft" | "published" | "archived";
 export type AssetListCursor = {
   valueMs: number;
   id: string;
@@ -34,7 +35,7 @@ export type AssetListFilters = {
   vaultId: string;
   tagIds?: string[];
   tagMatch?: AssetListTagMatch;
-  statusFilter?: "inbox" | "organized" | "draft" | "published" | "archived";
+  statusFilter?: AssetListStatusFilter;
   untagged?: boolean;
   typeFilters?: AssetListTypeFilter[];
   timeFilter?: AssetListTimeFilter;
@@ -60,6 +61,41 @@ const EMPTY_ASSET_SUMMARY = {
   published: 0,
   archived: 0,
 };
+
+export type SavedViewFilters = {
+  match: AssetListTagMatch;
+  tagIds: string[];
+  types: AssetListTypeFilter[];
+  sources: AssetListSourceType[];
+  time: AssetListTimeFilter;
+  status: AssetListStatusFilter | "any";
+};
+
+const EMPTY_SAVED_VIEW_FILTERS: SavedViewFilters = {
+  match: "and",
+  tagIds: [],
+  types: [],
+  sources: [],
+  time: "any",
+  status: "any",
+};
+
+const ASSET_LIST_TYPE_FILTERS = new Set<AssetListTypeFilter>(["markdown", "image", "video", "link", "file"]);
+const ASSET_LIST_TIME_FILTERS = new Set<AssetListTimeFilter>(["any", "today", "week", "m30"]);
+const ASSET_LIST_SOURCE_TYPES = new Set<AssetListSourceType>(["vault", "external_file", "url"]);
+const ASSET_LIST_STATUS_FILTERS = new Set<AssetListStatusFilter>([
+  "inbox",
+  "organized",
+  "draft",
+  "published",
+  "archived",
+]);
+const ASSET_LIST_SORTS = new Set<AssetListSort>([
+  "updated_desc",
+  "updated_asc",
+  "created_desc",
+  "created_asc",
+]);
 
 type AssetJoinedRow = {
   asset: typeof schema.assets.$inferSelect;
@@ -396,19 +432,18 @@ export function getSavedViews(vaultId: string) {
     .orderBy(schema.savedViews.sortOrder, desc(schema.savedViews.updatedAt))
     .all()
     .map((view) => {
-      const conditions = parseSavedViewConditions(view.filterJson);
-      const tagIds = conditions
-        .filter((condition) => condition.startsWith("tag:"))
-        .map((condition) => condition.slice(4));
-      const count = tagIds.length > 0
-        ? getAssetCount({ vaultId, tagIds, tagMatch: "or" })
-        : 0;
+      const filters = parseSavedViewFilters(view.filterJson);
+      const sort = parseSavedViewSort(view.sortJson);
+      const conditions = getSavedViewConditions(filters);
+      const count = getAssetCount(savedViewFiltersToAssetListFilters(vaultId, filters, sort));
       return {
         id: view.id,
         name: view.name,
         icon: view.icon,
         filterJson: view.filterJson,
         sortJson: view.sortJson,
+        filters,
+        sort,
         count,
         conditions,
       };
@@ -416,16 +451,148 @@ export function getSavedViews(vaultId: string) {
 }
 
 export function parseSavedViewConditions(filterJson: string) {
-  try {
-    const value = JSON.parse(filterJson) as { conditions?: unknown };
-    if (!Array.isArray(value.conditions)) {
-      return [];
-    }
+  return getSavedViewConditions(parseSavedViewFilters(filterJson));
+}
 
-    return value.conditions.filter((condition): condition is string => typeof condition === "string");
+export function parseSavedViewFilters(filterJson: string): SavedViewFilters {
+  try {
+    const value = JSON.parse(filterJson) as {
+      match?: unknown;
+      conditions?: unknown;
+      tagIds?: unknown;
+      types?: unknown;
+      sources?: unknown;
+      time?: unknown;
+      status?: unknown;
+    };
+    const conditionValues = Array.isArray(value.conditions)
+      ? value.conditions.filter((condition): condition is string => typeof condition === "string")
+      : [];
+    const directTagIds = getStringArray(value.tagIds);
+    const directTypes = getStringArray(value.types).filter(isAssetListTypeFilter);
+    const directSources = getStringArray(value.sources).filter(isAssetListSourceType);
+
+    const tagIds = [
+      ...conditionValues
+        .filter((condition) => condition.startsWith("tag:"))
+        .map((condition) => condition.slice(4)),
+      ...directTagIds,
+    ];
+    const types = [
+      ...conditionValues
+        .filter((condition) => condition.startsWith("type:"))
+        .map((condition) => condition.slice(5))
+        .filter(isAssetListTypeFilter),
+      ...directTypes,
+    ];
+    const sources = [
+      ...conditionValues
+        .filter((condition) => condition.startsWith("source:"))
+        .map((condition) => condition.slice(7))
+        .filter(isAssetListSourceType),
+      ...directSources,
+    ];
+    const conditionTime = conditionValues
+      .find((condition) => condition.startsWith("time:"))
+      ?.slice(5);
+    const conditionStatus = conditionValues
+      .find((condition) => condition.startsWith("status:"))
+      ?.slice(7);
+    const timeValue = typeof value.time === "string" ? value.time : conditionTime;
+    const statusValue = typeof value.status === "string" ? value.status : conditionStatus;
+
+    return {
+      match: value.match === "or" ? "or" : "and",
+      tagIds: uniqueStrings(tagIds),
+      types: uniqueStrings(types),
+      sources: uniqueStrings(sources),
+      time: isAssetListTimeFilter(timeValue) ? timeValue : "any",
+      status: isAssetListStatusFilter(statusValue) ? statusValue : "any",
+    };
   } catch {
-    return [];
+    return { ...EMPTY_SAVED_VIEW_FILTERS };
   }
+}
+
+export function serializeSavedViewFilters(filters: SavedViewFilters) {
+  const conditions = getSavedViewConditions(filters);
+  return JSON.stringify({
+    match: filters.match,
+    conditions,
+    tagIds: filters.tagIds,
+    types: filters.types,
+    sources: filters.sources,
+    time: filters.time,
+    status: filters.status,
+  });
+}
+
+export function serializeSavedViewSort(sort: AssetListSort) {
+  return JSON.stringify({ sort });
+}
+
+export function parseSavedViewSort(sortJson: string): AssetListSort {
+  try {
+    const value = JSON.parse(sortJson) as { sort?: unknown };
+    return isAssetListSort(value.sort) ? value.sort : "updated_desc";
+  } catch {
+    return "updated_desc";
+  }
+}
+
+export function getSavedViewConditions(filters: SavedViewFilters) {
+  return [
+    ...filters.tagIds.map((tagId) => `tag:${tagId}`),
+    ...filters.types.map((type) => `type:${type}`),
+    ...filters.sources.map((source) => `source:${source}`),
+    filters.time !== "any" ? `time:${filters.time}` : undefined,
+    filters.status !== "any" ? `status:${filters.status}` : undefined,
+  ].filter((condition): condition is string => condition !== undefined);
+}
+
+export function savedViewFiltersToAssetListFilters(
+  vaultId: string,
+  filters: SavedViewFilters,
+  sort?: AssetListSort,
+): AssetListFilters {
+  return {
+    vaultId,
+    tagIds: filters.tagIds.length > 0 ? filters.tagIds : undefined,
+    tagMatch: filters.match,
+    typeFilters: filters.types.length > 0 ? filters.types : undefined,
+    sourceTypes: filters.sources.length > 0 ? filters.sources : undefined,
+    timeFilter: filters.time === "any" ? undefined : filters.time,
+    statusFilter: filters.status === "any" ? undefined : filters.status,
+    sort,
+  };
+}
+
+function getStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function uniqueStrings<T extends string>(values: readonly T[]) {
+  return Array.from(new Set(values));
+}
+
+function isAssetListTypeFilter(value: unknown): value is AssetListTypeFilter {
+  return typeof value === "string" && ASSET_LIST_TYPE_FILTERS.has(value as AssetListTypeFilter);
+}
+
+function isAssetListTimeFilter(value: unknown): value is AssetListTimeFilter {
+  return typeof value === "string" && ASSET_LIST_TIME_FILTERS.has(value as AssetListTimeFilter);
+}
+
+function isAssetListSourceType(value: unknown): value is AssetListSourceType {
+  return typeof value === "string" && ASSET_LIST_SOURCE_TYPES.has(value as AssetListSourceType);
+}
+
+function isAssetListStatusFilter(value: unknown): value is AssetListStatusFilter {
+  return typeof value === "string" && ASSET_LIST_STATUS_FILTERS.has(value as AssetListStatusFilter);
+}
+
+function isAssetListSort(value: unknown): value is AssetListSort {
+  return typeof value === "string" && ASSET_LIST_SORTS.has(value as AssetListSort);
 }
 
 export function getAssetSummary(vaultId?: string) {

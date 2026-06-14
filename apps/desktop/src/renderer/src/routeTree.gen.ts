@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
+import { Route as AppViewsRouteImport } from './routes/_app.views'
+import { Route as AppTagsRouteImport } from './routes/_app.tags'
 import { Route as AppPublishRouteImport } from './routes/_app.publish'
 import { Route as AppGraphRouteImport } from './routes/_app.graph'
 import { Route as AppAssetsAssetIdRouteImport } from './routes/_app.assets.$assetId'
@@ -28,6 +30,16 @@ const AppRoute = AppRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppViewsRoute = AppViewsRouteImport.update({
+  id: '/views',
+  path: '/views',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTagsRoute = AppTagsRouteImport.update({
+  id: '/tags',
+  path: '/tags',
   getParentRoute: () => AppRoute,
 } as any)
 const AppPublishRoute = AppPublishRouteImport.update({
@@ -51,12 +63,16 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/graph': typeof AppGraphRoute
   '/publish': typeof AppPublishRoute
+  '/tags': typeof AppTagsRoute
+  '/views': typeof AppViewsRoute
   '/assets/$assetId': typeof AppAssetsAssetIdRoute
 }
 export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/graph': typeof AppGraphRoute
   '/publish': typeof AppPublishRoute
+  '/tags': typeof AppTagsRoute
+  '/views': typeof AppViewsRoute
   '/': typeof AppIndexRoute
   '/assets/$assetId': typeof AppAssetsAssetIdRoute
 }
@@ -66,20 +82,38 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/_app/graph': typeof AppGraphRoute
   '/_app/publish': typeof AppPublishRoute
+  '/_app/tags': typeof AppTagsRoute
+  '/_app/views': typeof AppViewsRoute
   '/_app/': typeof AppIndexRoute
   '/_app/assets/$assetId': typeof AppAssetsAssetIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/settings' | '/graph' | '/publish' | '/assets/$assetId'
+  fullPaths:
+    | '/'
+    | '/settings'
+    | '/graph'
+    | '/publish'
+    | '/tags'
+    | '/views'
+    | '/assets/$assetId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/settings' | '/graph' | '/publish' | '/' | '/assets/$assetId'
+  to:
+    | '/settings'
+    | '/graph'
+    | '/publish'
+    | '/tags'
+    | '/views'
+    | '/'
+    | '/assets/$assetId'
   id:
     | '__root__'
     | '/_app'
     | '/settings'
     | '/_app/graph'
     | '/_app/publish'
+    | '/_app/tags'
+    | '/_app/views'
     | '/_app/'
     | '/_app/assets/$assetId'
   fileRoutesById: FileRoutesById
@@ -112,6 +146,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/views': {
+      id: '/_app/views'
+      path: '/views'
+      fullPath: '/views'
+      preLoaderRoute: typeof AppViewsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/tags': {
+      id: '/_app/tags'
+      path: '/tags'
+      fullPath: '/tags'
+      preLoaderRoute: typeof AppTagsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/publish': {
       id: '/_app/publish'
       path: '/publish'
@@ -139,6 +187,8 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppGraphRoute: typeof AppGraphRoute
   AppPublishRoute: typeof AppPublishRoute
+  AppTagsRoute: typeof AppTagsRoute
+  AppViewsRoute: typeof AppViewsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppAssetsAssetIdRoute: typeof AppAssetsAssetIdRoute
 }
@@ -146,6 +196,8 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppGraphRoute: AppGraphRoute,
   AppPublishRoute: AppPublishRoute,
+  AppTagsRoute: AppTagsRoute,
+  AppViewsRoute: AppViewsRoute,
   AppIndexRoute: AppIndexRoute,
   AppAssetsAssetIdRoute: AppAssetsAssetIdRoute,
 }

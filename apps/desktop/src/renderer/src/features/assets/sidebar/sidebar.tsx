@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
+import { useMutation } from "@tanstack/react-query";
 import { useAtom, useSetAtom } from "jotai";
 import { DragDropProvider, type DragEndEvent } from "@dnd-kit/react";
 import { isSortable, useSortable } from "@dnd-kit/react/sortable";
 import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
 import { arrayMove } from "@dnd-kit/helpers";
 import { AnimatePresence, motion } from "motion/react";
-import { Button } from "@heroui/react";
+import { Button, Dropdown } from "@heroui/react";
 import {
   Archive,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpToLine,
   ChevronDown,
   FolderKanban,
   Inbox,
   Megaphone,
+  MoreHorizontal,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -29,9 +34,16 @@ import {
   getDefaultAssetFilters,
 } from "@/store/asset-manager-atoms";
 import { getTagHue } from "@/features/assets/asset-model";
+import {
+  savedViewFiltersToAssetFilters,
+} from "@/features/assets/asset-filter-controls";
 import { SIDEBAR_ORDER_STORAGE_KEY } from "@/features/assets/storage";
 import type { AssetSummary, SidebarTag, SidebarView } from "@/features/assets/types";
+import { useConfirmModal } from "@/components/confirm-modal";
+import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { isMacWindow } from "@/lib/platform";
+import { toast } from "@/lib/toast";
+import { trpc } from "@/lib/trpc";
 
 type SidebarSectionId = "views" | "tags";
 
@@ -49,6 +61,10 @@ const SIDEBAR_PREVIEW_MAX_WIDTH = 320;
 const SIDEBAR_PREVIEW_VIEWPORT_RATIO = 0.84;
 export const SIDEBAR_PREVIEW_EXIT_PADDING = 32;
 const SIDEBAR_EDGE_HOTSPOT_WIDTH = 24;
+const SIDEBAR_ITEM_ACTION_BUTTON_CLASS_NAME =
+  "grid h-5 w-5 cursor-pointer place-items-center rounded-md text-zinc-400 transition-colors hover:bg-black/5 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25 disabled:pointer-events-none disabled:cursor-default disabled:opacity-35";
+const SIDEBAR_ITEM_MORE_TRIGGER_CLASS_NAME =
+  "grid h-5 w-5 cursor-pointer place-items-center rounded-md text-zinc-400 outline-none transition-colors hover:bg-black/5 hover:text-zinc-700 data-[focus-visible]:ring-2 data-[focus-visible]:ring-zinc-500/25";
 let lastWindowControlsVisible: boolean | null = null;
 
 export function syncWindowControlsWithSidebar(trafficLightsVisible: boolean) {
@@ -149,19 +165,6 @@ function readSidebarOrderFromStorage(defaults: SidebarOrderState) {
   }
 }
 
-function orderByIds<T>(
-  items: readonly T[],
-  orderedIds: readonly string[],
-  getId: (item: T) => string,
-) {
-  const byId = new Map(items.map((item) => [getId(item), item]));
-  return orderedIds.flatMap((id) => {
-    const item = byId.get(id);
-    return item ? [item] : [];
-  });
-}
-
-
 type SidebarSectionProps = {
   title: string;
   children: ReactNode;
@@ -227,20 +230,107 @@ type SidebarItemProps = {
 type SidebarItemActionButtonProps = {
   label: string;
   icon: ComponentType<{ size?: number; className?: string }>;
+  disabled?: boolean;
+  onClick: () => void;
 };
 
-function SidebarItemActionButton({ label, icon: Icon }: SidebarItemActionButtonProps) {
+function SidebarItemActionButton({ label, icon: Icon, disabled = false, onClick }: SidebarItemActionButtonProps) {
   return (
     <button
       type="button"
       aria-label={label}
       data-no-drag
-      className="grid h-5 w-5 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-black/5 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
-      onClick={(event) => event.stopPropagation()}
+      disabled={disabled}
+      className={SIDEBAR_ITEM_ACTION_BUTTON_CLASS_NAME}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <Icon size={13} />
     </button>
+  );
+}
+
+function SidebarItemMoreMenu({
+  itemName,
+  isFirst,
+  onMoveFirst,
+  onEdit,
+  onDelete,
+}: {
+  itemName: string;
+  isFirst: boolean;
+  onMoveFirst: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <Dropdown>
+      <Dropdown.Trigger
+        data-no-drag
+        className={SIDEBAR_ITEM_MORE_TRIGGER_CLASS_NAME}
+        aria-label={`${itemName} 更多操作`}
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <MoreHorizontal size={13} />
+      </Dropdown.Trigger>
+      <Dropdown.Popover
+        className="z-[120] overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-[0_14px_34px_rgba(20,18,16,0.14),0_2px_7px_rgba(20,18,16,0.07)]"
+        offset={6}
+        placement="bottom end"
+      >
+        <Dropdown.Menu
+          aria-label={`${itemName} 操作`}
+          className="min-w-32 p-0 outline-none"
+          disabledKeys={isFirst ? ["move-first"] : []}
+          onAction={(key) => {
+            const action = String(key);
+            if (action === "move-first") onMoveFirst();
+            if (action === "edit") onEdit();
+            if (action === "delete") onDelete();
+          }}
+        >
+          <Dropdown.Item
+            key="move-first"
+            id="move-first"
+            textValue="移到最前"
+            className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[disabled]:opacity-45 data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100"
+          >
+            <ArrowUpToLine size={13} className="text-zinc-500" />
+            <span>移到最前</span>
+          </Dropdown.Item>
+          <Dropdown.Item
+            key="edit"
+            id="edit"
+            textValue="编辑"
+            className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100"
+          >
+            <Pencil size={13} className="text-zinc-500" />
+            <span>编辑</span>
+          </Dropdown.Item>
+          <Dropdown.Item
+            key="delete"
+            id="delete"
+            textValue="删除"
+            className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-red-600 outline-none transition-colors data-[focused]:bg-red-50 data-[hovered]:bg-red-50"
+          >
+            <Trash2 size={13} />
+            <span>删除</span>
+          </Dropdown.Item>
+        </Dropdown.Menu>
+      </Dropdown.Popover>
+    </Dropdown>
+  );
+}
+
+function SidebarItemHoverActions({ children }: { children: ReactNode }) {
+  return (
+    <span className="pointer-events-none absolute right-0 flex translate-y-1 items-center gap-0.5 opacity-0 transition-all duration-150 ease-out group-hover/item:pointer-events-auto group-hover/item:translate-y-0 group-hover/item:opacity-100 group-focus-within/item:pointer-events-auto group-focus-within/item:translate-y-0 group-focus-within/item:opacity-100">
+      {children}
+    </span>
   );
 }
 
@@ -273,16 +363,14 @@ function SidebarItem({ label, meta, actions, icon: Icon, colorDot, active = fals
       {colorDot ? <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: colorDot }} /> : null}
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {meta !== undefined || actions !== undefined ? (
-        <span className="relative ml-auto flex h-5 min-w-[46px] shrink-0 items-center justify-end overflow-hidden">
+        <span className="relative ml-auto flex h-5 min-w-[70px] shrink-0 items-center justify-end overflow-hidden">
           {meta !== undefined ? (
             <span className={`${metaClass} transition-all duration-150 ease-out ${actions !== undefined ? "group-hover/item:-translate-y-1 group-hover/item:opacity-0 group-focus-within/item:-translate-y-1 group-focus-within/item:opacity-0" : ""}`}>
               {meta}
             </span>
           ) : null}
           {actions !== undefined ? (
-            <span className="pointer-events-none absolute right-0 flex translate-y-1 items-center gap-0.5 opacity-0 transition-all duration-150 ease-out group-hover/item:pointer-events-auto group-hover/item:translate-y-0 group-hover/item:opacity-100 group-focus-within/item:pointer-events-auto group-focus-within/item:translate-y-0 group-focus-within/item:opacity-100">
-              {actions}
-            </span>
+            <SidebarItemHoverActions>{actions}</SidebarItemHoverActions>
           ) : null}
         </span>
       ) : null}
@@ -368,18 +456,76 @@ export function FloatingSidebarDragOverlay() {
   );
 }
 
+function getTagViewImpact(tag: SidebarTag, views: readonly SidebarView[]) {
+  const updatedViews: SidebarView[] = [];
+  const deletedViews: SidebarView[] = [];
+
+  for (const view of views) {
+    if (!view.filters.tagIds.includes(tag.id)) {
+      continue;
+    }
+
+    const shouldDelete =
+      view.filters.tagIds.length === 1
+      && view.filters.types.length === 0
+      && view.filters.sources.length === 0
+      && view.filters.time === "any"
+      && view.filters.status === "any";
+
+    if (shouldDelete) {
+      deletedViews.push(view);
+    } else {
+      updatedViews.push(view);
+    }
+  }
+
+  return { updatedViews, deletedViews };
+}
+
+function TagDeleteDescription({
+  tag,
+  updatedViews,
+  deletedViews,
+}: {
+  tag: SidebarTag;
+  updatedViews: SidebarView[];
+  deletedViews: SidebarView[];
+}) {
+  return (
+    <div className="space-y-2">
+      <p>将删除 Tag「{tag.name}」，并从 {tag.count} 个资产上移除这个 Tag 关联。</p>
+      {updatedViews.length > 0 ? (
+        <p>这些 Views 会移除该 Tag 筛选后保留：{updatedViews.map((view) => `「${view.name}」`).join("、")}</p>
+      ) : null}
+      {deletedViews.length > 0 ? (
+        <p>这些 Views 只包含该 Tag 筛选，会一起删除：{deletedViews.map((view) => `「${view.name}」`).join("、")}</p>
+      ) : null}
+    </div>
+  );
+}
+
 export function Sidebar({
   tagItems,
   viewItems,
+  vaultId,
   summary,
   onToggleSidebar,
+  onCreateTag,
+  onEditTag,
+  onCreateView,
+  onEditView,
   toggleMode = "collapse",
   floating = false,
 }: {
   tagItems: SidebarTag[];
   viewItems: SidebarView[];
+  vaultId?: string;
   summary: AssetSummary & { untagged: number };
   onToggleSidebar: () => void;
+  onCreateTag: () => void;
+  onEditTag: (tag: SidebarTag) => void;
+  onCreateView: () => void;
+  onEditView: (view: SidebarView) => void;
   toggleMode?: "collapse" | "expand";
   floating?: boolean;
 }) {
@@ -388,6 +534,16 @@ export function Sidebar({
   const navigate = useNavigate();
   const { location } = useRouterState();
   const isNonHomeRoute = location.pathname !== "/";
+  const confirm = useConfirmModal();
+  const invalidateVaultState = useInvalidateVaultState();
+  const deleteTag = useMutation(trpc.assets.deleteTag.mutationOptions());
+  const deleteSavedView = useMutation(trpc.assets.deleteSavedView.mutationOptions());
+  const reorderTags = useMutation(
+    trpc.assets.reorderTags.mutationOptions({ onSuccess: invalidateVaultState }),
+  );
+  const reorderSavedViews = useMutation(
+    trpc.assets.reorderSavedViews.mutationOptions({ onSuccess: invalidateVaultState }),
+  );
 
   const handleMgmtItemClick = (item: "all" | "inbox") => {
     setActiveSidebarItem({ kind: "mgmt", id: item });
@@ -397,10 +553,12 @@ export function Sidebar({
 
   const handleViewClick = (viewId: string) => {
     const view = viewItems.find((v) => v.id === viewId);
-    const tagId = view?.conditions.find((c) => c.startsWith("tag:"))?.slice(4);
-    const tagName = tagId ? tagItems.find((t) => t.id === tagId)?.name : undefined;
     setActiveSidebarItem({ kind: "view", id: viewId });
-    setFilters((prev) => ({ ...prev, tags: tagName ? [tagName] : [] }));
+    if (view) {
+      setFilters(savedViewFiltersToAssetFilters(view.filters, tagItems, view.sort));
+    } else {
+      setFilters(getDefaultAssetFilters());
+    }
     if (isNonHomeRoute) void navigate({ to: "/" });
   };
 
@@ -431,17 +589,40 @@ export function Sidebar({
     }
   }, [sidebarOrder]);
 
-  // Use viewItems directly, respecting stored order but never hiding items not in the stored order
-  const orderedViews = useMemo(() => {
-    const ordered = orderByIds(viewItems, sidebarOrder.views, (v) => v.id);
-    const unordered = viewItems.filter((v) => !sidebarOrder.views.includes(v.id));
-    return [...ordered, ...unordered].slice(0, 8);
-  }, [sidebarOrder.views, viewItems]);
-  const orderedTags = useMemo(() => {
-    const ordered = orderByIds(tagItems, sidebarOrder.tags, (t) => t.id);
-    const unordered = tagItems.filter((t) => !sidebarOrder.tags.includes(t.id));
-    return [...ordered, ...unordered].slice(0, 10);
-  }, [sidebarOrder.tags, tagItems]);
+  const orderedViews = useMemo(() => viewItems.slice(0, 8), [viewItems]);
+  const orderedTags = useMemo(() => tagItems.slice(0, 10), [tagItems]);
+
+  const handleDeleteView = (view: SidebarView) => {
+    void confirm({
+      title: `删除 View「${view.name}」？`,
+      description: "删除后不会影响资产或 Tags，只会移除这个保存的视图。",
+      confirmLabel: "删除",
+      cancelLabel: "取消",
+      variant: "danger",
+      onConfirm: async () => {
+        await deleteSavedView.mutateAsync({ id: view.id });
+        await invalidateVaultState();
+        toast.success("View 已删除");
+      },
+    });
+  };
+
+  const handleDeleteTag = (tag: SidebarTag) => {
+    const { updatedViews, deletedViews } = getTagViewImpact(tag, viewItems);
+
+    void confirm({
+      title: `删除 Tag「${tag.name}」？`,
+      description: <TagDeleteDescription tag={tag} updatedViews={updatedViews} deletedViews={deletedViews} />,
+      confirmLabel: "删除",
+      cancelLabel: "取消",
+      variant: "danger",
+      onConfirm: async () => {
+        await deleteTag.mutateAsync({ id: tag.id });
+        await invalidateVaultState();
+        toast.success("Tag 已删除");
+      },
+    });
+  };
 
   const handleSidebarDragEnd = (event: DragEndEvent) => {
     if (event.canceled) {
@@ -466,10 +647,30 @@ export function Sidebar({
       return;
     }
 
-    setSidebarOrder((current) => ({
-      ...current,
-      [sectionId]: arrayMove([...current[sectionId]], source.initialIndex, source.index),
-    }));
+    if (sectionId === "views") {
+      const nextIds = arrayMove(orderedViews.map((view) => view.id), source.initialIndex, source.index);
+      reorderSavedViews.mutate({ vaultId, orderedIds: nextIds });
+      return;
+    }
+
+    const nextIds = arrayMove(orderedTags.map((tag) => tag.id), source.initialIndex, source.index);
+    reorderTags.mutate({ vaultId, orderedIds: nextIds });
+  };
+
+  const moveSidebarView = (fromIndex: number, toIndex: number) => {
+    const currentIds = orderedViews.map((view) => view.id);
+    const nextIndex = Math.max(0, Math.min(currentIds.length - 1, toIndex));
+    if (fromIndex === nextIndex) return;
+
+    reorderSavedViews.mutate({ vaultId, orderedIds: arrayMove(currentIds, fromIndex, nextIndex) });
+  };
+
+  const moveSidebarTag = (fromIndex: number, toIndex: number) => {
+    const currentIds = orderedTags.map((tag) => tag.id);
+    const nextIndex = Math.max(0, Math.min(currentIds.length - 1, toIndex));
+    if (fromIndex === nextIndex) return;
+
+    reorderTags.mutate({ vaultId, orderedIds: arrayMove(currentIds, fromIndex, nextIndex) });
   };
 
   const renderSortableSection = (
@@ -478,7 +679,31 @@ export function Sidebar({
   ) => {
     if (sectionId === "views") {
       return (
-        <SidebarSection title="Views" dragHandleRef={dragHandleRef}>
+        <SidebarSection
+          title="Views"
+          dragHandleRef={dragHandleRef}
+          action={
+            <>
+              <button
+                type="button"
+                aria-label="新建 View"
+                data-no-drag
+                className="grid h-5 w-5 place-items-center rounded text-zinc-400 hover:bg-black/5 hover:text-zinc-700"
+                onClick={onCreateView}
+              >
+                <Plus size={11} />
+              </button>
+              <button
+                type="button"
+                data-no-drag
+                className="rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5 hover:text-zinc-700"
+                onClick={() => void navigate({ to: "/views" })}
+              >
+                管理
+              </button>
+            </>
+          }
+        >
           <div className="space-y-0.5">
             {orderedViews.map((view, index) => (
               <SortableSidebarItem key={view.id} sectionId="views" itemId={view.id} index={index}>
@@ -490,8 +715,25 @@ export function Sidebar({
                   onClick={() => handleViewClick(view.id)}
                   actions={
                     <>
-                      <SidebarItemActionButton label={`编辑 ${view.name}`} icon={Pencil} />
-                      <SidebarItemActionButton label={`删除 ${view.name}`} icon={Trash2} />
+                      <SidebarItemActionButton
+                        label={`${view.name} 往前移一格`}
+                        icon={ArrowUp}
+                        disabled={index === 0}
+                        onClick={() => moveSidebarView(index, index - 1)}
+                      />
+                      <SidebarItemActionButton
+                        label={`${view.name} 往后移一格`}
+                        icon={ArrowDown}
+                        disabled={index === orderedViews.length - 1}
+                        onClick={() => moveSidebarView(index, index + 1)}
+                      />
+                      <SidebarItemMoreMenu
+                        itemName={view.name}
+                        isFirst={index === 0}
+                        onMoveFirst={() => moveSidebarView(index, 0)}
+                        onEdit={() => onEditView(view)}
+                        onDelete={() => handleDeleteView(view)}
+                      />
                     </>
                   }
                 />
@@ -507,13 +749,25 @@ export function Sidebar({
         title="Tags"
         dragHandleRef={dragHandleRef}
         action={
-          <button
-            type="button"
-            data-no-drag
-            className="rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5"
-          >
-            + 管理
-          </button>
+          <>
+            <button
+              type="button"
+              aria-label="新建 Tag"
+              data-no-drag
+              className="grid h-5 w-5 place-items-center rounded text-zinc-400 hover:bg-black/5 hover:text-zinc-700"
+              onClick={onCreateTag}
+            >
+              <Plus size={11} />
+            </button>
+            <button
+              type="button"
+              data-no-drag
+              className="rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5 hover:text-zinc-700"
+              onClick={() => void navigate({ to: "/tags" })}
+            >
+              管理
+            </button>
+          </>
         }
       >
         <div className="space-y-0.5">
@@ -527,8 +781,25 @@ export function Sidebar({
                 onClick={() => handleTagClick(tag.id)}
                 actions={
                   <>
-                    <SidebarItemActionButton label={`编辑 ${tag.name}`} icon={Pencil} />
-                    <SidebarItemActionButton label={`删除 ${tag.name}`} icon={Trash2} />
+                    <SidebarItemActionButton
+                      label={`${tag.name} 往前移一格`}
+                      icon={ArrowUp}
+                      disabled={index === 0}
+                      onClick={() => moveSidebarTag(index, index - 1)}
+                    />
+                    <SidebarItemActionButton
+                      label={`${tag.name} 往后移一格`}
+                      icon={ArrowDown}
+                      disabled={index === orderedTags.length - 1}
+                      onClick={() => moveSidebarTag(index, index + 1)}
+                    />
+                    <SidebarItemMoreMenu
+                      itemName={tag.name}
+                      isFirst={index === 0}
+                      onMoveFirst={() => moveSidebarTag(index, 0)}
+                      onEdit={() => onEditTag(tag)}
+                      onDelete={() => handleDeleteTag(tag)}
+                    />
                   </>
                 }
               />

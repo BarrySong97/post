@@ -14,7 +14,8 @@ import {
   SIDEBAR_COLLAPSED_STORAGE_KEY,
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from "@/features/assets/storage";
-import type { AssetSummary } from "@/features/assets/types";
+import type { AssetSummary, SidebarTag, SidebarView } from "@/features/assets/types";
+import { TagFormModal, ViewFormModal } from "@/features/assets/asset-management-modals";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -66,6 +67,14 @@ const EMPTY_SUMMARY: AssetSummary & { untagged: number } = {
   archived: 0,
 };
 
+type SidebarTagModalState =
+  | { kind: "create" }
+  | { kind: "edit"; tag: SidebarTag };
+
+type SidebarViewModalState =
+  | { kind: "create" }
+  | { kind: "edit"; view: SidebarView };
+
 /**
  * The shared application shell: a persistent sidebar that switches the route
  * rendered in the right-hand main panel. The sidebar (and all of its
@@ -89,6 +98,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
     () => localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true",
   );
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false);
+  const [tagModalState, setTagModalState] = useState<SidebarTagModalState | null>(null);
+  const [viewModalState, setViewModalState] = useState<SidebarViewModalState | null>(null);
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
   const sidebarCollapseIntentRef = useRef<"collapsed" | "expanded" | null>(null);
   const sidebarInitializingRef = useRef(true);
@@ -158,114 +169,172 @@ export function AppLayout({ children }: { children: ReactNode }) {
     () => ({ backgroundWindowDragEnabled }),
     [backgroundWindowDragEnabled],
   );
+  const sidebarTags = useMemo(() => sidebarQuery.data?.tags ?? [], [sidebarQuery.data?.tags]);
+  const sidebarViews = useMemo(() => sidebarQuery.data?.views ?? [], [sidebarQuery.data?.views]);
+  const sourceOptions = useMemo(
+    () => sidebarQuery.data?.sourceOptions ?? [],
+    [sidebarQuery.data?.sourceOptions],
+  );
+  const vaultId = sidebarQuery.data?.vault?.id;
+
+  const handleCreateTag = () => {
+    setSidebarPreviewOpen(false);
+    setTagModalState({ kind: "create" });
+  };
+
+  const handleEditTag = (tag: SidebarTag) => {
+    setSidebarPreviewOpen(false);
+    setTagModalState({ kind: "edit", tag });
+  };
+
+  const handleCreateView = () => {
+    setSidebarPreviewOpen(false);
+    setViewModalState({ kind: "create" });
+  };
+
+  const handleEditView = (view: SidebarView) => {
+    setSidebarPreviewOpen(false);
+    setViewModalState({ kind: "edit", view });
+  };
 
   return (
     <AppLayoutContext.Provider value={contextValue}>
-      <div className="relative h-full min-h-0 overflow-hidden text-zinc-950">
-        {sidebarCollapsed && !sidebarPreviewOpen ? (
-          <div
-            aria-hidden="true"
-            className="window-drag pointer-events-none absolute left-6 right-48 top-0 z-[74] h-14"
-          />
-        ) : null}
-        {sidebarCollapsed ? <SidebarEdgeHotspot onOpen={() => setSidebarPreviewOpen(true)} /> : null}
-        {sidebarCollapsed ? (
-          <motion.div
-            key="sidebar-preview"
-            className="absolute inset-y-0 left-0 z-[85] w-[min(320px,84vw)]"
-            initial={false}
-            animate={{ x: sidebarPreviewOpen ? 0 : "-100%" }}
-            transition={{ x: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
-            style={{
-              pointerEvents: sidebarPreviewOpen ? "auto" : "none",
-              transformOrigin: "left center",
-            }}
-            onMouseEnter={() => setSidebarPreviewOpen(true)}
-          >
-            <Sidebar
-              tagItems={sidebarQuery.data?.tags ?? []}
-              viewItems={sidebarQuery.data?.views ?? []}
-              onToggleSidebar={handleToggleSidebar}
-              toggleMode="expand"
-              floating
-              summary={sidebarSummary}
+      <>
+        <div className="relative h-full min-h-0 overflow-hidden text-zinc-950">
+          {sidebarCollapsed && !sidebarPreviewOpen ? (
+            <div
+              aria-hidden="true"
+              className="window-drag pointer-events-none absolute left-6 right-48 top-0 z-[74] h-14"
             />
-          </motion.div>
-        ) : null}
-        {sidebarCollapsed && sidebarPreviewOpen ? <FloatingSidebarDragOverlay /> : null}
-
-        <ResizablePanelGroup
-          id="app-layout"
-          direction="horizontal"
-          className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
-          resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
-          defaultLayout={
-            sidebarCollapsed
-              ? { sidebar: 0, main: 100 }
-              : { sidebar: sidebarInitPct, main: 100 - sidebarInitPct }
-          }
-        >
-          <ResizablePanel
-            panelRef={sidebarPanelRef}
-            id="sidebar"
-            defaultSize={20}
-            minSize={16}
-            maxSize={28}
-            collapsible
-            collapsedSize={0}
-            onResize={(size) => {
-              const nextCollapsed = size.asPercentage <= 0.01;
-
-              if (!nextCollapsed) {
-                localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(size.asPercentage));
-              }
-
-              if (sidebarCollapseIntentRef.current === "collapsed") {
-                setSidebarCollapsed(true);
-                if (nextCollapsed) sidebarCollapseIntentRef.current = null;
-                return;
-              }
-
-              if (sidebarCollapseIntentRef.current === "expanded") {
-                setSidebarCollapsed(false);
-                if (!nextCollapsed) sidebarCollapseIntentRef.current = null;
-                return;
-              }
-
-              // Panel can report 0% once on mount before layout settles;
-              // don't treat that as a user collapse.
-              if (sidebarInitializingRef.current) {
-                if (!nextCollapsed) sidebarInitializingRef.current = false;
-                else return;
-              }
-
-              setSidebarCollapsed(nextCollapsed);
-              if (!nextCollapsed) setSidebarPreviewOpen(false);
-            }}
-            className={`overflow-hidden transition-opacity duration-150 ${
-              sidebarCollapsed ? "pointer-events-none opacity-0" : "opacity-100"
-            }`}
-          >
-            {!sidebarCollapsed ? (
+          ) : null}
+          {sidebarCollapsed ? <SidebarEdgeHotspot onOpen={() => setSidebarPreviewOpen(true)} /> : null}
+          {sidebarCollapsed ? (
+            <motion.div
+              key="sidebar-preview"
+              className="absolute inset-y-0 left-0 z-[85] w-[min(320px,84vw)]"
+              initial={false}
+              animate={{ x: sidebarPreviewOpen ? 0 : "-100%" }}
+              transition={{ x: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
+              style={{
+                pointerEvents: sidebarPreviewOpen ? "auto" : "none",
+                transformOrigin: "left center",
+              }}
+              onMouseEnter={() => setSidebarPreviewOpen(true)}
+            >
               <Sidebar
-                tagItems={sidebarQuery.data?.tags ?? []}
-                viewItems={sidebarQuery.data?.views ?? []}
+                tagItems={sidebarTags}
+                viewItems={sidebarViews}
+                vaultId={vaultId}
                 onToggleSidebar={handleToggleSidebar}
+                onCreateTag={handleCreateTag}
+                onEditTag={handleEditTag}
+                onCreateView={handleCreateView}
+                onEditView={handleEditView}
+                toggleMode="expand"
+                floating
                 summary={sidebarSummary}
               />
-            ) : null}
-          </ResizablePanel>
+            </motion.div>
+          ) : null}
+          {sidebarCollapsed && sidebarPreviewOpen ? <FloatingSidebarDragOverlay /> : null}
 
-          <ResizableHandle
-            withHandle
-            className={sidebarCollapsed ? "opacity-0 pointer-events-none" : ""}
-          />
+          <ResizablePanelGroup
+            id="app-layout"
+            direction="horizontal"
+            className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
+            resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
+            defaultLayout={
+              sidebarCollapsed
+                ? { sidebar: 0, main: 100 }
+                : { sidebar: sidebarInitPct, main: 100 - sidebarInitPct }
+            }
+          >
+            <ResizablePanel
+              panelRef={sidebarPanelRef}
+              id="sidebar"
+              defaultSize={20}
+              minSize={16}
+              maxSize={28}
+              collapsible
+              collapsedSize={0}
+              onResize={(size) => {
+                const nextCollapsed = size.asPercentage <= 0.01;
 
-          <ResizablePanel id="main" defaultSize={100 - sidebarInitPct} minSize={42} className="relative z-[60] min-w-0">
-            {children}
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </div>
+                if (!nextCollapsed) {
+                  localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(size.asPercentage));
+                }
+
+                if (sidebarCollapseIntentRef.current === "collapsed") {
+                  setSidebarCollapsed(true);
+                  if (nextCollapsed) sidebarCollapseIntentRef.current = null;
+                  return;
+                }
+
+                if (sidebarCollapseIntentRef.current === "expanded") {
+                  setSidebarCollapsed(false);
+                  if (!nextCollapsed) sidebarCollapseIntentRef.current = null;
+                  return;
+                }
+
+                // Panel can report 0% once on mount before layout settles;
+                // don't treat that as a user collapse.
+                if (sidebarInitializingRef.current) {
+                  if (!nextCollapsed) sidebarInitializingRef.current = false;
+                  else return;
+                }
+
+                setSidebarCollapsed(nextCollapsed);
+                if (!nextCollapsed) setSidebarPreviewOpen(false);
+              }}
+              className={`overflow-hidden transition-opacity duration-150 ${
+                sidebarCollapsed ? "pointer-events-none opacity-0" : "opacity-100"
+              }`}
+            >
+              {!sidebarCollapsed ? (
+                <Sidebar
+                  tagItems={sidebarTags}
+                  viewItems={sidebarViews}
+                  vaultId={vaultId}
+                  onToggleSidebar={handleToggleSidebar}
+                  onCreateTag={handleCreateTag}
+                  onEditTag={handleEditTag}
+                  onCreateView={handleCreateView}
+                  onEditView={handleEditView}
+                  summary={sidebarSummary}
+                />
+              ) : null}
+            </ResizablePanel>
+
+            <ResizableHandle
+              withHandle
+              className={sidebarCollapsed ? "opacity-0 pointer-events-none" : ""}
+            />
+
+            <ResizablePanel id="main" defaultSize={100 - sidebarInitPct} minSize={42} className="relative z-[60] min-w-0">
+              {children}
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
+
+        <TagFormModal
+          isOpen={tagModalState !== null}
+          mode={tagModalState ?? { kind: "create" }}
+          vaultId={vaultId}
+          onOpenChange={(isOpen) => {
+            if (!isOpen) setTagModalState(null);
+          }}
+        />
+        <ViewFormModal
+          isOpen={viewModalState !== null}
+          mode={viewModalState ?? { kind: "create" }}
+          vaultId={vaultId}
+          tagOptions={sidebarTags}
+          sourceOptions={sourceOptions}
+          onOpenChange={(isOpen) => {
+            if (!isOpen) setViewModalState(null);
+          }}
+        />
+      </>
     </AppLayoutContext.Provider>
   );
 }
