@@ -454,9 +454,9 @@ The Rust parser maintains a link cache for navigation and graph display. The fir
 [[A|Alias]]
 ![[image.png]]
 ![[video.mp4]]
-[text](A.md)
-[text](docs/report.pdf)
-![alt](images/a.png)
+markdown link to A.md
+markdown link to docs/report.pdf
+markdown image to images/a.png
 https://example.com
 ```
 

@@ -1,3 +1,9 @@
+/**
+ * @purpose Prepare the ffmpeg binary that electron-builder packages with the desktop app.
+ * @role    Packaging helper for pnpm ffmpeg:prepare, pnpm package, and pnpm dist.
+ * @deps    Node fs/path/module/url APIs, @ffmpeg-installer/ffmpeg, optional POST_FFMPEG_PATH.
+ * @gotcha  Writes into apps/desktop/resources/ffmpeg; preserve executable mode on non-Windows platforms.
+ */
 import { access, chmod, copyFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";

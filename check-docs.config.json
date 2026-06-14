@@ -1,0 +1,18 @@
+{
+  "sourceRoots": ["scripts"],
+  "nonModuleDirs": [
+    "scripts",
+    "test",
+    "tests",
+    "__tests__",
+    "spec",
+    "bin",
+    "config",
+    "public",
+    "assets",
+    "types",
+    "typings",
+    "migrations",
+    "hooks"
+  ]
+}
