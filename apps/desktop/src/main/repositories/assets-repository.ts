@@ -207,6 +207,7 @@ export function attachRelations(rows: AssetJoinedRow[]) {
     sizeBytes: row.file.sizeBytes,
     mtimeMs: row.file.mtimeMs,
     ctimeMs: row.file.ctimeMs,
+    fileExists: row.file.fileExists,
     quickFingerprint: row.file.quickFingerprint,
     vaultRootPath: row.vault.rootPath,
     vaultName: row.vault.name,

@@ -1,6 +1,8 @@
 node_modules
+.pnpm-store/
 target/
 .turbo
+.electron-dev
 .superpowers
 dist
 out

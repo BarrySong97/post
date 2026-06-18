@@ -1,4 +1,16 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "ignorePatterns": ["apps/desktop/src/renderer/src/routeTree.gen.ts"]
+  "ignorePatterns": [
+    "apps/desktop/src/renderer/src/routeTree.gen.ts",
+    "apps/desktop/src/renderer/index.html",
+    "apps/desktop/tsconfig.json",
+    "packages/config/tsconfig.base.json",
+    "packages/db/drizzle/meta/0000_snapshot.json",
+    "packages/db/drizzle/meta/0001_snapshot.json",
+    "packages/db/drizzle/meta/0002_snapshot.json",
+    "packages/db/drizzle/meta/0004_snapshot.json",
+    "packages/db/package.json",
+    "packages/db/tsconfig.json",
+    "packages/ui/tsconfig.json"
+  ]
 }

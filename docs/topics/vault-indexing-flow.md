@@ -23,6 +23,7 @@ Vault indexing crosses Electron main services, the Rust indexer, SQLite schema, 
 
 - `vaults` tracks roots and sync status.
 - `assets` and `asset_files` model normalized content and concrete paths.
+- `asset_galleries` and `asset_gallery_items` model user-managed folded image groups. The indexer does not write them.
 - `asset_links` and `markdown_cache` model markdown-derived graph data.
 - `image_cache` stores generated thumbnail metadata.
 - `sync_runs` and `sync_events` record indexing activity.
@@ -31,4 +32,6 @@ Vault indexing crosses Electron main services, the Rust indexer, SQLite schema, 
 
 - Path identity should be vault-relative at the database boundary.
 - Missing, restored, moved, and conflict states need to remain visible to the sync event layer.
+- Gallery membership is user-managed relationship state. The Rust indexer can mark an asset missing or restored, but it should not create or remove gallery rows.
+- Missing files do not remove gallery membership; gallery views show missing placeholders until the asset is permanently deleted. Permanent asset deletion or cleanup workflows may remove membership, reassign covers, or soft-delete empty galleries.
 - If the Rust indexer changes an emitted event or written field, update Electron consumers and this topic in the same change.

@@ -1,0 +1,26 @@
+{
+  "name": "@post/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./assets": "./src/assets/index.ts",
+    "./galleries": "./src/galleries/index.ts",
+    "./saved-views": "./src/saved-views/index.ts",
+    "./tags": "./src/tags/index.ts",
+    "./vaults": "./src/vaults/index.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@post/db": "workspace:*",
+    "drizzle-orm": "catalog:"
+  },
+  "devDependencies": {
+    "@post/config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

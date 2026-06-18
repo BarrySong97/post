@@ -13,10 +13,10 @@ React component
   -> window.api.trpcRequest / trpcSubscribe
   -> apps/desktop/src/preload/index.ts
   -> Electron IPC channel
-  -> apps/desktop/src/main/index.ts
+  -> apps/desktop/src/main/presentation/trpc/ipc-adapter.ts
   -> appRouter.createCaller()
   -> router procedure
-  -> repository/service
+  -> use case/repository/service
   -> SQLite via Drizzle
 ```
 
@@ -31,6 +31,7 @@ React component
 - Subscriptions use `ipcMain.on("trpc:subscribe", ...)` and return events over `trpc:subscription:event`.
 - The renderer link converts IPC promises and subscription events into tRPC client observables.
 - The preload bridge is the only renderer-visible native boundary.
+- Reusable renderer/main input schemas live in `apps/desktop/src/shared/contracts/`; those modules must stay browser-safe.
 
 ## Notes
 

@@ -20,6 +20,7 @@ export type Asset = {
   body?: string;
   source: string;
   sourceType: "vault" | "external_file" | "url";
+  fileExists: boolean;
   time: string;
   timestampMs: number;
   createdTimestampMs: number;
@@ -46,6 +47,27 @@ export type Asset = {
 };
 
 export type IndexedAsset = RouterOutputs["assets"]["list"]["items"][number];
+export type IndexedBoardItem = RouterOutputs["assetBoard"]["list"]["items"][number];
+export type IndexedGallery = Extract<IndexedBoardItem, { itemType: "gallery" }>["gallery"];
+export type GalleryDetail = RouterOutputs["galleries"]["byId"];
+export type GalleryMember = GalleryDetail["members"][number];
+export type GalleryCard = {
+  id: string;
+  vaultId: string;
+  title: string;
+  description: string | null;
+  status: AssetStatus;
+  privacy: AssetPrivacy;
+  coverAssetId: string | null;
+  memberCount: number;
+  missingCount: number;
+  timestampMs: number;
+  createdTimestampMs: number;
+  cover: Asset | null;
+};
+export type AssetBoardCard =
+  | { itemType: "asset"; id: string; asset: Asset }
+  | { itemType: "gallery"; id: string; gallery: GalleryCard };
 export type SidebarTag = RouterOutputs["assets"]["sidebarMeta"]["tags"][number];
 export type SidebarView = RouterOutputs["assets"]["sidebarMeta"]["views"][number];
 export type AssetSummary = RouterOutputs["assets"]["sidebarMeta"]["summary"];

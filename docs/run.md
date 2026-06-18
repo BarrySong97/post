@@ -20,9 +20,16 @@ pnpm install
 ```bash
 pnpm dev
 pnpm dev:debug
+pnpm post-cli --env dev ledger-info --json
 ```
 
 There is no browser URL and no HTTP API server. The app runs through Electron, with renderer calls crossing the preload bridge into main-process tRPC procedures.
+
+On macOS, `pnpm -F desktop dev` prepares a local `apps/desktop/.electron-dev/Post.app` wrapper so Dock, menu, and process names show `Post` instead of the stock Electron bundle name.
+
+The renderer dev server uses a strict local port. If `pnpm dev` reports that port `42873` is already in use, an existing dev app may already be running; reuse or stop that process before starting another instance. `pnpm dev` rebuilds Electron native modules such as `better-sqlite3`, while `pnpm test` may rebuild the same dependency for the Node ABI.
+
+`pnpm post-cli` runs the CLI through Electron Node mode so it can use the Electron ABI build of `better-sqlite3`. By default it targets the packaged app database; use `--env dev` for the development database and `--db <path>` for fixture databases or sandboxed AI workflows.
 
 ## Build And Type-Check
 
@@ -40,7 +47,7 @@ pnpm format
 pnpm format:check
 ```
 
-Oxlint checks JavaScript and TypeScript under `apps/`, `packages/`, and `scripts/`. Oxfmt formats supported source and config files in those roots. Generated `apps/desktop/src/renderer/src/routeTree.gen.ts` is ignored.
+Oxlint checks JavaScript and TypeScript under `apps/`, `packages/`, and `scripts/`. Oxfmt formats supported source and config files in those roots. Generated files and known legacy formatting outliers are listed in `.oxfmtrc.json`.
 
 ## Database
 

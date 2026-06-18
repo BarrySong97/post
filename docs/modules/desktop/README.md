@@ -5,19 +5,22 @@
 `apps/desktop` owns the Electron application: main-process services, preload bridge, React renderer, app shell, asset manager, terminal integration, and packaging config.
 
 It does not own shared database schema definitions; those live in [../db](../db/README.md). It consumes the Rust indexer from [../post-indexer](../post-indexer/README.md).
+Reusable organization workflows shared with the CLI live in [../domain](../domain/README.md).
 
 ## File Map
 
-- `apps/desktop/src/main/` - Electron app lifecycle, protocol registration, tRPC IPC handler, repositories, services, watchers, terminal, and background tasks.
+- `apps/desktop/src/main/` - Electron app lifecycle, protocol registration, tRPC IPC handler, use cases, repositories, services, watchers, terminal, gallery workflows, and background tasks.
+- `apps/desktop/src/shared/contracts/` - renderer/main shared Zod input schemas, validation constants, and transport contract types.
 - `apps/desktop/src/preload/` - context bridge exposing the narrow `window.api` surface to the renderer.
 - `apps/desktop/src/renderer/src/` - React app, thin routes, page modules, shared components, renderer libs, state atoms, and tRPC client link.
 - `apps/desktop/resources/ffmpeg/` - packaged ffmpeg binary destination.
+- `apps/desktop/resources/icons/` - application icon source PNG/SVG files and generated `.icns`/`.ico` package inputs.
 - `apps/desktop/electron.vite.config.ts` - Electron/Vite build configuration.
 - `apps/desktop/electron-builder.yml` - packaging configuration.
 
 ## Data Flow
 
-Renderer components call tRPC hooks. The custom renderer link sends IPC requests through `window.api`, the main process resolves them through `appRouter.createCaller()`, and repositories/services read or write SQLite through Drizzle.
+Renderer components call tRPC hooks. The custom renderer link sends IPC requests through `window.api`, the main process resolves them through `appRouter.createCaller()`, routers call Electron-local services or shared domain workflows where orchestration is needed, and repositories/services read or write SQLite through Drizzle.
 
 For the detailed IPC contract, see [../../topics/electron-trpc-ipc.md](../../topics/electron-trpc-ipc.md).
 
@@ -26,12 +29,18 @@ For the detailed IPC contract, see [../../topics/electron-trpc-ipc.md](../../top
 - Renderer routes under `apps/desktop/src/renderer/src/routes/`.
 - Preload `window.api` surface in `apps/desktop/src/preload/index.ts`.
 - Main tRPC router in `apps/desktop/src/main/trpc/router.ts`.
+- tRPC IPC adapter in `apps/desktop/src/main/presentation/trpc/ipc-adapter.ts`.
 - Domain routers under `apps/desktop/src/main/trpc/routers/`.
+- Shared renderer/main contracts under `apps/desktop/src/shared/contracts/`.
+- Gallery page route at `/galleries/:galleryId`.
 - Terminal IPC handlers in `apps/desktop/src/main/terminal.ts`.
+- Runtime data under Electron `userData`, currently pinned to the legacy `desktop` app data directory unless `POST_USER_DATA_DIR` overrides it.
+- Local IPC server in `apps/desktop/src/main/local-ipc-server.ts` receives best-effort `post-cli` commit notifications and publishes `ledger.changed` events for renderer cache invalidation.
 
 ## Notes
 
 - Do not bypass preload or import main-process code into renderer code.
+- Keep reusable renderer/main input schemas in `src/shared/contracts`; shared contracts must stay browser-safe and avoid Electron, filesystem, and database imports.
 - Keep subscriptions tied to renderer WebContents lifetime; the main IPC handler tracks sender IDs for cleanup.
 - Keep filesystem paths and native process work in main-process services or the Rust indexer.
 - UI changes should follow [../../../design.md](../../../design.md).

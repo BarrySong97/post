@@ -10,7 +10,7 @@
 - SQLite lives in Electron `userData`; every connection must keep WAL mode and foreign keys enabled through `packages/db/src/index.ts`.
 - UI work follows the desktop tool design rules in [design.md](design.md): dense panels, HeroUI/Tailwind v4, 14px toolbar icons, 13px small action icons.
 - TypeScript strictness is part of the contract: `noUnusedLocals`, `noUnusedParameters`, and `noUncheckedIndexedAccess` are enforced through `packages/config/tsconfig.base.json`.
-- The harness is currently in bootstrap mode: `check-docs` checks harness scripts first. Expand coverage to `apps/`, `packages/`, and `crates/` after the file-header migration plan in [docs/plans/README.md](docs/plans/README.md).
+- The harness now checks `apps/`, `packages/`, `crates/`, and `scripts/`; keep source headers, module docs, and topic docs current with code changes. See [docs/plans/README.md](docs/plans/README.md).
 
 ## Commands
 
@@ -55,5 +55,5 @@ node scripts/check-docs.mjs
 - Modules: [desktop](docs/modules/desktop/README.md), [db](docs/modules/db/README.md), [ui](docs/modules/ui/README.md), [config](docs/modules/config/README.md), [post-indexer](docs/modules/post-indexer/README.md)
 - Desktop subtopics: [asset management](docs/modules/desktop/assets.md)
 - Cross-module topics: [Electron tRPC IPC](docs/topics/electron-trpc-ipc.md), [vault indexing flow](docs/topics/vault-indexing-flow.md)
-- Project guides: [run](docs/run.md), [conventions](docs/conventions.md), [testing](docs/testing.md), [design](design.md)
+- Project guides: [run](docs/run.md), [conventions](docs/conventions.md), [testing](docs/testing.md), [design](design.md), [layered architecture](docs/reference/frontend-backend-layered-architecture.md)
 - Harness records: [specs](docs/specs/README.md), [plans](docs/plans/README.md), [decisions](docs/decisions/README.md)

@@ -29,3 +29,7 @@ Enabling the full Stop hook immediately would block normal work because existing
 - New durable context should land in `docs/` and be linked from `AGENTS.md`.
 - Source file headers should be added module by module.
 - The harness check is not full-repo enforcement yet; expanding it is tracked in [../plans/README.md](../plans/README.md).
+
+## Status Update
+
+As of 2026-06-15, the bootstrap migration is complete: `check-docs.config.json` covers `apps/`, `packages/`, `crates/`, and `scripts/`, and the Stop hooks call `node scripts/check-docs.mjs --hook`.

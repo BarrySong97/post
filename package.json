@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "pnpm rebuild:electron && turbo -F desktop dev",
     "build": "turbo build",
+    "test": "turbo test",
     "check-types": "turbo check-types",
     "lint": "oxlint apps packages scripts --no-error-on-unmatched-pattern",
     "lint:fix": "oxlint apps packages scripts --fix --no-error-on-unmatched-pattern",
@@ -17,6 +18,7 @@
     "db:generate": "pnpm -F @post/db db:generate",
     "db:migrate": "pnpm -F @post/db db:migrate",
     "db:studio": "pnpm -F @post/db db:studio",
+    "post-cli": "pnpm -F @post/cli post-cli",
     "ffmpeg:prepare": "node scripts/prepare-ffmpeg.mjs",
     "indexer:build": "cargo build -p post-indexer --release",
     "indexer:check": "cargo check -p post-indexer",

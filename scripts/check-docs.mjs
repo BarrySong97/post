@@ -13,7 +13,7 @@ import { execSync } from "node:child_process";
 const ROOT = process.cwd();
 const rawArgs = process.argv.slice(2);
 const STRICT = rawArgs.includes("--strict");
-const HOOK = rawArgs.includes("--hook"); // Stop hook 模式:硬错误 exit 2,让 Claude/Codex 真正拦截收尾
+const HOOK = rawArgs.includes("--hook"); // Stop hook 模式:stdout 必须是 Codex Stop hook JSON
 let BASE = null; // 对比基准 ref:git diff <BASE>...HEAD(供 CI / 审一个分支)
 {
   const i = rawArgs.findIndex((a) => a === "--base" || a.startsWith("--base="));
@@ -29,7 +29,7 @@ if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
   console.log(`check-docs — AI-Doc-System 防漂移检查器
 用法: node scripts/check-docs.mjs [--strict] [--hook] [--base <ref>]
   --strict       把警告(⚠️)也算作失败
-  --hook         Stop hook 模式:有硬错误时 exit 2 并把原因写 stderr(Claude/Codex 才会真正拦截收尾)
+  --hook         Stop hook 模式:stdout 输出 Codex Stop hook JSON;有硬错误时返回 decision:block
   --base <ref>   漂移检测改用 git diff <ref>...HEAD(对比已提交差异,供 CI / 审分支);并入未提交工作区
 检查:
   ① 源文件是否缺 AI 文件头(@purpose 标记)
@@ -111,6 +111,7 @@ const IGNORE_FILES = new Set(CONFIG.ignoreFiles);
 const NON_MODULE = new Set(CONFIG.nonModuleDirs);
 const hasSourceExt = (f) => CONFIG.sourceExts.some((e) => f.endsWith(e));
 const toPosix = (p) => p.split(sep).join("/");
+const hasIgnoredSegment = (p) => p.split("/").some((part) => IGNORE.has(part));
 
 function walk(dir, acc = []) {
   let entries;
@@ -138,13 +139,77 @@ const roots = CONFIG.sourceRoots.length
     ? ["src"]
     : ["."];
 
+// ── 收集 git 改动(供增量 hook 与文档漂移检查共用) ───────────────
+function gitChangedFiles(base) {
+  try {
+    execSync("git rev-parse --is-inside-work-tree", { cwd: ROOT, stdio: "ignore" });
+  } catch {
+    return null;
+  }
+  const files = new Set();
+  const unquote = (p) => p.replace(/^"|"$/g, "");
+  const addChangedPath = (p) => {
+    const rel = toPosix(unquote(p));
+    if (!rel || hasIgnoredSegment(rel)) return;
+    const full = join(ROOT, rel);
+    if (rel.endsWith("/") && existsSync(full)) {
+      for (const f of walk(full)) files.add(toPosix(relative(ROOT, f)));
+      return;
+    }
+    files.add(rel);
+  };
+  // 已提交差异(对比 base):供 CI / 审分支。base 已校验为安全 ref,可安全拼接。
+  if (base) {
+    try {
+      const out = execSync(`git diff --name-only ${base}...HEAD`, { cwd: ROOT, encoding: "utf8" });
+      for (const l of out.split(/\r?\n/)) if (l.trim()) addChangedPath(l.trim());
+    } catch (e) {
+      console.error(`⚠️  git diff ${base}...HEAD 失败(base 是否存在?):`, e.message);
+    }
+  }
+  // 未提交工作区(始终并入)
+  try {
+    const out = execSync("git status --porcelain", { cwd: ROOT, encoding: "utf8" });
+    for (const line of out.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      let p = line.slice(3);
+      if (p.includes(" -> ")) p = p.split(" -> ")[1]; // 重命名取新名
+      addChangedPath(p);
+    }
+  } catch {
+    /* ignore */
+  }
+  return files;
+}
+
+const changed = gitChangedFiles(BASE);
+const isUnderSourceRoot = (rel) =>
+  roots.some((r) => {
+    const root = toPosix(r);
+    return root === "." || rel === root || rel.startsWith(root + "/");
+  });
+
 const sourceFiles = [];
-for (const r of roots) {
-  const base = join(ROOT, r);
-  if (existsSync(base)) {
-    for (const f of walk(base)) {
-      const rel = toPosix(relative(ROOT, f));
-      if (hasSourceExt(f) && !IGNORE_FILES.has(rel)) sourceFiles.push(f);
+if (HOOK && changed) {
+  for (const rel of changed) {
+    const full = join(ROOT, rel);
+    if (
+      existsSync(full) &&
+      hasSourceExt(rel) &&
+      isUnderSourceRoot(rel) &&
+      !IGNORE_FILES.has(rel) &&
+      !hasIgnoredSegment(rel)
+    )
+      sourceFiles.push(full);
+  }
+} else {
+  for (const r of roots) {
+    const base = join(ROOT, r);
+    if (existsSync(base)) {
+      for (const f of walk(base)) {
+        const rel = toPosix(relative(ROOT, f));
+        if (hasSourceExt(f) && !IGNORE_FILES.has(rel)) sourceFiles.push(f);
+      }
     }
   }
 }
@@ -162,39 +227,6 @@ const missingHeaders = sourceFiles
   .map((f) => toPosix(relative(ROOT, f)));
 
 // ── 检查 ②:文档漂移(需 git) ──────────────────────────────
-function gitChangedFiles(base) {
-  try {
-    execSync("git rev-parse --is-inside-work-tree", { cwd: ROOT, stdio: "ignore" });
-  } catch {
-    return null;
-  }
-  const files = new Set();
-  const unquote = (p) => p.replace(/^"|"$/g, "");
-  // 已提交差异(对比 base):供 CI / 审分支。base 已校验为安全 ref,可安全拼接。
-  if (base) {
-    try {
-      const out = execSync(`git diff --name-only ${base}...HEAD`, { cwd: ROOT, encoding: "utf8" });
-      for (const l of out.split(/\r?\n/)) if (l.trim()) files.add(toPosix(unquote(l.trim())));
-    } catch (e) {
-      console.error(`⚠️  git diff ${base}...HEAD 失败(base 是否存在?):`, e.message);
-    }
-  }
-  // 未提交工作区(始终并入)
-  try {
-    const out = execSync("git status --porcelain", { cwd: ROOT, encoding: "utf8" });
-    for (const line of out.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      let p = line.slice(3);
-      if (p.includes(" -> ")) p = p.split(" -> ")[1]; // 重命名取新名
-      files.add(toPosix(unquote(p)));
-    }
-  } catch {
-    /* ignore */
-  }
-  return files;
-}
-
-const changed = gitChangedFiles(BASE);
 const driftWarnings = [];
 if (changed) {
   const prefixes = roots.map((r) => (r === "." ? "" : toPosix(r) + "/"));
@@ -234,7 +266,16 @@ const linkRe = /\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
 const isSkippableTarget = (t) =>
   !t || /^(https?:|mailto:|tel:|data:|#)/i.test(t) || /[<>*]/.test(t);
 
-for (const md of walk(ROOT).filter((f) => f.endsWith(".md"))) {
+const markdownFiles =
+  HOOK && changed
+    ? [...changed]
+        .filter(
+          (rel) => rel.endsWith(".md") && !hasIgnoredSegment(rel) && existsSync(join(ROOT, rel)),
+        )
+        .map((rel) => join(ROOT, rel))
+    : walk(ROOT).filter((f) => f.endsWith(".md"));
+
+for (const md of markdownFiles) {
   let content;
   try {
     content = readFileSync(md, "utf8");
@@ -293,14 +334,21 @@ lines.push(!hard && !soft ? "✅ 全部通过" : `小结: ${hard} 个错误, ${s
 if (changed === null) lines.push("(提示: 非 git 仓库或 git 不可用,已跳过文档漂移检查)");
 
 const report = lines.join("\n");
-console.log(report);
 
 const failed = hard > 0 || (STRICT && soft > 0);
-if (HOOK && failed) {
-  // 只有 exit 2 才会被 Claude/Codex 当作"阻止收尾",并把 stderr 反馈给模型
-  process.stderr.write(
-    `${report}\n\n[check-docs] 以上问题需先解决再结束本次任务(补文件头 / 修引用 / 同步模块文档)。\n`,
+if (HOOK) {
+  if (!failed) {
+    process.stdout.write("{}");
+    process.exit(0);
+  }
+  const reason = `${report}\n\n[check-docs] 以上问题需先解决再结束本次任务(补文件头 / 修引用 / 同步模块文档)。`;
+  process.stdout.write(
+    JSON.stringify({
+      decision: "block",
+      reason,
+    }),
   );
-  process.exit(2);
+  process.exit(0);
 }
+console.log(report);
 process.exit(failed ? 1 : 0);

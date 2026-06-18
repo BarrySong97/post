@@ -215,6 +215,10 @@ function GlobalStatusLine() {
         if (event.type === "task.completed" && event.task.type === "thumbnails") {
           void invalidateVaultState();
         }
+
+        if (event.type === "ledger.changed") {
+          void queryClient.invalidateQueries();
+        }
       },
       onError: (error) => {
         console.error("Task event subscription failed", error);

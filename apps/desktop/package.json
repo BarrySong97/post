@@ -7,10 +7,12 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "dev:debug": "OPEN_DEVTOOLS=1 electron-vite dev",
+    "dev": "ELECTRON_EXEC_PATH=\"$(node ../../scripts/prepare-electron-dev-app.mjs)\" electron-vite dev",
+    "dev:debug": "OPEN_DEVTOOLS=1 ELECTRON_EXEC_PATH=\"$(node ../../scripts/prepare-electron-dev-app.mjs)\" electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
+    "test": "pnpm --store-dir /private/tmp/post-pnpm-store rebuild better-sqlite3 && vitest run",
+    "test:watch": "pnpm --store-dir /private/tmp/post-pnpm-store rebuild better-sqlite3 && vitest",
     "check-types": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
     "package": "electron-vite build && electron-builder --dir --config electron-builder.yml",
     "dist": "electron-vite build && electron-builder --config electron-builder.yml"
@@ -24,6 +26,7 @@
     "@heroui/react": "catalog:",
     "@hookform/resolvers": "^5.4.0",
     "@post/db": "workspace:*",
+    "@post/domain": "workspace:*",
     "@post/ui": "workspace:*",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-scroll-area": "catalog:",
@@ -66,6 +69,7 @@
     "electron-vite": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:"
+    "vite": "catalog:",
+    "vitest": "catalog:"
   }
 }

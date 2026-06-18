@@ -1,10 +1,6 @@
 {
   "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
-  "include": [
-    "env.d.ts",
-    "src/renderer/src/**/*",
-    "src/preload/*.d.ts"
-  ],
+  "include": ["env.d.ts", "src/renderer/src/**/*", "src/shared/**/*", "src/preload/*.d.ts"],
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
@@ -14,10 +10,10 @@
       "@/*": ["src/renderer/src/*"],
       "@renderer/*": ["src/renderer/src/*"],
       "@main/*": ["src/main/*"],
+      "@shared/*": ["src/shared/*"],
       "@post/ui/*": ["../../packages/ui/src/*"],
       "@post/db": ["../../packages/db/src/index.ts"],
       "@post/db/*": ["../../packages/db/src/*"]
     }
   }
 }
-

@@ -36,6 +36,13 @@
       "when": 1781341762109,
       "tag": "0004_daily_white_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1781516690226,
+      "tag": "0005_known_sentinels",
+      "breakpoints": true
     }
   ]
 }

@@ -5,7 +5,16 @@
  * @gotcha  Keep asset kind/status/tag/view contracts synchronized with packages/db schema and saved-view JSON.
  */
 
-import type { Asset, AssetKind, AssetStatus, IndexedAsset } from "@/lib/asset-manager/types";
+import type {
+  Asset,
+  AssetBoardCard,
+  AssetKind,
+  AssetStatus,
+  GalleryCard,
+  IndexedAsset,
+  IndexedBoardItem,
+  IndexedGallery,
+} from "@/lib/asset-manager/types";
 import { buildAssetFileUrl, buildAssetThumbnailUrl } from "@/lib/asset-manager/asset-url";
 import type {
   AssetFilterState,
@@ -112,6 +121,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     body: asset.description ?? `路径：${asset.relativePath}`,
     source: `${asset.vaultName} / ${asset.relativePath}`,
     sourceType: "vault",
+    fileExists: asset.fileExists,
     time: formatAssetTime(asset.mtimeMs),
     timestampMs: updatedTimestampMs,
     createdTimestampMs: getAssetTimestampMs(asset.ctimeMs, updatedTimestampMs),
@@ -130,6 +140,42 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     related: asset.relatedIds,
     fileExt: kind === "file" || kind === "image" || kind === "video" ? extension : undefined,
     imageCount: kind === "image" ? 1 : undefined,
+  };
+}
+
+export function mapIndexedGallery(gallery: IndexedGallery): GalleryCard {
+  const updatedTimestampMs = getAssetTimestampMs(gallery.updatedAt);
+  const cover = gallery.cover ? mapIndexedAsset(gallery.cover) : null;
+
+  return {
+    id: gallery.id,
+    vaultId: gallery.vaultId,
+    title: gallery.title,
+    description: gallery.description,
+    status: mapIndexedAssetStatus(gallery.status),
+    privacy: gallery.privacy,
+    coverAssetId: gallery.coverAssetId,
+    memberCount: gallery.memberCount,
+    missingCount: gallery.missingCount,
+    timestampMs: updatedTimestampMs,
+    createdTimestampMs: getAssetTimestampMs(gallery.createdAt, updatedTimestampMs),
+    cover,
+  };
+}
+
+export function mapIndexedBoardItem(item: IndexedBoardItem): AssetBoardCard {
+  if (item.itemType === "gallery") {
+    return {
+      itemType: "gallery",
+      id: item.id,
+      gallery: mapIndexedGallery(item.gallery),
+    };
+  }
+
+  return {
+    itemType: "asset",
+    id: item.id,
+    asset: mapIndexedAsset(item.asset),
   };
 }
 

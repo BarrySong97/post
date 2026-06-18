@@ -632,7 +632,7 @@ export function Sidebar({
     }
   }, [sidebarOrder]);
 
-  const orderedViews = useMemo(() => viewItems.slice(0, 8), [viewItems]);
+  const orderedViews = useMemo(() => viewItems.slice(0, 10), [viewItems]);
   const orderedTags = useMemo(() => tagItems.slice(0, 10), [tagItems]);
 
   const handleDeleteView = (view: SidebarView) => {

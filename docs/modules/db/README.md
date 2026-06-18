@@ -27,4 +27,8 @@ Main-process code imports schema and database helpers, opens the SQLite database
 - Commit generated SQL and Drizzle metadata together.
 - Keep WAL and foreign keys enabled on every connection.
 - Treat string union arrays such as `assetKinds` and `assetStatuses` as public contracts for renderer code and indexer behavior.
+- `asset_galleries` and `asset_gallery_items` are user-managed image grouping tables. They do not represent filesystem assets and are not written by the Rust indexer.
+- Gallery membership is relationship state, not file identity. Removing a gallery removes membership rows only and must not delete `assets`, `asset_files`, or vault files.
+- Gallery item uniqueness is per vault and asset. Use that invariant to prevent the same image from appearing in multiple galleries at once.
+- Missing files should not immediately delete gallery membership. Permanent asset deletion can cascade or repair gallery state, including cover reassignment and empty-gallery soft deletion.
 - TypeScript source files in this package have AI file headers. Update them when schema or connection responsibilities move.

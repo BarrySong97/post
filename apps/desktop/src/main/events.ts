@@ -31,6 +31,14 @@ export type WatcherFileChange = {
 
 export type AppEvent =
   | {
+      type: "ledger.changed";
+      emittedAt: number;
+      source: "post-cli";
+      dbPath: string;
+      changed: string[];
+      operationCount: number;
+    }
+  | {
       type: "task.updated";
       emittedAt: number;
       task: BackgroundTask;

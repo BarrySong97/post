@@ -1,16 +1,16 @@
 /**
  * @purpose Locate, spawn, and coordinate the Rust post-indexer sidecar for vault work.
  * @role    Main-process bridge between Electron tasks and the Rust indexing CLI.
- * @deps    child_process, app resources, database path, thumbnail cache paths.
- * @gotcha  Keep packaged and dev binary resolution working across platforms.
+ * @deps    child_process, runtime env detection, app resources, database path, thumbnail cache paths.
+ * @gotcha  Keep packaged and branded dev bundle binary resolution working across platforms.
  */
 
 import { app, dialog } from "electron";
-import { is } from "@electron-toolkit/utils";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
+import { isDevRuntime } from "./bootstrap/runtime-env";
 import { getDatabasePath } from "./db";
 
 export type IndexerCommand = "scan" | "reconcile" | "refresh" | "watch" | "thumbnails";
@@ -213,7 +213,7 @@ function getIndexerEnv(): NodeJS.ProcessEnv {
 
   return {
     ...process.env,
-    POST_INDEXER_ALLOW_SYSTEM_FFMPEG: is.dev ? "1" : "0",
+    POST_INDEXER_ALLOW_SYSTEM_FFMPEG: isDevRuntime() ? "1" : "0",
     ...(bundledFfmpegPath && !process.env.POST_FFMPEG_PATH
       ? { POST_FFMPEG_PATH: bundledFfmpegPath }
       : {}),
@@ -222,7 +222,7 @@ function getIndexerEnv(): NodeJS.ProcessEnv {
 
 function resolveBundledFfmpegPath(): string | undefined {
   const binaryName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
-  const candidates = is.dev
+  const candidates = isDevRuntime()
     ? [
         path.resolve(process.cwd(), "resources", "ffmpeg", binaryName),
         path.resolve(process.cwd(), "apps", "desktop", "resources", "ffmpeg", binaryName),
@@ -273,7 +273,7 @@ function resolveIndexerInvocation(
     indexerArgs.push("--limit", String(input.limit));
   }
 
-  if (is.dev) {
+  if (isDevRuntime()) {
     const repoRoot = findRepoRoot(process.cwd());
     return {
       executable: "cargo",

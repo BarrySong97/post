@@ -4,6 +4,7 @@
     "electron.vite.config.*",
     "src/main/**/*",
     "src/preload/**/*",
+    "src/shared/**/*",
     "../../packages/db/src/**/*",
     "env.d.ts"
   ],
@@ -14,9 +15,9 @@
     "paths": {
       "@main/*": ["src/main/*"],
       "@preload/*": ["src/preload/*"],
+      "@shared/*": ["src/shared/*"],
       "@post/db": ["../../packages/db/src/index.ts"],
       "@post/db/*": ["../../packages/db/src/*"]
     }
   }
 }
-

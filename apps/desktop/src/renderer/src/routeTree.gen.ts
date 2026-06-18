@@ -16,6 +16,7 @@ import { Route as AppViewsRouteImport } from './routes/_app.views'
 import { Route as AppTagsRouteImport } from './routes/_app.tags'
 import { Route as AppPublishRouteImport } from './routes/_app.publish'
 import { Route as AppGraphRouteImport } from './routes/_app.graph'
+import { Route as AppGalleriesGalleryIdRouteImport } from './routes/_app.galleries.$galleryId'
 import { Route as AppAssetsAssetIdRouteImport } from './routes/_app.assets.$assetId'
 
 const SettingsRoute = SettingsRouteImport.update({
@@ -52,6 +53,11 @@ const AppGraphRoute = AppGraphRouteImport.update({
   path: '/graph',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGalleriesGalleryIdRoute = AppGalleriesGalleryIdRouteImport.update({
+  id: '/galleries/$galleryId',
+  path: '/galleries/$galleryId',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAssetsAssetIdRoute = AppAssetsAssetIdRouteImport.update({
   id: '/assets/$assetId',
   path: '/assets/$assetId',
@@ -66,6 +72,7 @@ export interface FileRoutesByFullPath {
   '/tags': typeof AppTagsRoute
   '/views': typeof AppViewsRoute
   '/assets/$assetId': typeof AppAssetsAssetIdRoute
+  '/galleries/$galleryId': typeof AppGalleriesGalleryIdRoute
 }
 export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/views': typeof AppViewsRoute
   '/': typeof AppIndexRoute
   '/assets/$assetId': typeof AppAssetsAssetIdRoute
+  '/galleries/$galleryId': typeof AppGalleriesGalleryIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/_app/views': typeof AppViewsRoute
   '/_app/': typeof AppIndexRoute
   '/_app/assets/$assetId': typeof AppAssetsAssetIdRoute
+  '/_app/galleries/$galleryId': typeof AppGalleriesGalleryIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -97,6 +106,7 @@ export interface FileRouteTypes {
     | '/tags'
     | '/views'
     | '/assets/$assetId'
+    | '/galleries/$galleryId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/settings'
@@ -106,6 +116,7 @@ export interface FileRouteTypes {
     | '/views'
     | '/'
     | '/assets/$assetId'
+    | '/galleries/$galleryId'
   id:
     | '__root__'
     | '/_app'
@@ -116,6 +127,7 @@ export interface FileRouteTypes {
     | '/_app/views'
     | '/_app/'
     | '/_app/assets/$assetId'
+    | '/_app/galleries/$galleryId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -174,6 +186,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppGraphRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/galleries/$galleryId': {
+      id: '/_app/galleries/$galleryId'
+      path: '/galleries/$galleryId'
+      fullPath: '/galleries/$galleryId'
+      preLoaderRoute: typeof AppGalleriesGalleryIdRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/assets/$assetId': {
       id: '/_app/assets/$assetId'
       path: '/assets/$assetId'
@@ -191,6 +210,7 @@ interface AppRouteChildren {
   AppViewsRoute: typeof AppViewsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppAssetsAssetIdRoute: typeof AppAssetsAssetIdRoute
+  AppGalleriesGalleryIdRoute: typeof AppGalleriesGalleryIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -200,6 +220,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppViewsRoute: AppViewsRoute,
   AppIndexRoute: AppIndexRoute,
   AppAssetsAssetIdRoute: AppAssetsAssetIdRoute,
+  AppGalleriesGalleryIdRoute: AppGalleriesGalleryIdRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

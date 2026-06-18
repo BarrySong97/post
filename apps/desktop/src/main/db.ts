@@ -1,26 +1,26 @@
 /**
  * @purpose Resolve the app database path and initialize the desktop SQLite database.
  * @role    Main-process database bootstrap used before routers and services access data.
- * @deps    Electron app userData path, @post/db connection helpers.
- * @gotcha  Dev/prod database filenames differ; avoid hardcoding paths outside this layer.
+ * @deps    Electron app userData path, runtime env detection, @post/db connection helpers.
+ * @gotcha  Dev/prod database filenames differ; branded dev bundles can look packaged to Electron.
  */
 
 import { app } from "electron";
-import { is } from "@electron-toolkit/utils";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { createDatabase, migrateDatabase, type Database } from "@post/db";
+import { isDevRuntime } from "./bootstrap/runtime-env";
 
 let db: Database | null = null;
 
 export function getDatabasePath(): string {
-  const appEnv = (import.meta.env.VITE_APP_ENV ?? (is.dev ? "dev" : "prod")).toLowerCase();
+  const appEnv = (import.meta.env.VITE_APP_ENV ?? (isDevRuntime() ? "dev" : "prod")).toLowerCase();
   return path.join(app.getPath("userData"), `post-${appEnv}.sqlite`);
 }
 
 export function getMigrationsFolder(): string {
-  if (is.dev) {
+  if (isDevRuntime()) {
     return path.resolve(process.cwd(), "../../packages/db/drizzle");
   }
 
@@ -47,4 +47,8 @@ export function getDatabase(): Database {
   }
 
   return db;
+}
+
+export function setDatabaseForTests(database: Database | null): void {
+  db = database;
 }

@@ -9,23 +9,22 @@ import { randomUUID } from "node:crypto";
 
 import { TRPCError } from "@trpc/server";
 import { desc, eq } from "drizzle-orm";
-import { z } from "zod";
 
 import { schema } from "@post/db";
+import {
+  deleteNoteInputSchema,
+  noteInputSchema,
+  updateNoteInputSchema,
+} from "@shared/contracts/notes/note.contract";
 import { getDatabase } from "../../db";
 import { publicProcedure, router } from "../trpc";
-
-const noteInput = z.object({
-  title: z.string().trim().min(1, "Title is required").max(120, "Title is too long"),
-  content: z.string().max(5000, "Content is too long"),
-});
 
 export const notesRouter = router({
   list: publicProcedure.query(() => {
     return getDatabase().select().from(schema.notes).orderBy(desc(schema.notes.updatedAt));
   }),
 
-  create: publicProcedure.input(noteInput).mutation(({ input }) => {
+  create: publicProcedure.input(noteInputSchema).mutation(({ input }) => {
     const now = new Date();
     const note = getDatabase()
       .insert(schema.notes)
@@ -42,32 +41,26 @@ export const notesRouter = router({
     return note;
   }),
 
-  update: publicProcedure
-    .input(
-      noteInput.extend({
-        id: z.string().min(1),
-      }),
-    )
-    .mutation(({ input }) => {
-      const note = getDatabase()
-        .update(schema.notes)
-        .set({
-          title: input.title,
-          content: input.content,
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.notes.id, input.id))
-        .returning()
-        .get();
+  update: publicProcedure.input(updateNoteInputSchema).mutation(({ input }) => {
+    const note = getDatabase()
+      .update(schema.notes)
+      .set({
+        title: input.title,
+        content: input.content,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.notes.id, input.id))
+      .returning()
+      .get();
 
-      if (!note) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
-      }
+    if (!note) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Note not found" });
+    }
 
-      return note;
-    }),
+    return note;
+  }),
 
-  delete: publicProcedure.input(z.object({ id: z.string().min(1) })).mutation(({ input }) => {
+  delete: publicProcedure.input(deleteNoteInputSchema).mutation(({ input }) => {
     const note = getDatabase()
       .delete(schema.notes)
       .where(eq(schema.notes.id, input.id))

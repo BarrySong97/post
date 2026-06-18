@@ -16,13 +16,14 @@ export default defineConfig({
   main: {
     plugins: [
       externalizeDepsPlugin({
-        exclude: ["@post/db"],
+        exclude: ["@post/db", "@post/domain"],
       }),
     ],
     resolve: {
       alias: {
         "@main": resolve("src/main"),
         "@preload": resolve("src/preload"),
+        "@shared": resolve("src/shared"),
       },
     },
     build: {
@@ -36,6 +37,7 @@ export default defineConfig({
     resolve: {
       alias: {
         "@preload": resolve("src/preload"),
+        "@shared": resolve("src/shared"),
       },
     },
   },
@@ -49,6 +51,7 @@ export default defineConfig({
         "@": resolve("src/renderer/src"),
         "@renderer": resolve("src/renderer/src"),
         "@main": resolve("src/main"),
+        "@shared": resolve("src/shared"),
       },
     },
     plugins: [

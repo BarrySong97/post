@@ -32,10 +32,18 @@ import {
   getActiveFilterCount,
   getAssetSourceLabel,
   getTagHue,
+  mapIndexedBoardItem,
   mapIndexedAsset,
 } from "@/lib/asset-manager/asset-model";
 import { resolveMarkdownImageUrl } from "@/lib/asset-manager/asset-url";
-import type { Asset, AssetKind, SidebarTag, SidebarView } from "@/lib/asset-manager/types";
+import type {
+  Asset,
+  AssetBoardCard,
+  AssetKind,
+  GalleryCard as GalleryCardModel,
+  SidebarTag,
+  SidebarView,
+} from "@/lib/asset-manager/types";
 import { isMacWindow } from "@/lib/platform";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { useMasonry, usePositioner, useResizeObserver as useMasonryResizeObserver } from "masonic";
@@ -63,6 +71,7 @@ import {
   Globe,
   Hash,
   Image as ImageIcon,
+  Images,
   Link as LinkIcon,
   PanelRightOpen,
   Play,
@@ -81,16 +90,18 @@ import {
   Button,
   Chip,
   Dropdown,
+  Modal,
   Label,
   Tag,
   TagGroup,
+  useOverlayState,
 } from "@heroui/react";
 import { toast } from "@/lib/toast";
 
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppLayout } from "@/components/layout/app-layout-context";
-import { trpc, type RouterInputs } from "@/lib/trpc";
+import { queryClient, trpc, type RouterInputs } from "@/lib/trpc";
 import { load as yamlLoad } from "js-yaml";
 import {
   AssetFilterPanel,
@@ -655,13 +666,39 @@ function AssetCardTagRow({ asset }: { asset: Asset }) {
   );
 }
 
-const AssetCard = React.memo(function AssetCard({ asset }: { asset: Asset }) {
+const AssetCard = React.memo(function AssetCard({
+  asset,
+  selected = false,
+  onToggleSelected,
+}: {
+  asset: Asset;
+  selected?: boolean;
+  onToggleSelected?: (assetId: string) => void;
+}) {
   const hasCover =
     asset.kind === "image" || asset.kind === "video" || (asset.kind === "web" && asset.ogImage);
   const showUrlRow = asset.kind === "link" || (asset.kind === "web" && !asset.ogImage);
+  const selectable = asset.kind === "image" && onToggleSelected;
 
   return (
-    <article className="overflow-hidden rounded-2xl bg-[#f6f5f2] transition-colors duration-150 hover:bg-[#f2f1ed]">
+    <article className="relative overflow-hidden rounded-2xl bg-[#f6f5f2] transition-colors duration-150 hover:bg-[#f2f1ed]">
+      {selectable ? (
+        <button
+          type="button"
+          aria-label={selected ? "取消选择图片" : "选择图片加入图集"}
+          className={`absolute right-2.5 top-2.5 z-10 grid h-6 w-6 place-items-center rounded-lg border shadow-sm backdrop-blur transition-colors ${
+            selected
+              ? "border-zinc-900 bg-zinc-900 text-white"
+              : "border-white/70 bg-white/80 text-zinc-500 hover:text-zinc-900"
+          }`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleSelected(asset.id);
+          }}
+        >
+          <Check size={13} />
+        </button>
+      ) : null}
       <button
         type="button"
         className="block w-full text-left outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/20"
@@ -700,14 +737,106 @@ const AssetCard = React.memo(function AssetCard({ asset }: { asset: Asset }) {
   );
 });
 
+const GalleryCard = React.memo(function GalleryCard({ gallery }: { gallery: GalleryCardModel }) {
+  const cover = gallery.cover;
+  const accent = cover?.accent ?? 218;
+  const hasCover = Boolean(cover?.fileExists && cover.thumbnailUrl);
+
+  return (
+    <article className="overflow-hidden rounded-2xl bg-[#f4f3ef] transition-colors duration-150 hover:bg-[#efeee9]">
+      <button
+        type="button"
+        className="block w-full text-left outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/20"
+        onClick={() => {
+          window.location.hash = `/galleries/${gallery.id}`;
+        }}
+      >
+        <div
+          className="relative h-48 overflow-hidden"
+          style={{
+            background: `
+              radial-gradient(120% 90% at 18% 12%, oklch(0.86 0.06 ${accent}) 0%, transparent 62%),
+              linear-gradient(150deg, oklch(0.72 0.08 ${accent}) 0%, oklch(0.9 0.05 ${accent + 34}) 100%)
+            `,
+          }}
+        >
+          {hasCover && cover ? (
+            <img
+              src={cover.thumbnailUrl}
+              alt={gallery.title}
+              className="absolute inset-0 h-full w-full object-cover"
+              loading="lazy"
+              decoding="async"
+              draggable={false}
+            />
+          ) : (
+            <div
+              className="absolute inset-0"
+              style={{
+                backgroundImage:
+                  "repeating-linear-gradient(135deg, currentColor 0 1px, transparent 1px 14px)",
+                color: `oklch(0.64 0.09 ${accent})`,
+                opacity: 0.35,
+              }}
+            />
+          )}
+          <Chip
+            size="sm"
+            className="absolute left-2.5 top-2.5 h-auto min-h-0 gap-1.5 rounded-[7px] bg-white/86 px-2 py-1 text-[10.5px] font-semibold text-[#37322c] shadow-sm backdrop-blur"
+          >
+            <Images size={11} />
+            {gallery.memberCount} 张
+          </Chip>
+          {gallery.missingCount > 0 ? (
+            <Chip
+              size="sm"
+              className="absolute bottom-2.5 left-2.5 h-auto min-h-0 rounded-[7px] bg-amber-50/90 px-2 py-1 text-[10.5px] font-semibold text-amber-800 shadow-sm backdrop-blur"
+            >
+              {gallery.missingCount} 丢失
+            </Chip>
+          ) : null}
+        </div>
+        <div className="px-4 py-3.5">
+          <div className="flex items-start gap-2.5">
+            <h2 className="min-w-0 flex-1 text-[15.5px] font-semibold leading-[1.4] tracking-normal text-[#1c1b19]">
+              {gallery.title}
+            </h2>
+            <Chip
+              size="sm"
+              className="mt-0.5 h-auto min-h-0 shrink-0 gap-1 bg-transparent px-0 py-0 font-mono text-[9.5px] font-semibold tracking-wide text-zinc-400"
+            >
+              <Images size={12} />
+              GALLERY
+            </Chip>
+          </div>
+          {gallery.description ? (
+            <p className="mt-2.5 line-clamp-3 whitespace-pre-line text-[13px] leading-[1.62] text-[#6c6a64]">
+              {gallery.description}
+            </p>
+          ) : null}
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-[#1c120e]/[0.06] pt-3 text-[11px] text-zinc-400">
+            <span className="min-w-0 truncate">
+              图集 · {gallery.memberCount} 张
+              {gallery.missingCount > 0 ? ` · ${gallery.missingCount} 丢失` : ""}
+            </span>
+          </div>
+        </div>
+      </button>
+    </article>
+  );
+});
+
 type AssetBoardHeaderProps = {
   filterOpen: boolean;
   activeFilterCount: number;
   vaultAvailable: boolean;
   terminalAvailable: boolean;
   terminalOpen: boolean;
+  selectedImageCount: number;
+  creatingGallery: boolean;
   onToggleFilter: () => void;
   onToggleTerminal: () => void;
+  onCreateGallery: () => void;
   dragEnabled?: boolean;
 };
 
@@ -717,8 +846,11 @@ function AssetBoardHeader({
   vaultAvailable,
   terminalAvailable,
   terminalOpen,
+  selectedImageCount,
+  creatingGallery,
   onToggleFilter,
   onToggleTerminal,
+  onCreateGallery,
   dragEnabled = true,
 }: AssetBoardHeaderProps) {
   const filterActive = filterOpen || activeFilterCount > 0;
@@ -862,6 +994,25 @@ function AssetBoardHeader({
             <ChevronDown className={HEADER_ICON_CLASS_NAME} />
           </span>
         )}
+        <Button
+          size="sm"
+          variant="ghost"
+          isDisabled={selectedImageCount === 0 || creatingGallery}
+          className={`window-no-drag h-6 min-h-0 gap-1.5 rounded-lg border px-2 text-[11px] ${
+            selectedImageCount > 0
+              ? "border-zinc-300 bg-zinc-100 text-zinc-900"
+              : "border-zinc-200 bg-white text-zinc-400"
+          }`}
+          onPress={onCreateGallery}
+        >
+          <Images className={HEADER_ICON_CLASS_NAME} />
+          图集
+          {selectedImageCount > 0 ? (
+            <span className="ml-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-zinc-800 px-1 text-[9px] font-bold leading-none text-white">
+              {selectedImageCount}
+            </span>
+          ) : null}
+        </Button>
         <Button
           size="sm"
           variant={terminalOpen ? "secondary" : "ghost"}
@@ -1032,16 +1183,6 @@ function AssetActiveFilterSummary({
   );
 }
 
-const MasonryCard = React.memo(function MasonryCard({
-  data,
-}: {
-  index: number;
-  data: Asset;
-  width: number;
-}) {
-  return <AssetCard asset={data} />;
-});
-
 const AssetPaginationFooter = React.forwardRef<
   HTMLDivElement,
   {
@@ -1082,7 +1223,7 @@ const AssetPaginationFooter = React.forwardRef<
 });
 
 function AssetBoard({
-  assetItems,
+  boardItems,
   tagOptions,
   sourceOptions,
   resultCount,
@@ -1101,7 +1242,7 @@ function AssetBoard({
   dragEnabled = true,
   queryResetKey,
 }: {
-  assetItems: Asset[];
+  boardItems: AssetBoardCard[];
   tagOptions: SidebarTag[];
   sourceOptions: string[];
   resultCount: number;
@@ -1121,6 +1262,8 @@ function AssetBoard({
   queryResetKey: string;
 }) {
   const [filters, setFilters] = useAtom(assetFiltersAtom);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => new Set());
+  const [galleryModalOpen, setGalleryModalOpen] = useState(false);
 
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const masonryGridRef = useRef<HTMLDivElement>(null);
@@ -1133,6 +1276,66 @@ function AssetBoard({
   const scrollFrame = useRef<number | undefined>(undefined);
   const isScrollingRef = useRef(false);
   const activeFilterCount = getActiveFilterCount(filters);
+  const selectedImageIds = useMemo(
+    () =>
+      boardItems
+        .filter(
+          (item): item is Extract<AssetBoardCard, { itemType: "asset" }> =>
+            item.itemType === "asset" &&
+            item.asset.kind === "image" &&
+            selectedAssetIds.has(item.asset.id),
+        )
+        .map((item) => item.asset.id),
+    [boardItems, selectedAssetIds],
+  );
+  const createGalleryMutation = useMutation(
+    trpc.galleries.create.mutationOptions({
+      onSuccess: (detail) => {
+        setSelectedAssetIds(new Set());
+        setGalleryModalOpen(false);
+        void queryClient.invalidateQueries();
+        window.location.hash = `/galleries/${detail.gallery.id}`;
+      },
+    }),
+  );
+  const toggleSelectedAsset = useCallback((assetId: string) => {
+    setSelectedAssetIds((current) => {
+      const next = new Set(current);
+      if (next.has(assetId)) {
+        next.delete(assetId);
+      } else {
+        next.add(assetId);
+      }
+      return next;
+    });
+  }, []);
+  const openCreateGalleryModal = useCallback(() => {
+    if (selectedImageIds.length === 0) {
+      return;
+    }
+
+    createGalleryMutation.reset();
+    setGalleryModalOpen(true);
+  }, [createGalleryMutation, selectedImageIds.length]);
+  const createGalleryFromSelection = useCallback(
+    (title: string) => {
+      if (selectedImageIds.length === 0) {
+        return;
+      }
+
+      const trimmedTitle = title.trim();
+      if (!trimmedTitle) {
+        return;
+      }
+
+      createGalleryMutation.mutate({
+        vaultId: undefined,
+        title: trimmedTitle,
+        assetIds: selectedImageIds,
+      });
+    },
+    [createGalleryMutation, selectedImageIds],
+  );
 
   useEffect(() => {
     writeAssetFilterOpenToStorage(filterOpen);
@@ -1209,7 +1412,7 @@ function AssetBoard({
     observer.observe(target);
 
     return () => observer.disconnect();
-  }, [assetItems.length, hasNextPage, isFetchingNextPage, loading, onFetchNextPage]);
+  }, [boardItems.length, hasNextPage, isFetchingNextPage, loading, onFetchNextPage]);
 
   // subtract px-6 padding (24px * 2 = 48px)
   const innerWidth = Math.max(0, size.width - 48);
@@ -1218,6 +1421,22 @@ function AssetBoard({
     queryResetKey,
   ]);
   const resizeObserver = useMasonryResizeObserver(positioner);
+  const renderMasonryCard = useCallback(
+    ({ data }: { index: number; data: AssetBoardCard; width: number }) => {
+      if (data.itemType === "gallery") {
+        return <GalleryCard gallery={data.gallery} />;
+      }
+
+      return (
+        <AssetCard
+          asset={data.asset}
+          selected={selectedAssetIds.has(data.asset.id)}
+          onToggleSelected={toggleSelectedAsset}
+        />
+      );
+    },
+    [selectedAssetIds, toggleSelectedAsset],
+  );
 
   const masonry = useMasonry({
     positioner,
@@ -1225,95 +1444,210 @@ function AssetBoard({
     isScrolling,
     height: size.height,
     containerRef: masonryGridRef,
-    items: assetItems,
-    render: MasonryCard,
+    items: boardItems,
+    render: renderMasonryCard,
     resizeObserver,
     itemHeightEstimate: 340,
-    itemKey: (asset) => asset.id,
+    itemKey: (item) => `${item.itemType}:${item.id}`,
     overscanBy: 1.25,
   });
 
   return (
-    <main className="flex h-full min-w-0 flex-col bg-white">
-      <AccordionRoot
-        hideSeparator
-        expandedKeys={filterOpen ? ["asset-filters"] : []}
-        onExpandedChange={(keys) => setFilterOpen(keys.has("asset-filters"))}
-        className="shrink-0"
-      >
-        <AccordionItem id="asset-filters" className="border-none">
-          <AssetBoardHeader
-            filterOpen={filterOpen}
-            activeFilterCount={activeFilterCount}
-            vaultAvailable={vaultAvailable}
-            terminalAvailable={terminalAvailable}
-            terminalOpen={terminalOpen}
-            onToggleFilter={() => setFilterOpen((open) => !open)}
-            onToggleTerminal={onToggleTerminal}
-            dragEnabled={dragEnabled}
-          />
-          <AssetFilterPanel
-            filters={filters}
-            onFiltersChange={setFilters}
-            tagOptions={tagOptions}
-            sourceOptions={sourceOptions}
-            resultCount={resultCount}
-            onSaveView={() => onSaveView(filters)}
-          />
-        </AccordionItem>
-      </AccordionRoot>
-      <AssetActiveFilterSummary
-        filters={filters}
-        onFiltersChange={setFilters}
-        resultCount={resultCount}
-        totalCount={totalCount}
-      />
-      {errorMessage ? (
-        <div className="shrink-0 border-b border-red-100 bg-red-50 px-6 py-2 text-xs text-red-700">
-          {errorMessage}
-        </div>
-      ) : null}
-      <ScrollArea
-        type="hover"
-        scrollHideDelay={260}
-        className="min-h-0 flex-1"
-        viewportRef={scrollViewportRef}
-        viewportClassName="px-6 py-[18px]"
-        scrollbarClassName="w-2 border-l-0 bg-transparent p-[2px] opacity-0 transition-opacity duration-150 data-[state=visible]:opacity-100 hover:opacity-100"
-        thumbClassName="bg-zinc-400/35 hover:bg-zinc-500/45"
-      >
-        {loading ? (
-          <div className="grid h-56 place-items-center text-sm text-zinc-400">正在读取资产库</div>
-        ) : assetItems.length ? (
-          <>
-            {masonry}
-            <AssetPaginationFooter
-              ref={loadMoreRef}
-              loadedCount={assetItems.length}
-              totalCount={resultCount}
-              hasNextPage={hasNextPage}
-              isFetchingNextPage={isFetchingNextPage}
-              errorMessage={paginationErrorMessage}
-              onRetry={onFetchNextPage}
+    <>
+      <main className="flex h-full min-w-0 flex-col bg-white">
+        <AccordionRoot
+          hideSeparator
+          expandedKeys={filterOpen ? ["asset-filters"] : []}
+          onExpandedChange={(keys) => setFilterOpen(keys.has("asset-filters"))}
+          className="shrink-0"
+        >
+          <AccordionItem id="asset-filters" className="border-none">
+            <AssetBoardHeader
+              filterOpen={filterOpen}
+              activeFilterCount={activeFilterCount}
+              vaultAvailable={vaultAvailable}
+              terminalAvailable={terminalAvailable}
+              terminalOpen={terminalOpen}
+              selectedImageCount={selectedImageIds.length}
+              creatingGallery={createGalleryMutation.isPending}
+              onToggleFilter={() => setFilterOpen((open) => !open)}
+              onToggleTerminal={onToggleTerminal}
+              onCreateGallery={openCreateGalleryModal}
+              dragEnabled={dragEnabled}
             />
-          </>
-        ) : (
-          <div className="grid h-72 place-items-center">
-            <div className="text-center">
-              <FolderKanban className="mx-auto text-zinc-300" size={36} />
-              <h2 className="mt-3 text-sm font-semibold text-zinc-800">
-                {vaultAvailable ? "没有匹配的资产" : "选择一个文件夹开始索引"}
-              </h2>
-              <p className="mt-1 text-xs text-zinc-500">
-                {vaultAvailable
-                  ? "调整筛选条件后再试一次。"
-                  : "文件留在原地，标签和关系写入 SQLite。"}
-              </p>
-            </div>
+            <AssetFilterPanel
+              filters={filters}
+              onFiltersChange={setFilters}
+              tagOptions={tagOptions}
+              sourceOptions={sourceOptions}
+              resultCount={resultCount}
+              onSaveView={() => onSaveView(filters)}
+            />
+          </AccordionItem>
+        </AccordionRoot>
+        <AssetActiveFilterSummary
+          filters={filters}
+          onFiltersChange={setFilters}
+          resultCount={resultCount}
+          totalCount={totalCount}
+        />
+        {errorMessage ? (
+          <div className="shrink-0 border-b border-red-100 bg-red-50 px-6 py-2 text-xs text-red-700">
+            {errorMessage}
           </div>
-        )}
-      </ScrollArea>
-    </main>
+        ) : null}
+        <ScrollArea
+          type="hover"
+          scrollHideDelay={260}
+          className="min-h-0 flex-1"
+          viewportRef={scrollViewportRef}
+          viewportClassName="px-6 py-[18px]"
+          scrollbarClassName="w-2 border-l-0 bg-transparent p-[2px] opacity-0 transition-opacity duration-150 data-[state=visible]:opacity-100 hover:opacity-100"
+          thumbClassName="bg-zinc-400/35 hover:bg-zinc-500/45"
+        >
+          {loading ? (
+            <div className="grid h-56 place-items-center text-sm text-zinc-400">正在读取资产库</div>
+          ) : boardItems.length ? (
+            <>
+              {masonry}
+              <AssetPaginationFooter
+                ref={loadMoreRef}
+                loadedCount={boardItems.length}
+                totalCount={resultCount}
+                hasNextPage={hasNextPage}
+                isFetchingNextPage={isFetchingNextPage}
+                errorMessage={paginationErrorMessage}
+                onRetry={onFetchNextPage}
+              />
+            </>
+          ) : (
+            <div className="grid h-72 place-items-center">
+              <div className="text-center">
+                <FolderKanban className="mx-auto text-zinc-300" size={36} />
+                <h2 className="mt-3 text-sm font-semibold text-zinc-800">
+                  {vaultAvailable ? "没有匹配的资产" : "选择一个文件夹开始索引"}
+                </h2>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {vaultAvailable
+                    ? "调整筛选条件后再试一次。"
+                    : "文件留在原地，标签和关系写入 SQLite。"}
+                </p>
+              </div>
+            </div>
+          )}
+        </ScrollArea>
+      </main>
+      <CreateGalleryModal
+        isOpen={galleryModalOpen}
+        selectedCount={selectedImageIds.length}
+        isPending={createGalleryMutation.isPending}
+        errorMessage={createGalleryMutation.error?.message}
+        onOpenChange={setGalleryModalOpen}
+        onSubmit={createGalleryFromSelection}
+      />
+    </>
+  );
+}
+
+function CreateGalleryModal({
+  isOpen,
+  selectedCount,
+  isPending,
+  errorMessage,
+  onOpenChange,
+  onSubmit,
+}: {
+  isOpen: boolean;
+  selectedCount: number;
+  isPending: boolean;
+  errorMessage?: string;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (title: string) => void;
+}) {
+  const defaultTitle = `图集 ${selectedCount} 张`;
+  const [title, setTitle] = useState(defaultTitle);
+  const trimmedTitle = title.trim();
+  const modalState = useOverlayState({
+    isOpen,
+    onOpenChange,
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      setTitle(defaultTitle);
+    }
+  }, [defaultTitle, isOpen]);
+
+  return (
+    <Modal.Root state={modalState}>
+      <Modal.Backdrop isDismissable={!isPending} variant="opaque" className="z-[200]">
+        <Modal.Container size="sm" placement="center">
+          <Modal.Dialog className="outline-none">
+            <form
+              className="contents"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (!trimmedTitle || isPending) {
+                  return;
+                }
+                onSubmit(trimmedTitle);
+              }}
+            >
+              <Modal.Header className="items-center px-5 pb-3 pt-5">
+                <Modal.Icon className="grid h-8 w-8 place-items-center rounded-full bg-zinc-100 text-zinc-700">
+                  <Images size={16} />
+                </Modal.Icon>
+                <Modal.Heading className="text-[15px] font-semibold text-zinc-950">
+                  创建图集
+                </Modal.Heading>
+              </Modal.Header>
+              <Modal.Body className="space-y-3 px-5 py-0">
+                <div>
+                  <Label className="mb-1.5 block text-[12px] font-semibold text-zinc-500">
+                    名称
+                  </Label>
+                  <input
+                    value={title}
+                    autoFocus
+                    onChange={(event) => setTitle(event.currentTarget.value)}
+                    className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[13px] text-zinc-900 outline-none transition-colors placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-500/15"
+                    placeholder="输入图集名称"
+                  />
+                </div>
+                <div className="text-[12px] text-zinc-500">
+                  将创建包含 {selectedCount} 张图片的图集。
+                </div>
+                {errorMessage ? (
+                  <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[12px] text-red-700">
+                    {errorMessage}
+                  </div>
+                ) : null}
+              </Modal.Body>
+              <Modal.Footer>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="rounded-lg text-[12px] text-zinc-600"
+                  isDisabled={isPending}
+                  onPress={() => onOpenChange(false)}
+                >
+                  取消
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="primary"
+                  className="rounded-lg text-[12px] font-semibold"
+                  isDisabled={isPending || !trimmedTitle}
+                >
+                  {isPending ? "创建中" : "创建"}
+                </Button>
+              </Modal.Footer>
+            </form>
+          </Modal.Dialog>
+        </Modal.Container>
+      </Modal.Backdrop>
+    </Modal.Root>
   );
 }
 
@@ -2316,15 +2650,25 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   );
   const listQueryResetKey = useMemo(() => JSON.stringify(listQueryInput), [listQueryInput]);
   const listQuery = useInfiniteQuery(
-    trpc.assets.list.infiniteQueryOptions(listQueryInput, {
+    trpc.assetBoard.list.infiniteQueryOptions(listQueryInput, {
       enabled: !assetId,
       getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     }),
   );
 
-  const assetItems = useMemo(
-    () => listQuery.data?.pages.flatMap((page) => page.items.map(mapIndexedAsset)) ?? [],
+  const boardItems = useMemo(
+    () => listQuery.data?.pages.flatMap((page) => page.items.map(mapIndexedBoardItem)) ?? [],
     [listQuery.data?.pages],
+  );
+  const assetItems = useMemo(
+    () =>
+      boardItems
+        .filter(
+          (item): item is Extract<AssetBoardCard, { itemType: "asset" }> =>
+            item.itemType === "asset",
+        )
+        .map((item) => item.asset),
+    [boardItems],
   );
   const resultCount = listQuery.data?.pages[0]?.total ?? 0;
   const activeAssetFromList = assetId
@@ -2421,9 +2765,9 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   const vaultAvailable = Boolean(sidebarQuery.data?.vault);
   const terminalAvailable = vaultAvailable && isMacWindow();
   const boardErrorMessage =
-    listQuery.isError && assetItems.length === 0 ? listQuery.error.message : undefined;
+    listQuery.isError && boardItems.length === 0 ? listQuery.error.message : undefined;
   const paginationErrorMessage =
-    listQuery.isError && assetItems.length > 0 ? listQuery.error.message : undefined;
+    listQuery.isError && boardItems.length > 0 ? listQuery.error.message : undefined;
 
   return (
     <>
@@ -2455,7 +2799,7 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
             )
           ) : (
             <AssetBoard
-              assetItems={assetItems}
+              boardItems={boardItems}
               tagOptions={sidebarQuery.data?.tags ?? []}
               sourceOptions={sidebarQuery.data?.sourceOptions ?? []}
               resultCount={resultCount}
@@ -2465,7 +2809,7 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
               terminalAvailable={terminalAvailable}
               terminalOpen={terminalOpen}
               onToggleTerminal={() => setTerminalOpen((open) => !open)}
-              loading={listQuery.isLoading && assetItems.length === 0}
+              loading={listQuery.isLoading && boardItems.length === 0}
               errorMessage={boardErrorMessage}
               hasNextPage={Boolean(hasNextPage)}
               isFetchingNextPage={isFetchingNextPage}

@@ -5,15 +5,58 @@
  * @gotcha  Validate inputs and keep side effects in repositories/services rather than renderer components.
  */
 
-import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { clipboard, shell } from "electron";
 import { TRPCError } from "@trpc/server";
-import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
-import { z } from "zod";
+import { and, eq, isNotNull } from "drizzle-orm";
 
+import {
+  addTagToAsset,
+  createSavedView,
+  createTag,
+  deleteSavedView,
+  deleteTagAndCleanViews,
+  removeTagFromAsset,
+  reorderSavedViews,
+  reorderTags,
+  updateSavedView,
+  updateTag,
+} from "@post/domain";
 import { schema } from "@post/db";
+import {
+  ASSET_LIST_DEFAULT_LIMIT,
+  assetListInputSchema,
+} from "@shared/contracts/assets/asset-list.contract";
+import {
+  assetByIdInputSchema,
+  assetMarkdownContentInputSchema,
+  copyAssetPathInputSchema,
+  ensureThumbnailsInputSchema,
+  openAssetInEditorInputSchema,
+  openFileInputSchema,
+  openVaultLocationInputSchema,
+} from "@shared/contracts/assets/asset-actions.contract";
+import {
+  addTagToAssetInputSchema,
+  deleteTagInputSchema,
+  removeTagFromAssetInputSchema,
+  reorderTagsInputSchema,
+  tagInputSchema,
+  updateTagInputSchema,
+} from "@shared/contracts/assets/tags/tag.contract";
+import {
+  deleteSavedViewInputSchema,
+  reorderSavedViewsInputSchema,
+  savedViewInputSchema,
+  updateSavedViewInputSchema,
+} from "@shared/contracts/assets/saved-views/saved-view.contract";
+import { optionalVaultInputSchema } from "@shared/contracts/common/id.contract";
+import {
+  activateVaultInputSchema,
+  importPathInputSchema,
+  reconcileVaultInputSchema,
+} from "@shared/contracts/vaults/vault.contract";
 import { getDatabase } from "../../db";
 import { chooseVaultFolder } from "../../indexer";
 import {
@@ -23,10 +66,6 @@ import {
   getAssetSummary,
   getSavedViews,
   getSidebarTags,
-  parseSavedViewFilters,
-  serializeSavedViewFilters,
-  serializeSavedViewSort,
-  type SavedViewFilters,
 } from "../../repositories/assets-repository";
 import {
   getOrCreateVaultId,
@@ -34,75 +73,14 @@ import {
   getVaultOrThrow,
   listVaults,
 } from "../../repositories/vaults-repository";
-import { upsertTag } from "../../repositories/tags-repository";
 import { runThumbnailTask } from "../../thumbnail-tasks";
 import { openVaultInEditor } from "../../services/editor-launch-service";
 import { runIndexerTask } from "../../services/indexer-task-service";
 import { readMarkdownContent } from "../../services/markdown-preview-service";
 import { startThumbnailPrewarm } from "../../services/thumbnail-service";
 import { resolveVaultFilePath } from "../../services/vault-file-service";
+import { runDomain } from "../../domain-context";
 import { publicProcedure, router } from "../trpc";
-
-const vaultInput = z.object({
-  vaultId: z.string().min(1).optional(),
-});
-
-const importPathInput = z.object({
-  rootPath: z.string().min(1),
-  name: z.string().trim().min(1).optional(),
-});
-
-const ASSET_LIST_DEFAULT_LIMIT = 80;
-const ASSET_LIST_MAX_LIMIT = 160;
-const TAG_NAME_MAX_LENGTH = 60;
-const SAVED_VIEW_NAME_MAX_LENGTH = 80;
-const SAVED_VIEW_ICON_MAX_LENGTH = 80;
-const DEFAULT_SAVED_VIEW_ICON = "lucide:folder-kanban";
-
-const assetListInput = vaultInput
-  .extend({
-    tagId: z.string().optional(),
-    tagIds: z.array(z.string().min(1)).optional(),
-    tagMatch: z.enum(["and", "or"]).optional(),
-    statusFilter: z.enum(["inbox", "organized", "draft", "published", "archived"]).optional(),
-    untagged: z.boolean().optional(),
-    typeFilters: z.array(z.enum(["markdown", "image", "video", "link", "file"])).optional(),
-    timeFilter: z.enum(["any", "today", "week", "m30"]).optional(),
-    sourceTypes: z.array(z.enum(["vault", "external_file", "url"])).optional(),
-    sort: z.enum(["updated_desc", "updated_asc", "created_desc", "created_asc"]).optional(),
-    limit: z.number().int().min(1).max(ASSET_LIST_MAX_LIMIT).optional(),
-    cursor: z
-      .object({
-        valueMs: z.number(),
-        id: z.string().min(1),
-      })
-      .optional(),
-  })
-  .optional();
-
-const assetListSortInput = z.enum(["updated_desc", "updated_asc", "created_desc", "created_asc"]);
-const savedViewFiltersInput = z.object({
-  match: z.enum(["and", "or"]).default("and"),
-  tagIds: z.array(z.string().min(1)).default([]),
-  types: z.array(z.enum(["markdown", "image", "video", "link", "file"])).default([]),
-  sources: z.array(z.enum(["vault", "external_file", "url"])).default([]),
-  time: z.enum(["any", "today", "week", "m30"]).default("any"),
-  status: z.enum(["any", "inbox", "organized", "draft", "published", "archived"]).default("any"),
-});
-
-const savedViewInput = z.object({
-  vaultId: z.string().min(1).optional(),
-  name: z.string().trim().min(1).max(SAVED_VIEW_NAME_MAX_LENGTH),
-  icon: z.string().trim().max(SAVED_VIEW_ICON_MAX_LENGTH).optional(),
-  filters: savedViewFiltersInput,
-  sort: assetListSortInput.default("updated_desc"),
-});
-
-const tagInput = z.object({
-  vaultId: z.string().min(1).optional(),
-  name: z.string().trim().min(1).max(TAG_NAME_MAX_LENGTH),
-  color: z.string().trim().max(80).optional().nullable(),
-});
 
 function getConflictCount(vaultId: string) {
   return getDatabase()
@@ -112,233 +90,12 @@ function getConflictCount(vaultId: string) {
     .all().length;
 }
 
-function getActiveVaultOrThrow(vaultId?: string) {
-  const vault = getRequestedOrActiveVault(vaultId);
-  if (!vault) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "No active vault selected" });
-  }
-
-  return vault;
-}
-
-function normalizeNullableText(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
-}
-
-function normalizeSavedViewIcon(value: string | null | undefined) {
-  const trimmed = value?.trim();
-  return trimmed || DEFAULT_SAVED_VIEW_ICON;
-}
-
-function uniqueStrings<T extends string>(values: readonly T[]) {
-  return Array.from(new Set(values));
-}
-
-function normalizeSavedViewFilters(
-  vaultId: string,
-  filters: z.infer<typeof savedViewFiltersInput>,
-): SavedViewFilters {
-  const tagIds = uniqueStrings(filters.tagIds);
-  if (tagIds.length > 0) {
-    const rows = getDatabase()
-      .select({ id: schema.tags.id })
-      .from(schema.tags)
-      .where(and(eq(schema.tags.vaultId, vaultId), inArray(schema.tags.id, tagIds)))
-      .all();
-    const knownIds = new Set(rows.map((row) => row.id));
-    const missingIds = tagIds.filter((tagId) => !knownIds.has(tagId));
-    if (missingIds.length > 0) {
-      throw new TRPCError({ code: "BAD_REQUEST", message: "Saved view references unknown tags" });
-    }
-  }
-
-  return {
-    match: filters.match,
-    tagIds,
-    types: uniqueStrings(filters.types),
-    sources: uniqueStrings(filters.sources),
-    time: filters.time,
-    status: filters.status,
-  };
-}
-
-function assertUniqueTagName(vaultId: string, name: string, excludeId?: string) {
-  const existing = getDatabase()
-    .select({ id: schema.tags.id })
-    .from(schema.tags)
-    .where(and(eq(schema.tags.vaultId, vaultId), eq(schema.tags.name, name)))
-    .get();
-  if (existing && existing.id !== excludeId) {
-    throw new TRPCError({ code: "CONFLICT", message: "Tag name already exists" });
-  }
-}
-
-function assertUniqueSavedViewName(vaultId: string, name: string, excludeId?: string) {
-  const existing = getDatabase()
-    .select({ id: schema.savedViews.id })
-    .from(schema.savedViews)
-    .where(and(eq(schema.savedViews.vaultId, vaultId), eq(schema.savedViews.name, name)))
-    .get();
-  if (existing && existing.id !== excludeId) {
-    throw new TRPCError({ code: "CONFLICT", message: "View name already exists" });
-  }
-}
-
-function getNextTagSortOrder(vaultId: string) {
-  const row = getDatabase()
-    .select({ total: count() })
-    .from(schema.tags)
-    .where(eq(schema.tags.vaultId, vaultId))
-    .get();
-  return row?.total ?? 0;
-}
-
-function getNextSavedViewSortOrder(vaultId: string) {
-  const row = getDatabase()
-    .select({ total: count() })
-    .from(schema.savedViews)
-    .where(eq(schema.savedViews.vaultId, vaultId))
-    .get();
-  return row?.total ?? 0;
-}
-
-function getTagOrThrow(id: string) {
-  const tag = getDatabase().select().from(schema.tags).where(eq(schema.tags.id, id)).get();
-  if (!tag) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Tag not found" });
-  }
-
-  return tag;
-}
-
-function getSavedViewOrThrow(id: string) {
-  const view = getDatabase()
-    .select()
-    .from(schema.savedViews)
-    .where(eq(schema.savedViews.id, id))
-    .get();
-  if (!view) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "View not found" });
-  }
-
-  return view;
-}
-
-function reorderTags(vaultId: string, orderedIds: readonly string[]) {
-  const currentRows = getDatabase()
-    .select({ id: schema.tags.id })
-    .from(schema.tags)
-    .where(eq(schema.tags.vaultId, vaultId))
-    .orderBy(asc(schema.tags.sortOrder), asc(schema.tags.name))
-    .all();
-  const knownIds = new Set(currentRows.map((row) => row.id));
-  const requestedIds = uniqueStrings(orderedIds).filter((id) => knownIds.has(id));
-  const remainingIds = currentRows.map((row) => row.id).filter((id) => !requestedIds.includes(id));
-  const nextIds = [...requestedIds, ...remainingIds];
-
-  for (const [sortOrder, id] of nextIds.entries()) {
-    getDatabase()
-      .update(schema.tags)
-      .set({ sortOrder, updatedAt: new Date() })
-      .where(eq(schema.tags.id, id))
-      .run();
-  }
-
-  return { orderedIds: nextIds };
-}
-
-function reorderSavedViews(vaultId: string, orderedIds: readonly string[]) {
-  const currentRows = getDatabase()
-    .select({ id: schema.savedViews.id })
-    .from(schema.savedViews)
-    .where(eq(schema.savedViews.vaultId, vaultId))
-    .orderBy(asc(schema.savedViews.sortOrder), desc(schema.savedViews.updatedAt))
-    .all();
-  const knownIds = new Set(currentRows.map((row) => row.id));
-  const requestedIds = uniqueStrings(orderedIds).filter((id) => knownIds.has(id));
-  const remainingIds = currentRows.map((row) => row.id).filter((id) => !requestedIds.includes(id));
-  const nextIds = [...requestedIds, ...remainingIds];
-
-  for (const [sortOrder, id] of nextIds.entries()) {
-    getDatabase()
-      .update(schema.savedViews)
-      .set({ sortOrder, updatedAt: new Date() })
-      .where(eq(schema.savedViews.id, id))
-      .run();
-  }
-
-  return { orderedIds: nextIds };
-}
-
-function deleteTagAndCleanViews(tagId: string) {
-  const tag = getTagOrThrow(tagId);
-  const db = getDatabase();
-  const now = new Date();
-
-  const affectedAssetCount =
-    db
-      .select({ total: count() })
-      .from(schema.assetTags)
-      .where(eq(schema.assetTags.tagId, tag.id))
-      .get()?.total ?? 0;
-
-  const viewRows = db
-    .select()
-    .from(schema.savedViews)
-    .where(eq(schema.savedViews.vaultId, tag.vaultId))
-    .all();
-  const updatedViews: Array<{ id: string; name: string }> = [];
-  const deletedViews: Array<{ id: string; name: string }> = [];
-
-  db.transaction((tx) => {
-    for (const view of viewRows) {
-      const filters = parseSavedViewFilters(view.filterJson);
-      if (!filters.tagIds.includes(tag.id)) {
-        continue;
-      }
-
-      const nextFilters = {
-        ...filters,
-        tagIds: filters.tagIds.filter((id) => id !== tag.id),
-      };
-      const hasOnlyDeletedTag =
-        filters.tagIds.length === 1 &&
-        filters.types.length === 0 &&
-        filters.sources.length === 0 &&
-        filters.time === "any" &&
-        filters.status === "any";
-
-      if (hasOnlyDeletedTag) {
-        tx.delete(schema.savedViews).where(eq(schema.savedViews.id, view.id)).run();
-        deletedViews.push({ id: view.id, name: view.name });
-      } else {
-        tx.update(schema.savedViews)
-          .set({ filterJson: serializeSavedViewFilters(nextFilters), updatedAt: now })
-          .where(eq(schema.savedViews.id, view.id))
-          .run();
-        updatedViews.push({ id: view.id, name: view.name });
-      }
-    }
-
-    tx.delete(schema.tags).where(eq(schema.tags.id, tag.id)).run();
-  });
-
-  return {
-    id: tag.id,
-    name: tag.name,
-    affectedAssetCount,
-    updatedViews,
-    deletedViews,
-  };
-}
-
 export const assetsRouter = router({
   vaults: publicProcedure.query(() => {
     return listVaults();
   }),
 
-  importPath: publicProcedure.input(importPathInput).mutation(async ({ input }) => {
+  importPath: publicProcedure.input(importPathInputSchema).mutation(async ({ input }) => {
     const vaultId = getOrCreateVaultId(input.rootPath, input.name);
     const result = await runIndexerTask("scan", "indexing", {
       vaultId,
@@ -389,44 +146,40 @@ export const assetsRouter = router({
     };
   }),
 
-  activateVault: publicProcedure
-    .input(z.object({ vaultId: z.string().min(1) }))
-    .mutation(({ input }) => {
-      const vault = getVaultOrThrow(input.vaultId);
-      const now = new Date();
+  activateVault: publicProcedure.input(activateVaultInputSchema).mutation(({ input }) => {
+    const vault = getVaultOrThrow(input.vaultId);
+    const now = new Date();
 
-      getDatabase()
-        .update(schema.vaults)
-        .set({ lastOpenedAt: now, updatedAt: now })
-        .where(eq(schema.vaults.id, vault.id))
-        .run();
+    getDatabase()
+      .update(schema.vaults)
+      .set({ lastOpenedAt: now, updatedAt: now })
+      .where(eq(schema.vaults.id, vault.id))
+      .run();
 
-      return {
-        vaultId: vault.id,
-        rootPath: vault.rootPath,
-      };
-    }),
+    return {
+      vaultId: vault.id,
+      rootPath: vault.rootPath,
+    };
+  }),
 
-  reconcile: publicProcedure
-    .input(z.object({ vaultId: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      const vault = getVaultOrThrow(input.vaultId);
-      const result = await runIndexerTask("reconcile", "reconcile", {
-        vaultId: vault.id,
-        rootPath: vault.rootPath,
-        vaultName: vault.name,
-        title: "Reindexing folder",
-      });
-      startThumbnailPrewarm(vault, { force: true });
+  reconcile: publicProcedure.input(reconcileVaultInputSchema).mutation(async ({ input }) => {
+    const vault = getVaultOrThrow(input.vaultId);
+    const result = await runIndexerTask("reconcile", "reconcile", {
+      vaultId: vault.id,
+      rootPath: vault.rootPath,
+      vaultName: vault.name,
+      title: "Reindexing folder",
+    });
+    startThumbnailPrewarm(vault, { force: true });
 
-      return {
-        vaultId: vault.id,
-        rootPath: vault.rootPath,
-        events: result.events,
-      };
-    }),
+    return {
+      vaultId: vault.id,
+      rootPath: vault.rootPath,
+      events: result.events,
+    };
+  }),
 
-  sidebarMeta: publicProcedure.input(vaultInput.optional()).query(({ input }) => {
+  sidebarMeta: publicProcedure.input(optionalVaultInputSchema.optional()).query(({ input }) => {
     const vault = getRequestedOrActiveVault(input?.vaultId);
     if (!vault) {
       return {
@@ -452,7 +205,7 @@ export const assetsRouter = router({
     };
   }),
 
-  list: publicProcedure.input(assetListInput).query(({ input }) => {
+  list: publicProcedure.input(assetListInputSchema).query(({ input }) => {
     const vault = getRequestedOrActiveVault(input?.vaultId);
     if (!vault) {
       return {
@@ -478,7 +231,7 @@ export const assetsRouter = router({
     });
   }),
 
-  byId: publicProcedure.input(z.object({ id: z.string().min(1) })).query(({ input }) => {
+  byId: publicProcedure.input(assetByIdInputSchema).query(({ input }) => {
     const rows = getAssetRows(undefined, input.id);
     const asset = attachRelations(rows)[0];
 
@@ -489,7 +242,7 @@ export const assetsRouter = router({
     return asset;
   }),
 
-  graphData: publicProcedure.input(vaultInput.optional()).query(({ input }) => {
+  graphData: publicProcedure.input(optionalVaultInputSchema.optional()).query(({ input }) => {
     const vault = getRequestedOrActiveVault(input?.vaultId);
     if (!vault) return { nodes: [], edges: [] };
 
@@ -545,28 +298,26 @@ export const assetsRouter = router({
   }),
 
   markdownContent: publicProcedure
-    .input(z.object({ id: z.string().min(1) }))
+    .input(assetMarkdownContentInputSchema)
     .query(({ input }) => readMarkdownContent(input.id)),
 
-  openFile: publicProcedure
-    .input(z.object({ id: z.string().min(1) }))
-    .mutation(async ({ input }) => {
-      const row = getAssetRows(undefined, input.id)[0];
-      if (!row) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
-      }
+  openFile: publicProcedure.input(openFileInputSchema).mutation(async ({ input }) => {
+    const row = getAssetRows(undefined, input.id)[0];
+    if (!row) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
+    }
 
-      const absolutePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
-      const error = await shell.openPath(absolutePath);
-      if (error) {
-        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error });
-      }
+    const absolutePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
+    const error = await shell.openPath(absolutePath);
+    if (error) {
+      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: error });
+    }
 
-      return { absolutePath };
-    }),
+    return { absolutePath };
+  }),
 
   openVaultLocation: publicProcedure
-    .input(z.object({ target: z.enum(["vscode", "cursor", "zed", "finder"]) }))
+    .input(openVaultLocationInputSchema)
     .mutation(async ({ input }) => {
       const vault = getRequestedOrActiveVault(undefined);
       if (!vault) {
@@ -588,7 +339,7 @@ export const assetsRouter = router({
     }),
 
   openAssetInEditor: publicProcedure
-    .input(z.object({ id: z.string().min(1), target: z.enum(["vscode", "cursor", "zed"]) }))
+    .input(openAssetInEditorInputSchema)
     .mutation(async ({ input }) => {
       const row = getAssetRows(undefined, input.id)[0];
       if (!row) {
@@ -602,25 +353,18 @@ export const assetsRouter = router({
       return { filePath, target: input.target };
     }),
 
-  copyAssetPath: publicProcedure
-    .input(z.object({ id: z.string().min(1) }))
-    .mutation(({ input }) => {
-      const row = getAssetRows(undefined, input.id)[0];
-      if (!row) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
-      }
-      const filePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
-      clipboard.writeText(filePath);
-      return { path: filePath };
-    }),
+  copyAssetPath: publicProcedure.input(copyAssetPathInputSchema).mutation(({ input }) => {
+    const row = getAssetRows(undefined, input.id)[0];
+    if (!row) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
+    }
+    const filePath = resolveVaultFilePath(row.vault.rootPath, row.file.relativePath);
+    clipboard.writeText(filePath);
+    return { path: filePath };
+  }),
 
   ensureThumbnails: publicProcedure
-    .input(
-      z.object({
-        vaultId: z.string().min(1).optional(),
-        assetIds: z.array(z.string().min(1)).max(80).default([]),
-      }),
-    )
+    .input(ensureThumbnailsInputSchema)
     .mutation(async ({ input }) => {
       if (input.assetIds.length === 0) {
         return { events: [], requested: 0 };
@@ -644,167 +388,43 @@ export const assetsRouter = router({
       };
     }),
 
-  createTag: publicProcedure.input(tagInput).mutation(({ input }) => {
-    const vault = getActiveVaultOrThrow(input.vaultId);
-    assertUniqueTagName(vault.id, input.name);
-    const now = new Date();
-
-    return getDatabase()
-      .insert(schema.tags)
-      .values({
-        id: randomUUID(),
-        vaultId: vault.id,
-        name: input.name,
-        color: normalizeNullableText(input.color),
-        sortOrder: getNextTagSortOrder(vault.id),
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning()
-      .get();
+  createTag: publicProcedure.input(tagInputSchema).mutation(({ input }) => {
+    return runDomain((ctx) => createTag(ctx, input));
   }),
 
-  updateTag: publicProcedure
-    .input(tagInput.extend({ id: z.string().min(1) }))
-    .mutation(({ input }) => {
-      const tag = getTagOrThrow(input.id);
-      assertUniqueTagName(tag.vaultId, input.name, tag.id);
-
-      const nextTag = getDatabase()
-        .update(schema.tags)
-        .set({
-          name: input.name,
-          color: normalizeNullableText(input.color),
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.tags.id, tag.id))
-        .returning()
-        .get();
-
-      if (!nextTag) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Tag not found" });
-      }
-
-      return nextTag;
-    }),
-
-  deleteTag: publicProcedure.input(z.object({ id: z.string().min(1) })).mutation(({ input }) => {
-    return deleteTagAndCleanViews(input.id);
+  updateTag: publicProcedure.input(updateTagInputSchema).mutation(({ input }) => {
+    return runDomain((ctx) => updateTag(ctx, input));
   }),
 
-  reorderTags: publicProcedure
-    .input(
-      z.object({ vaultId: z.string().min(1).optional(), orderedIds: z.array(z.string().min(1)) }),
-    )
-    .mutation(({ input }) => {
-      const vault = getActiveVaultOrThrow(input.vaultId);
-      return reorderTags(vault.id, input.orderedIds);
-    }),
-
-  createSavedView: publicProcedure.input(savedViewInput).mutation(({ input }) => {
-    const vault = getActiveVaultOrThrow(input.vaultId);
-    assertUniqueSavedViewName(vault.id, input.name);
-    const filters = normalizeSavedViewFilters(vault.id, input.filters);
-    const now = new Date();
-
-    return getDatabase()
-      .insert(schema.savedViews)
-      .values({
-        id: randomUUID(),
-        vaultId: vault.id,
-        name: input.name,
-        icon: normalizeSavedViewIcon(input.icon),
-        filterJson: serializeSavedViewFilters(filters),
-        sortJson: serializeSavedViewSort(input.sort),
-        sortOrder: getNextSavedViewSortOrder(vault.id),
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning()
-      .get();
+  deleteTag: publicProcedure.input(deleteTagInputSchema).mutation(({ input }) => {
+    return runDomain((ctx) => deleteTagAndCleanViews(ctx, input.id));
   }),
 
-  updateSavedView: publicProcedure
-    .input(savedViewInput.extend({ id: z.string().min(1) }))
-    .mutation(({ input }) => {
-      const view = getSavedViewOrThrow(input.id);
-      assertUniqueSavedViewName(view.vaultId, input.name, view.id);
-      const filters = normalizeSavedViewFilters(view.vaultId, input.filters);
+  reorderTags: publicProcedure.input(reorderTagsInputSchema).mutation(({ input }) => {
+    return runDomain((ctx) => reorderTags(ctx, input));
+  }),
 
-      const nextView = getDatabase()
-        .update(schema.savedViews)
-        .set({
-          name: input.name,
-          icon: normalizeSavedViewIcon(input.icon),
-          filterJson: serializeSavedViewFilters(filters),
-          sortJson: serializeSavedViewSort(input.sort),
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.savedViews.id, view.id))
-        .returning()
-        .get();
+  createSavedView: publicProcedure.input(savedViewInputSchema).mutation(({ input }) => {
+    return runDomain((ctx) => createSavedView(ctx, input));
+  }),
 
-      if (!nextView) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "View not found" });
-      }
+  updateSavedView: publicProcedure.input(updateSavedViewInputSchema).mutation(({ input }) => {
+    return runDomain((ctx) => updateSavedView(ctx, input));
+  }),
 
-      return nextView;
-    }),
+  deleteSavedView: publicProcedure.input(deleteSavedViewInputSchema).mutation(({ input }) => {
+    return runDomain((ctx) => deleteSavedView(ctx, input.id));
+  }),
 
-  deleteSavedView: publicProcedure
-    .input(z.object({ id: z.string().min(1) }))
-    .mutation(({ input }) => {
-      const view = getDatabase()
-        .delete(schema.savedViews)
-        .where(eq(schema.savedViews.id, input.id))
-        .returning({ id: schema.savedViews.id })
-        .get();
+  reorderSavedViews: publicProcedure.input(reorderSavedViewsInputSchema).mutation(({ input }) => {
+    return runDomain((ctx) => reorderSavedViews(ctx, input));
+  }),
 
-      if (!view) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "View not found" });
-      }
+  addTag: publicProcedure.input(addTagToAssetInputSchema).mutation(({ input }) => {
+    return runDomain((ctx) => addTagToAsset(ctx, input));
+  }),
 
-      return view;
-    }),
-
-  reorderSavedViews: publicProcedure
-    .input(
-      z.object({ vaultId: z.string().min(1).optional(), orderedIds: z.array(z.string().min(1)) }),
-    )
-    .mutation(({ input }) => {
-      const vault = getActiveVaultOrThrow(input.vaultId);
-      return reorderSavedViews(vault.id, input.orderedIds);
-    }),
-
-  addTag: publicProcedure
-    .input(z.object({ assetId: z.string().min(1), name: z.string().trim().min(1).max(60) }))
-    .mutation(({ input }) => {
-      const row = getAssetRows(undefined, input.assetId)[0];
-      if (!row) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
-      }
-
-      const now = new Date();
-      const tag = upsertTag(row.asset.vaultId, input.name, now);
-      getDatabase()
-        .insert(schema.assetTags)
-        .values({ assetId: input.assetId, tagId: tag.id, createdAt: now })
-        .onConflictDoNothing()
-        .run();
-
-      return tag;
-    }),
-
-  removeTag: publicProcedure
-    .input(z.object({ assetId: z.string().min(1), tagId: z.string().min(1) }))
-    .mutation(({ input }) => {
-      getDatabase()
-        .delete(schema.assetTags)
-        .where(
-          and(eq(schema.assetTags.assetId, input.assetId), eq(schema.assetTags.tagId, input.tagId)),
-        )
-        .run();
-
-      return { assetId: input.assetId, tagId: input.tagId };
-    }),
+  removeTag: publicProcedure.input(removeTagFromAssetInputSchema).mutation(({ input }) => {
+    return runDomain((ctx) => removeTagFromAsset(ctx, input));
+  }),
 });
