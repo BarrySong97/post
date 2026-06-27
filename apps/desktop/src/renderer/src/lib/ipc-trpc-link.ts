@@ -9,6 +9,7 @@ import { TRPCClientError, type TRPCLink } from "@trpc/client";
 import { observable } from "@trpc/server/observable";
 
 import type { AppRouter } from "@main/trpc/router";
+import { emitAssetProfile, roundProfileNumber } from "./asset-profile";
 
 type IPCResponse =
   | {
@@ -23,6 +24,36 @@ type IPCResponse =
     };
 
 let nextSubscriptionId = 0;
+
+function getAssetTRPCResponseSummary(path: string, data: unknown) {
+  if (!path.startsWith("assets.")) {
+    return null;
+  }
+
+  if (data == null || typeof data !== "object") {
+    return {};
+  }
+
+  const record = data as {
+    items?: unknown;
+    total?: unknown;
+    nextCursor?: unknown;
+    vault?: unknown;
+    tags?: unknown;
+    views?: unknown;
+    summary?: unknown;
+  };
+
+  return {
+    itemCount: Array.isArray(record.items) ? record.items.length : undefined,
+    total: typeof record.total === "number" ? record.total : undefined,
+    hasNext: record.nextCursor != null ? true : undefined,
+    hasVault: record.vault != null ? true : undefined,
+    tagCount: Array.isArray(record.tags) ? record.tags.length : undefined,
+    viewCount: Array.isArray(record.views) ? record.views.length : undefined,
+    hasSummary: record.summary != null ? true : undefined,
+  };
+}
 
 export function ipcTRPCLink(): TRPCLink<AppRouter> {
   return () => {
@@ -69,6 +100,8 @@ export function ipcTRPCLink(): TRPCLink<AppRouter> {
           };
         }
 
+        const startedAt = performance.now();
+
         window.api
           .trpcRequest({
             type: op.type,
@@ -79,6 +112,19 @@ export function ipcTRPCLink(): TRPCLink<AppRouter> {
             if (!isActive) return;
 
             const result = response as IPCResponse;
+            const responseSummary = result.ok
+              ? getAssetTRPCResponseSummary(op.path, result.data)
+              : null;
+            if (responseSummary) {
+              emitAssetProfile("trpc.response", {
+                path: op.path,
+                type: op.type,
+                durationMs: roundProfileNumber(performance.now() - startedAt),
+                ok: result.ok,
+                ...responseSummary,
+              });
+            }
+
             if (!result.ok) {
               observer.error(TRPCClientError.from(new Error(result.error.message)));
               return;
@@ -94,6 +140,14 @@ export function ipcTRPCLink(): TRPCLink<AppRouter> {
           })
           .catch((error: unknown) => {
             if (!isActive) return;
+            if (op.path.startsWith("assets.")) {
+              emitAssetProfile("trpc.error", {
+                path: op.path,
+                type: op.type,
+                durationMs: roundProfileNumber(performance.now() - startedAt),
+                message: error instanceof Error ? error.message : String(error),
+              });
+            }
             observer.error(
               TRPCClientError.from(error instanceof Error ? error : new Error(String(error))),
             );

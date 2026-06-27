@@ -6,7 +6,6 @@
   "exports": {
     ".": "./src/index.ts",
     "./assets": "./src/assets/index.ts",
-    "./galleries": "./src/galleries/index.ts",
     "./saved-views": "./src/saved-views/index.ts",
     "./tags": "./src/tags/index.ts",
     "./vaults": "./src/vaults/index.ts"

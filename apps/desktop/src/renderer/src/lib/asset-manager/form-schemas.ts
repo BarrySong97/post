@@ -12,10 +12,6 @@ import {
   SAVED_VIEW_NAME_MAX_LENGTH,
 } from "@shared/contracts/assets/saved-views/saved-view.contract";
 import { TAG_NAME_MAX_LENGTH } from "@shared/contracts/assets/tags/tag.contract";
-import {
-  GALLERY_DESCRIPTION_MAX_LENGTH,
-  GALLERY_TITLE_MAX_LENGTH,
-} from "@shared/contracts/galleries/gallery.contract";
 import type { AssetFilterState } from "@/store/asset-manager-atoms";
 
 export const tagFormSchema = z.object({
@@ -38,20 +34,5 @@ export const viewFormSchema = z.object({
   filters: z.custom<AssetFilterState>(),
 });
 
-export const galleryFormSchema = z.object({
-  title: z
-    .string()
-    .trim()
-    .min(1, "请输入图集标题")
-    .max(GALLERY_TITLE_MAX_LENGTH, `标题不能超过 ${GALLERY_TITLE_MAX_LENGTH} 个字符`),
-  description: z
-    .string()
-    .trim()
-    .max(GALLERY_DESCRIPTION_MAX_LENGTH, `描述不能超过 ${GALLERY_DESCRIPTION_MAX_LENGTH} 个字符`),
-  status: z.enum(["inbox", "organized", "draft", "published", "archived"]),
-  privacy: z.enum(["normal", "private"]),
-});
-
 export type TagFormValues = z.infer<typeof tagFormSchema>;
 export type ViewFormValues = z.infer<typeof viewFormSchema>;
-export type GalleryFormValues = z.infer<typeof galleryFormSchema>;

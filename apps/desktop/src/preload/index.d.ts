@@ -68,6 +68,8 @@ declare global {
         onExit: (callback: (event: TerminalExitEvent) => void) => () => void;
       };
       trpcRequest: (request: { type: string; path: string; input: unknown }) => Promise<unknown>;
+      getAssetProfileLogPath: () => Promise<string>;
+      assetProfileLog: (entry: { event: string; data?: Record<string, unknown> }) => void;
       trpcSubscribe: (request: { id: string; path: string; input: unknown }) => void;
       trpcUnsubscribe: (request: { id: string }) => void;
       onTRPCSubscriptionEvent: (callback: (event: TRPCSubscriptionEvent) => void) => () => void;

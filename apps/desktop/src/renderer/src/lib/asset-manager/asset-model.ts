@@ -5,16 +5,7 @@
  * @gotcha  Keep asset kind/status/tag/view contracts synchronized with packages/db schema and saved-view JSON.
  */
 
-import type {
-  Asset,
-  AssetBoardCard,
-  AssetKind,
-  AssetStatus,
-  GalleryCard,
-  IndexedAsset,
-  IndexedBoardItem,
-  IndexedGallery,
-} from "@/lib/asset-manager/types";
+import type { Asset, AssetKind, AssetStatus, IndexedAsset } from "@/lib/asset-manager/types";
 import { buildAssetFileUrl, buildAssetThumbnailUrl } from "@/lib/asset-manager/asset-url";
 import type {
   AssetFilterState,
@@ -63,6 +54,15 @@ export function formatBytes(sizeBytes: number) {
   return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// Hoisted to module scope: constructing an Intl.DateTimeFormat is expensive, and
+// mapIndexedAsset runs once per asset (up to ~180 per hydrate batch). Reuse one instance.
+const ASSET_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function formatAssetTime(value: unknown) {
   const date = value instanceof Date ? value : new Date(value as string | number);
 
@@ -70,12 +70,7 @@ function formatAssetTime(value: unknown) {
     return "刚刚";
   }
 
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+  return ASSET_TIME_FORMATTER.format(date);
 }
 
 function getAssetTimestampMs(value: unknown, fallbackMs = Date.now()) {
@@ -140,42 +135,6 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     related: asset.relatedIds,
     fileExt: kind === "file" || kind === "image" || kind === "video" ? extension : undefined,
     imageCount: kind === "image" ? 1 : undefined,
-  };
-}
-
-export function mapIndexedGallery(gallery: IndexedGallery): GalleryCard {
-  const updatedTimestampMs = getAssetTimestampMs(gallery.updatedAt);
-  const cover = gallery.cover ? mapIndexedAsset(gallery.cover) : null;
-
-  return {
-    id: gallery.id,
-    vaultId: gallery.vaultId,
-    title: gallery.title,
-    description: gallery.description,
-    status: mapIndexedAssetStatus(gallery.status),
-    privacy: gallery.privacy,
-    coverAssetId: gallery.coverAssetId,
-    memberCount: gallery.memberCount,
-    missingCount: gallery.missingCount,
-    timestampMs: updatedTimestampMs,
-    createdTimestampMs: getAssetTimestampMs(gallery.createdAt, updatedTimestampMs),
-    cover,
-  };
-}
-
-export function mapIndexedBoardItem(item: IndexedBoardItem): AssetBoardCard {
-  if (item.itemType === "gallery") {
-    return {
-      itemType: "gallery",
-      id: item.id,
-      gallery: mapIndexedGallery(item.gallery),
-    };
-  }
-
-  return {
-    itemType: "asset",
-    id: item.id,
-    asset: mapIndexedAsset(item.asset),
   };
 }
 

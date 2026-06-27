@@ -13,9 +13,15 @@ import { getDatabasePath, initDatabase } from "../db";
 import { registerTerminalHandlers } from "../terminal";
 import { vaultWatcherManager } from "../vault-watcher-manager";
 import { startLocalIpcServer, stopLocalIpcServer } from "../local-ipc-server";
+import { registerAssetProfileLogHandlers } from "../presentation/ipc/asset-profile.ipc";
 import { registerWindowControlsHandlers } from "../presentation/ipc/window-controls.ipc";
 import { registerAssetProtocol } from "../presentation/protocols/post-file.protocol";
 import { registerTRPCIPCHandler } from "../presentation/trpc/ipc-adapter";
+import {
+  getAssetProfileLogPath,
+  resetAssetProfileLog,
+  writeAssetProfileLog,
+} from "../services/asset-profile-log-service";
 import { APP_DISPLAY_NAME } from "./app-info";
 import { isDevRuntime } from "./runtime-env";
 import { createWindow, getDevDockIconPath } from "./window";
@@ -44,6 +50,10 @@ export function bootApplication(): void {
 
   app.whenReady().then(() => {
     initDatabase();
+    resetAssetProfileLog();
+    writeAssetProfileLog("main", "session.start", {
+      logPath: getAssetProfileLogPath(),
+    });
     startLocalIpcServer(app.getPath("userData"));
     electronApp.setAppUserModelId("com.post.desktop");
     applyDevDockIcon();
@@ -53,6 +63,7 @@ export function bootApplication(): void {
     });
 
     ipcMain.handle("get-database-path", () => getDatabasePath());
+    registerAssetProfileLogHandlers();
     registerWindowControlsHandlers();
     registerTRPCIPCHandler();
     registerAssetProtocol();

@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-`packages/cli` owns the Post command line interface for users and AI agents. It exposes safe organization commands for tags, asset-tag bindings, saved views, galleries, and supporting asset/vault queries.
+`packages/cli` owns the Post command line interface for users and AI agents. It exposes safe organization commands for tags, asset-tag bindings, saved views, and supporting asset/vault queries.
 
 The CLI is a full organization interface, not a raw SQLite shell. It calls `@post/domain` so writes use the same business rules as the desktop app.
 

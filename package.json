@@ -19,6 +19,8 @@
     "db:migrate": "pnpm -F @post/db db:migrate",
     "db:studio": "pnpm -F @post/db db:studio",
     "post-cli": "pnpm -F @post/cli post-cli",
+    "perf:seed-assets": "node scripts/perf/seed-asset-fixture.mjs",
+    "perf:measure-assets": "node scripts/perf/measure-asset-list.mjs",
     "ffmpeg:prepare": "node scripts/prepare-ffmpeg.mjs",
     "indexer:build": "cargo build -p post-indexer --release",
     "indexer:check": "cargo check -p post-indexer",

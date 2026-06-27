@@ -13,36 +13,26 @@ import { Command } from "commander";
 import { count } from "drizzle-orm";
 
 import {
-  addGalleryItems,
   addTagToAsset,
-  createGallery,
   createSavedView,
   createTag,
-  deleteGallery,
   deleteSavedView,
   deleteTagAndCleanViews,
   getAssetTags,
-  getGalleryById,
   getRequestedOrActiveVault,
   listAssets,
-  listGalleries,
   listSavedViews,
   listTags,
   listVaults,
-  removeGalleryItems,
   removeTagFromAsset,
-  reorderGalleryItems,
   reorderSavedViews,
   reorderTags,
-  setGalleryCover,
-  updateGallery,
-  updateGalleryItemCaption,
   updateSavedView,
   updateTag,
   type AssetListSort,
   type SavedViewFilters,
 } from "@post/domain";
-import { schema, type AssetKind, type AssetPrivacy, type AssetStatus } from "@post/db";
+import { schema, type AssetKind, type AssetStatus } from "@post/db";
 
 import { writeError, writeSuccess, exitCodeForError } from "./output/format";
 import { createCliRuntime, type CliGlobalOptions } from "./runtime/context";
@@ -73,22 +63,7 @@ type PatchOperation =
       sort?: AssetListSort;
     }
   | { op: "view.delete"; viewId: string }
-  | { op: "view.reorder"; orderedViewIds: string[] }
-  | { op: "gallery.create"; title: string; description?: string | null; assetIds: string[] }
-  | {
-      op: "gallery.update";
-      galleryId: string;
-      title: string;
-      description?: string | null;
-      status?: AssetStatus;
-      privacy?: AssetPrivacy;
-    }
-  | { op: "gallery.delete"; galleryId: string }
-  | { op: "gallery.add"; galleryId: string; assetIds: string[] }
-  | { op: "gallery.remove"; galleryId: string; assetIds: string[] }
-  | { op: "gallery.reorder"; galleryId: string; orderedAssetIds: string[] }
-  | { op: "gallery.setCover"; galleryId: string; assetId: string }
-  | { op: "gallery.caption"; galleryId: string; assetId: string; caption?: string | null };
+  | { op: "view.reorder"; orderedViewIds: string[] };
 
 type PatchFile = {
   version: 1;
@@ -166,10 +141,6 @@ function changedScopesForOperation(operation: string): string[] {
     return ["views"];
   }
 
-  if (operation.startsWith("gallery.")) {
-    return ["assets", "galleries"];
-  }
-
   return ["vault"];
 }
 
@@ -239,36 +210,6 @@ function executePatchOperation(
       return deleteSavedView(ctx, operation.viewId);
     case "view.reorder":
       return reorderSavedViews(ctx, { orderedIds: operation.orderedViewIds });
-    case "gallery.create":
-      return createGallery(ctx, operation);
-    case "gallery.update": {
-      const current = getGalleryById(ctx, operation.galleryId).gallery;
-      return updateGallery(ctx, {
-        galleryId: operation.galleryId,
-        title: operation.title,
-        description: operation.description ?? current.description,
-        status: operation.status ?? current.status,
-        privacy: operation.privacy ?? current.privacy,
-      });
-    }
-    case "gallery.delete":
-      return deleteGallery(ctx, operation.galleryId);
-    case "gallery.add":
-      return addGalleryItems(ctx, {
-        galleryId: operation.galleryId,
-        assetIds: operation.assetIds,
-      });
-    case "gallery.remove":
-      return removeGalleryItems(ctx, {
-        galleryId: operation.galleryId,
-        assetIds: operation.assetIds,
-      });
-    case "gallery.reorder":
-      return reorderGalleryItems(ctx, operation);
-    case "gallery.setCover":
-      return setGalleryCover(ctx, operation);
-    case "gallery.caption":
-      return updateGalleryItemCaption(ctx, operation);
   }
 }
 
@@ -293,15 +234,12 @@ program
         runtime.ctx.db.select({ total: count() }).from(schema.tags).get()?.total ?? 0;
       const viewCount =
         runtime.ctx.db.select({ total: count() }).from(schema.savedViews).get()?.total ?? 0;
-      const galleryCount =
-        runtime.ctx.db.select({ total: count() }).from(schema.assetGalleries).get()?.total ?? 0;
-
       return {
         cli: { name: "post-cli", version: "0.0.0", patchVersion: 1 },
         database: { path: runtime.dbPath, migrationsFolder: runtime.migrationsFolder },
         activeVault: vault,
-        counts: { assets: assetCount, tags: tagCount, views: viewCount, galleries: galleryCount },
-        operations: ["tag.*", "asset.tag.*", "view.*", "gallery.*", "apply-patch"],
+        counts: { assets: assetCount, tags: tagCount, views: viewCount },
+        operations: ["tag.*", "asset.tag.*", "view.*", "apply-patch"],
       };
     });
   });
@@ -576,154 +514,6 @@ view
     const options = { ...globalOptions(), ...local };
     return runWrite("view.reorder", options, { viewIds }, (runtime) =>
       reorderSavedViews(runtime.ctx, { orderedIds: viewIds }),
-    );
-  });
-
-const gallery = program.command("gallery").description("Manage galleries");
-gallery
-  .command("list")
-  .action(() => runRead(globalOptions(), (runtime) => listGalleries(runtime.ctx)));
-gallery
-  .command("get")
-  .argument("<galleryId>")
-  .action((galleryId: string) => {
-    runRead(globalOptions(), (runtime) => getGalleryById(runtime.ctx, galleryId));
-  });
-gallery
-  .command("create")
-  .argument("<title>")
-  .option(
-    "--asset <assetId>",
-    "Image asset id",
-    (value, previous: string[] = []) => [...previous, value],
-    [],
-  )
-  .option("--description <description>", "Gallery description")
-  .option("--commit", "Write changes")
-  .action((title: string, local: WriteOptions & { asset?: string[]; description?: string }) => {
-    const options = { ...globalOptions(), ...local };
-    const input = { title, description: local.description, assetIds: local.asset ?? [] };
-    return runWrite("gallery.create", options, input, (runtime) =>
-      createGallery(runtime.ctx, input),
-    );
-  });
-gallery
-  .command("delete")
-  .argument("<galleryId>")
-  .option("--commit", "Write changes")
-  .action((galleryId: string, local: WriteOptions) => {
-    const options = { ...globalOptions(), ...local };
-    return runWrite("gallery.delete", options, { galleryId }, (runtime) =>
-      deleteGallery(runtime.ctx, galleryId),
-    );
-  });
-gallery
-  .command("update")
-  .argument("<galleryId>")
-  .option("--title <title>", "Gallery title")
-  .option("--description <description>", "Gallery description")
-  .option("--status <status>", "Gallery status")
-  .option("--privacy <privacy>", "Gallery privacy")
-  .option("--commit", "Write changes")
-  .action(
-    (
-      galleryId: string,
-      local: WriteOptions & {
-        title?: string;
-        description?: string;
-        status?: AssetStatus;
-        privacy?: AssetPrivacy;
-      },
-    ) => {
-      const options = { ...globalOptions(), ...local };
-      const input = {
-        galleryId,
-        title: local.title,
-        description: local.description,
-        status: local.status,
-        privacy: local.privacy,
-      };
-      return runWrite("gallery.update", options, input, (runtime) => {
-        const current = getGalleryById(runtime.ctx, galleryId).gallery;
-        return updateGallery(runtime.ctx, {
-          galleryId,
-          title: local.title ?? current.title,
-          description: local.description ?? current.description,
-          status: local.status ?? current.status,
-          privacy: local.privacy ?? current.privacy,
-        });
-      });
-    },
-  );
-gallery
-  .command("add")
-  .argument("<galleryId>")
-  .option(
-    "--asset <assetId>",
-    "Image asset id",
-    (value, previous: string[] = []) => [...previous, value],
-    [],
-  )
-  .option("--commit", "Write changes")
-  .action((galleryId: string, local: WriteOptions & { asset?: string[] }) => {
-    const options = { ...globalOptions(), ...local };
-    const input = { galleryId, assetIds: local.asset ?? [] };
-    return runWrite("gallery.add", options, input, (runtime) =>
-      addGalleryItems(runtime.ctx, input),
-    );
-  });
-gallery
-  .command("remove")
-  .argument("<galleryId>")
-  .option(
-    "--asset <assetId>",
-    "Image asset id",
-    (value, previous: string[] = []) => [...previous, value],
-    [],
-  )
-  .option("--commit", "Write changes")
-  .action((galleryId: string, local: WriteOptions & { asset?: string[] }) => {
-    const options = { ...globalOptions(), ...local };
-    const input = { galleryId, assetIds: local.asset ?? [] };
-    return runWrite("gallery.remove", options, input, (runtime) =>
-      removeGalleryItems(runtime.ctx, input),
-    );
-  });
-gallery
-  .command("reorder")
-  .argument("<galleryId>")
-  .argument("<assetIds...>")
-  .option("--commit", "Write changes")
-  .action((galleryId: string, assetIds: string[], local: WriteOptions) => {
-    const options = { ...globalOptions(), ...local };
-    const input = { galleryId, orderedAssetIds: assetIds };
-    return runWrite("gallery.reorder", options, input, (runtime) =>
-      reorderGalleryItems(runtime.ctx, input),
-    );
-  });
-gallery
-  .command("set-cover")
-  .argument("<galleryId>")
-  .argument("<assetId>")
-  .option("--commit", "Write changes")
-  .action((galleryId: string, assetId: string, local: WriteOptions) => {
-    const options = { ...globalOptions(), ...local };
-    const input = { galleryId, assetId };
-    return runWrite("gallery.setCover", options, input, (runtime) =>
-      setGalleryCover(runtime.ctx, input),
-    );
-  });
-gallery
-  .command("caption")
-  .argument("<galleryId>")
-  .argument("<assetId>")
-  .option("--caption <caption>", "Member caption")
-  .option("--commit", "Write changes")
-  .action((galleryId: string, assetId: string, local: WriteOptions & { caption?: string }) => {
-    const options = { ...globalOptions(), ...local };
-    const input = { galleryId, assetId, caption: local.caption };
-    return runWrite("gallery.caption", options, input, (runtime) =>
-      updateGalleryItemCaption(runtime.ctx, input),
     );
   });
 

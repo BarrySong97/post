@@ -5,7 +5,7 @@
  * @gotcha  These queries never mutate vault files; assets are only CLI operation targets.
  */
 
-import { and, asc, desc, eq, inArray, isNull, like } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, like } from "drizzle-orm";
 
 import { schema, type AssetKind, type AssetStatus } from "@post/db";
 
@@ -97,45 +97,4 @@ export function getAssetTags(ctx: DomainContext, assetId: string) {
     .where(eq(schema.assetTags.assetId, assetId))
     .orderBy(asc(schema.tags.sortOrder), asc(schema.tags.name))
     .all();
-}
-
-export function getImageAssetIdsOrThrow(
-  ctx: DomainContext,
-  vaultId: string,
-  assetIds: readonly string[],
-): string[] {
-  const uniqueAssetIds = Array.from(new Set(assetIds));
-  if (uniqueAssetIds.length === 0) {
-    return [];
-  }
-
-  const rows = ctx.db
-    .select({
-      id: schema.assets.id,
-      kind: schema.assets.kind,
-      vaultId: schema.assets.vaultId,
-    })
-    .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.vaultId, vaultId),
-        inArray(schema.assets.id, uniqueAssetIds),
-        isNull(schema.assets.deletedAt),
-      ),
-    )
-    .all();
-  const rowsById = new Map(rows.map((row) => [row.id, row]));
-
-  for (const assetId of uniqueAssetIds) {
-    const row = rowsById.get(assetId);
-    if (!row) {
-      throw new DomainError("GALLERY_ASSET_UNKNOWN", "Gallery references unknown assets");
-    }
-
-    if (row.kind !== "image") {
-      throw new DomainError("GALLERY_MEMBER_NOT_IMAGE", "Gallery members must be images");
-    }
-  }
-
-  return uniqueAssetIds;
 }

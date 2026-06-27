@@ -9,7 +9,7 @@ Reusable organization workflows shared with the CLI live in [../domain](../domai
 
 ## File Map
 
-- `apps/desktop/src/main/` - Electron app lifecycle, protocol registration, tRPC IPC handler, use cases, repositories, services, watchers, terminal, gallery workflows, and background tasks.
+- `apps/desktop/src/main/` - Electron app lifecycle, protocol registration, tRPC IPC handler, use cases, repositories, services, watchers, terminal, and background tasks.
 - `apps/desktop/src/shared/contracts/` - renderer/main shared Zod input schemas, validation constants, and transport contract types.
 - `apps/desktop/src/preload/` - context bridge exposing the narrow `window.api` surface to the renderer.
 - `apps/desktop/src/renderer/src/` - React app, thin routes, page modules, shared components, renderer libs, state atoms, and tRPC client link.
@@ -32,7 +32,6 @@ For the detailed IPC contract, see [../../topics/electron-trpc-ipc.md](../../top
 - tRPC IPC adapter in `apps/desktop/src/main/presentation/trpc/ipc-adapter.ts`.
 - Domain routers under `apps/desktop/src/main/trpc/routers/`.
 - Shared renderer/main contracts under `apps/desktop/src/shared/contracts/`.
-- Gallery page route at `/galleries/:galleryId`.
 - Terminal IPC handlers in `apps/desktop/src/main/terminal.ts`.
 - Runtime data under Electron `userData`, currently pinned to the legacy `desktop` app data directory unless `POST_USER_DATA_DIR` overrides it.
 - Local IPC server in `apps/desktop/src/main/local-ipc-server.ts` receives best-effort `post-cli` commit notifications and publishes `ledger.changed` events for renderer cache invalidation.

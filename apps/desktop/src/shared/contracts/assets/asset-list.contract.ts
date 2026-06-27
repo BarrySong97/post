@@ -53,5 +53,10 @@ export const assetListInputSchema = optionalVaultInputSchema
   })
   .optional();
 
+export const assetHydrateInputSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(360),
+});
+
 export type AssetListInput = z.infer<typeof assetListInputSchema>;
+export type AssetHydrateInput = z.infer<typeof assetHydrateInputSchema>;
 export type AssetListSortInput = z.infer<typeof assetListSortInputSchema>;

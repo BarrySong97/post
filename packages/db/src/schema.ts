@@ -265,54 +265,6 @@ export const savedViews = sqliteTable(
   ],
 );
 
-export const assetGalleries = sqliteTable(
-  "asset_galleries",
-  {
-    id: text("id").primaryKey(),
-    vaultId: text("vault_id")
-      .notNull()
-      .references(() => vaults.id, { onDelete: "cascade" }),
-    title: text("title").notNull(),
-    description: text("description"),
-    coverAssetId: text("cover_asset_id").references(() => assets.id, { onDelete: "set null" }),
-    status: text("status").$type<AssetStatus>().notNull().default("inbox"),
-    privacy: text("privacy").$type<AssetPrivacy>().notNull().default("normal"),
-    sortOrder: integer("sort_order").notNull().default(0),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
-  },
-  (table) => [
-    index("asset_galleries_vault_updated_at_idx").on(table.vaultId, table.updatedAt),
-    index("asset_galleries_vault_status_idx").on(table.vaultId, table.status),
-    index("asset_galleries_cover_asset_idx").on(table.coverAssetId),
-  ],
-);
-
-export const assetGalleryItems = sqliteTable(
-  "asset_gallery_items",
-  {
-    galleryId: text("gallery_id")
-      .notNull()
-      .references(() => assetGalleries.id, { onDelete: "cascade" }),
-    assetId: text("asset_id")
-      .notNull()
-      .references(() => assets.id, { onDelete: "cascade" }),
-    vaultId: text("vault_id")
-      .notNull()
-      .references(() => vaults.id, { onDelete: "cascade" }),
-    sortOrder: integer("sort_order").notNull().default(0),
-    caption: text("caption"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.galleryId, table.assetId] }),
-    uniqueIndex("asset_gallery_items_vault_asset_unique").on(table.vaultId, table.assetId),
-    index("asset_gallery_items_gallery_sort_order_idx").on(table.galleryId, table.sortOrder),
-    index("asset_gallery_items_vault_asset_idx").on(table.vaultId, table.assetId),
-  ],
-);
-
 export const assetLinks = sqliteTable(
   "asset_links",
   {
@@ -439,10 +391,6 @@ export type AssetTagRecord = typeof assetTags.$inferSelect;
 export type NewAssetTagRecord = typeof assetTags.$inferInsert;
 export type SavedViewRecord = typeof savedViews.$inferSelect;
 export type NewSavedViewRecord = typeof savedViews.$inferInsert;
-export type AssetGalleryRecord = typeof assetGalleries.$inferSelect;
-export type NewAssetGalleryRecord = typeof assetGalleries.$inferInsert;
-export type AssetGalleryItemRecord = typeof assetGalleryItems.$inferSelect;
-export type NewAssetGalleryItemRecord = typeof assetGalleryItems.$inferInsert;
 export type AssetLinkRecord = typeof assetLinks.$inferSelect;
 export type NewAssetLinkRecord = typeof assetLinks.$inferInsert;
 export type MarkdownCacheRecord = typeof markdownCache.$inferSelect;

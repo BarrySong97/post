@@ -43,6 +43,13 @@
       "when": 1781516690226,
       "tag": "0005_known_sentinels",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1781755688655,
+      "tag": "0006_rainy_robbie_robertson",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,7 @@
 
 ## Responsibility
 
-`packages/domain` owns reusable, transport-neutral organization workflows for Post data. Desktop main and the CLI both call this package for tags, asset-tag bindings, saved views, galleries, vault lookup, and asset query helpers.
+`packages/domain` owns reusable, transport-neutral organization workflows for Post data. Desktop main and the CLI both call this package for tags, asset-tag bindings, saved views, vault lookup, and asset query helpers.
 
 It does not resolve Electron `userData`, expose tRPC, parse CLI arguments, or own schema migrations.
 
@@ -13,7 +13,6 @@ It does not resolve Electron `userData`, expose tRPC, parse CLI arguments, or ow
 - `packages/domain/src/assets/` - asset lookup helpers for CLI and organization workflows.
 - `packages/domain/src/tags/` - tag CRUD, ordering, and asset-tag binding workflows.
 - `packages/domain/src/saved-views/` - saved-view CRUD, ordering, and filter serialization.
-- `packages/domain/src/galleries/` - gallery CRUD, membership, ordering, cover, and caption workflows.
 - `packages/domain/src/vaults/` - vault lookup and active-vault helpers.
 
 ## Data Flow
@@ -25,12 +24,11 @@ Desktop main translates `DomainError` to `TRPCError`. The CLI translates the sam
 ## Public Interfaces
 
 - Package exports from `@post/domain`.
-- Domain-specific subpath exports such as `@post/domain/galleries`.
+- Domain-specific subpath exports such as `@post/domain/tags` and `@post/domain/saved-views`.
 - `DomainContext` and `DomainError`.
 
 ## Notes
 
 - Keep this package free of Electron, tRPC, renderer, preload, filesystem UI, and process-management imports.
 - Keep all write workflows explicit and relationship-aware; do not add raw SQL passthrough helpers here.
-- Keep gallery deletion as relationship deletion only. It must not delete assets or vault files.
 - Keep saved-view filter serialization compatible with desktop renderer contracts.

@@ -55,6 +55,8 @@ export type AssetListPageInput = AssetListFilters & {
   cursor?: AssetListCursor;
 };
 
+export type AssetLayoutIndexInput = AssetListFilters;
+
 const URL_FILE_EXTENSIONS = ["url", "webloc"] as const;
 const NON_FILE_ASSET_KINDS = ["markdown", "image", "video", "web"] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -220,12 +222,47 @@ export function attachRelations(rows: AssetJoinedRow[]) {
 
 export type AssetListItem = ReturnType<typeof attachRelations>[number];
 
+export function getAssetRowsByIds(assetIds: readonly string[]) {
+  const uniqueAssetIds = Array.from(new Set(assetIds));
+  if (uniqueAssetIds.length === 0) {
+    return [];
+  }
+
+  const rows = getDatabase()
+    .select({
+      asset: schema.assets,
+      file: schema.assetFiles,
+      vault: schema.vaults,
+      markdown: schema.markdownCache,
+      image: schema.imageCache,
+    })
+    .from(schema.assets)
+    .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
+    .innerJoin(schema.vaults, eq(schema.vaults.id, schema.assets.vaultId))
+    .leftJoin(schema.markdownCache, eq(schema.markdownCache.assetId, schema.assets.id))
+    .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
+    .where(
+      and(
+        inArray(schema.assets.id, uniqueAssetIds),
+        isNull(schema.assets.deletedAt),
+        eq(schema.assetFiles.fileExists, true),
+      ),
+    )
+    .all();
+  const byId = new Map(attachRelations(rows).map((row) => [row.id, row]));
+
+  return uniqueAssetIds
+    .map((id) => byId.get(id))
+    .filter((row): row is AssetListItem => row !== undefined);
+}
+
 function compactConditions(conditions: Array<SQL | undefined>) {
   return conditions.filter((condition): condition is SQL => condition !== undefined);
 }
 
 function getExistingAssetConditions(vaultId: string) {
   return [
+    eq(schema.assetFiles.vaultId, vaultId),
     eq(schema.assets.vaultId, vaultId),
     isNull(schema.assets.deletedAt),
     eq(schema.assetFiles.fileExists, true),
@@ -366,8 +403,8 @@ function getCursorCondition(sort: AssetListSort, cursor: AssetListCursor | undef
     ? lt(sortValue, cursor.valueMs)
     : gt(sortValue, cursor.valueMs);
   const idComparator = isDescending
-    ? lt(schema.assets.id, cursor.id)
-    : gt(schema.assets.id, cursor.id);
+    ? lt(schema.assetFiles.assetId, cursor.id)
+    : gt(schema.assetFiles.assetId, cursor.id);
 
   return or(valueComparator, and(eq(sortValue, cursor.valueMs), idComparator));
 }
@@ -408,7 +445,7 @@ export function getAssetPage(input: AssetListPageInput) {
     .where(and(...whereConditions))
     .orderBy(
       isDescending ? desc(sortValue) : asc(sortValue),
-      isDescending ? desc(schema.assets.id) : asc(schema.assets.id),
+      isDescending ? desc(schema.assetFiles.assetId) : asc(schema.assetFiles.assetId),
     )
     .limit(input.limit + 1)
     .all();
@@ -424,6 +461,49 @@ export function getAssetPage(input: AssetListPageInput) {
           id: overflowRow.asset.id,
         }
       : null,
+  };
+}
+
+export function getAssetLayoutIndex(input: AssetLayoutIndexInput) {
+  const sort = input.sort ?? "updated_desc";
+  const sortValue = getSortValueExpression(sort);
+  const isDescending = sort.endsWith("desc");
+  const rows = getDatabase()
+    .select({
+      id: schema.assets.id,
+      vaultId: schema.assets.vaultId,
+      kind: schema.assets.kind,
+      status: schema.assets.status,
+      privacy: schema.assets.privacy,
+      title: sql<string>`coalesce(${schema.markdownCache.title}, ${schema.assets.title})`,
+      relativePath: schema.assetFiles.relativePath,
+      fileName: schema.assetFiles.fileName,
+      extension: schema.assetFiles.extension,
+      sizeBytes: schema.assetFiles.sizeBytes,
+      mtimeMs: schema.assetFiles.mtimeMs,
+      ctimeMs: schema.assetFiles.ctimeMs,
+      fileExists: schema.assetFiles.fileExists,
+      imageWidth: schema.imageCache.width,
+      imageHeight: schema.imageCache.height,
+      thumbnailWidth: schema.imageCache.thumbnailWidth,
+      thumbnailHeight: schema.imageCache.thumbnailHeight,
+      thumbnailStatus: schema.imageCache.status,
+      sortValue,
+    })
+    .from(schema.assets)
+    .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
+    .leftJoin(schema.markdownCache, eq(schema.markdownCache.assetId, schema.assets.id))
+    .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
+    .where(and(...getAssetFilterConditions(input)))
+    .orderBy(
+      isDescending ? desc(sortValue) : asc(sortValue),
+      isDescending ? desc(schema.assetFiles.assetId) : asc(schema.assetFiles.assetId),
+    )
+    .all();
+
+  return {
+    items: rows.map(({ sortValue: _sortValue, ...row }) => row),
+    total: rows.length,
   };
 }
 

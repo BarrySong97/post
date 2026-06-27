@@ -6,6 +6,7 @@
  */
 
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 
 import { clipboard, shell } from "electron";
 import { TRPCError } from "@trpc/server";
@@ -26,6 +27,7 @@ import {
 import { schema } from "@post/db";
 import {
   ASSET_LIST_DEFAULT_LIMIT,
+  assetHydrateInputSchema,
   assetListInputSchema,
 } from "@shared/contracts/assets/asset-list.contract";
 import {
@@ -61,8 +63,10 @@ import { getDatabase } from "../../db";
 import { chooseVaultFolder } from "../../indexer";
 import {
   attachRelations,
+  getAssetLayoutIndex,
   getAssetPage,
   getAssetRows,
+  getAssetRowsByIds,
   getAssetSummary,
   getSavedViews,
   getSidebarTags,
@@ -77,6 +81,7 @@ import { runThumbnailTask } from "../../thumbnail-tasks";
 import { openVaultInEditor } from "../../services/editor-launch-service";
 import { runIndexerTask } from "../../services/indexer-task-service";
 import { readMarkdownContent } from "../../services/markdown-preview-service";
+import { writeAssetProfileLog } from "../../services/asset-profile-log-service";
 import { startThumbnailPrewarm } from "../../services/thumbnail-service";
 import { resolveVaultFilePath } from "../../services/vault-file-service";
 import { runDomain } from "../../domain-context";
@@ -88,6 +93,29 @@ function getConflictCount(vaultId: string) {
     .from(schema.syncEvents)
     .where(and(eq(schema.syncEvents.vaultId, vaultId), eq(schema.syncEvents.eventType, "conflict")))
     .all().length;
+}
+
+function summarizeAssetListInput(input: {
+  tagId?: string;
+  tagIds?: string[];
+  tagMatch?: string;
+  statusFilter?: string;
+  untagged?: boolean;
+  typeFilters?: string[];
+  timeFilter?: string;
+  sourceTypes?: string[];
+  sort?: string;
+}) {
+  return {
+    tagCount: input.tagIds?.length ?? (input.tagId ? 1 : 0),
+    tagMatch: input.tagMatch,
+    statusFilter: input.statusFilter,
+    untagged: input.untagged,
+    typeCount: input.typeFilters?.length ?? 0,
+    timeFilter: input.timeFilter,
+    sourceCount: input.sourceTypes?.length ?? 0,
+    sort: input.sort,
+  };
 }
 
 export const assetsRouter = router({
@@ -205,6 +233,52 @@ export const assetsRouter = router({
     };
   }),
 
+  layoutIndex: publicProcedure.input(assetListInputSchema).query(({ input }) => {
+    const vault = getRequestedOrActiveVault(input?.vaultId);
+    if (!vault) {
+      writeAssetProfileLog("main", "assets.layoutIndex.noVault");
+      return {
+        items: [],
+        total: 0,
+      };
+    }
+
+    startThumbnailPrewarm(vault);
+    const startedAt = performance.now();
+    const result = getAssetLayoutIndex({
+      vaultId: vault.id,
+      tagIds: input?.tagIds ?? (input?.tagId ? [input.tagId] : undefined),
+      tagMatch: input?.tagMatch,
+      statusFilter: input?.statusFilter,
+      untagged: input?.untagged,
+      typeFilters: input?.typeFilters,
+      timeFilter: input?.timeFilter,
+      sourceTypes: input?.sourceTypes,
+      sort: input?.sort,
+    });
+    writeAssetProfileLog("main", "assets.layoutIndex", {
+      durationMs: performance.now() - startedAt,
+      items: result.items.length,
+      total: result.total,
+      vaultId: vault.id,
+      filters: summarizeAssetListInput(input ?? {}),
+    });
+    return result;
+  }),
+
+  hydrate: publicProcedure.input(assetHydrateInputSchema).query(({ input }) => {
+    const startedAt = performance.now();
+    const items = getAssetRowsByIds(input.ids);
+    writeAssetProfileLog("main", "assets.hydrate", {
+      durationMs: performance.now() - startedAt,
+      requested: input.ids.length,
+      returned: items.length,
+    });
+    return {
+      items,
+    };
+  }),
+
   list: publicProcedure.input(assetListInputSchema).query(({ input }) => {
     const vault = getRequestedOrActiveVault(input?.vaultId);
     if (!vault) {
@@ -216,7 +290,8 @@ export const assetsRouter = router({
     }
 
     startThumbnailPrewarm(vault);
-    return getAssetPage({
+    const startedAt = performance.now();
+    const result = getAssetPage({
       vaultId: vault.id,
       tagIds: input?.tagIds ?? (input?.tagId ? [input.tagId] : undefined),
       tagMatch: input?.tagMatch,
@@ -229,6 +304,15 @@ export const assetsRouter = router({
       cursor: input?.cursor,
       limit: input?.limit ?? ASSET_LIST_DEFAULT_LIMIT,
     });
+    writeAssetProfileLog("main", "assets.list", {
+      durationMs: performance.now() - startedAt,
+      items: result.items.length,
+      total: result.total,
+      hasNext: result.nextCursor !== null,
+      vaultId: vault.id,
+      filters: summarizeAssetListInput(input ?? {}),
+    });
+    return result;
   }),
 
   byId: publicProcedure.input(assetByIdInputSchema).query(({ input }) => {

@@ -81,6 +81,10 @@ const api = {
   },
   trpcRequest: (request: { type: string; path: string; input: unknown }) =>
     ipcRenderer.invoke("trpc:request", request) as Promise<unknown>,
+  getAssetProfileLogPath: () => ipcRenderer.invoke("asset-prof:get-log-path") as Promise<string>,
+  assetProfileLog: (entry: { event: string; data?: Record<string, unknown> }) => {
+    ipcRenderer.send("asset-prof:log", entry);
+  },
   trpcSubscribe: (request: { id: string; path: string; input: unknown }) => {
     ipcRenderer.send("trpc:subscribe", request);
   },
