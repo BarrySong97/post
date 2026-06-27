@@ -24,7 +24,7 @@ use image::{
 use notify::{Config as NotifyConfig, Event as NotifyEvent, PollWatcher, RecursiveMode, Watcher};
 
 const INDEXER_VERSION: &str = "post-indexer/0.1.0";
-const PARSER_VERSION: &str = "markdown-links/0.1.0";
+const PARSER_VERSION: &str = "markdown-links/0.2.0";
 const THUMBNAIL_LONG_EDGE: u32 = 720;
 const THUMBNAIL_JPEG_QUALITY: u8 = 82;
 const THUMBNAIL_DB_FLUSH_BATCH: usize = 8;
@@ -2519,7 +2519,7 @@ fn push_markdown_parse_sql(
     let content = match fs::read_to_string(&markdown_path) {
         Ok(content) => content,
         Err(error) => {
-            push_markdown_cache_sql(sql, config, entry, "failed", None, 0, 0, started_at);
+            push_markdown_cache_sql(sql, config, entry, "failed", None, None, 0, 0, started_at);
             push_sync_event_sql(
                 sql,
                 config,
@@ -2541,12 +2541,14 @@ fn push_markdown_parse_sql(
 
     let links = parse_markdown_links(&content);
     let title = markdown_title(&content).or_else(|| Some(entry.title.clone()));
+    let excerpt = make_excerpt(&content);
     push_markdown_cache_sql(
         sql,
         config,
         entry,
         "parsed",
         title.as_deref(),
+        excerpt.as_deref(),
         word_count(&content),
         links.len(),
         started_at,
@@ -2799,6 +2801,7 @@ fn push_markdown_cache_sql(
     entry: &FileEntry,
     parse_status: &str,
     title: Option<&str>,
+    excerpt: Option<&str>,
     word_count: usize,
     outbound_link_count: usize,
     now: i64,
@@ -2809,10 +2812,11 @@ INSERT INTO markdown_cache (
   asset_id, vault_id, title, excerpt, word_count, headings_json,
   outbound_link_count, inbound_link_count, parse_status, parsed_at, parser_version
 ) VALUES (
-  {}, {}, {}, NULL, {}, '[]', {}, 0, {}, {now}, {}
+  {}, {}, {}, {}, {}, '[]', {}, 0, {}, {now}, {}
 )
 ON CONFLICT(asset_id) DO UPDATE SET
   title = excluded.title,
+  excerpt = excluded.excerpt,
   word_count = excluded.word_count,
   outbound_link_count = excluded.outbound_link_count,
   parse_status = excluded.parse_status,
@@ -2821,6 +2825,7 @@ ON CONFLICT(asset_id) DO UPDATE SET
         sql_text(&entry.asset_id),
         sql_text(&config.vault_id),
         sql_nullable(title),
+        sql_nullable(excerpt),
         word_count,
         outbound_link_count,
         sql_text(parse_status),
@@ -3204,6 +3209,258 @@ fn word_count(content: &str) -> usize {
     content.split_whitespace().count()
 }
 
+/// Build a short plain-text excerpt for card previews: skip YAML frontmatter,
+/// code fences, headings, and other block decorations, then take the first
+/// prose paragraph with inline markup stripped, truncated to a small budget.
+fn make_excerpt(content: &str) -> Option<String> {
+    const MAX_CHARS: usize = 160;
+
+    let mut lines = content.lines().peekable();
+
+    // Skip a leading YAML frontmatter block delimited by `---`.
+    if matches!(lines.peek(), Some(first) if first.trim() == "---") {
+        lines.next();
+        for line in lines.by_ref() {
+            if line.trim() == "---" {
+                break;
+            }
+        }
+    }
+
+    let mut paragraph = String::new();
+    let mut in_code_fence = false;
+
+    for raw_line in lines {
+        let line = raw_line.trim();
+
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_code_fence = !in_code_fence;
+            continue;
+        }
+        if in_code_fence {
+            continue;
+        }
+        if line.is_empty() {
+            if !paragraph.is_empty() {
+                break; // end of the first paragraph
+            }
+            continue;
+        }
+        if is_skippable_block_line(line) {
+            continue;
+        }
+
+        let cleaned = strip_inline_markdown(line);
+        let cleaned = cleaned.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if !paragraph.is_empty() {
+            paragraph.push(' ');
+        }
+        paragraph.push_str(cleaned);
+        if paragraph.chars().count() >= MAX_CHARS {
+            break;
+        }
+    }
+
+    let paragraph = paragraph.trim();
+    if paragraph.is_empty() {
+        return None;
+    }
+    Some(truncate_chars(paragraph, MAX_CHARS))
+}
+
+/// Block-level lines that carry no prose worth showing in a preview.
+fn is_skippable_block_line(line: &str) -> bool {
+    line.starts_with('#') || line.starts_with("<!--") || is_thematic_break(line) || is_table_rule(line)
+}
+
+fn is_thematic_break(line: &str) -> bool {
+    let trimmed: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+    trimmed.len() >= 3
+        && (trimmed.chars().all(|c| c == '-')
+            || trimmed.chars().all(|c| c == '*')
+            || trimmed.chars().all(|c| c == '_'))
+}
+
+fn is_table_rule(line: &str) -> bool {
+    line.contains('-')
+        && line
+            .chars()
+            .all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
+}
+
+/// Remove leading blockquote/list markers, then inline emphasis, code spans,
+/// images, and links (keeping their visible text).
+fn strip_inline_markdown(line: &str) -> String {
+    let chars: Vec<char> = strip_block_prefix(line).chars().collect();
+    let mut out = String::with_capacity(chars.len());
+    let mut i = 0;
+
+    while i < chars.len() {
+        let ch = chars[i];
+
+        // Image `![alt](url)` -> drop entirely.
+        if ch == '!' && chars.get(i + 1) == Some(&'[') {
+            if let Some(next) = consume_link(&chars, i + 1, true, &mut out) {
+                i = next;
+                continue;
+            }
+        }
+
+        if ch == '[' {
+            if chars.get(i + 1) == Some(&'[') {
+                if let Some(next) = consume_wiki_link(&chars, i, &mut out) {
+                    i = next;
+                    continue;
+                }
+            } else if let Some(next) = consume_link(&chars, i, false, &mut out) {
+                i = next;
+                continue;
+            }
+        }
+
+        // Drop emphasis / inline-code / strikethrough markers.
+        if matches!(ch, '*' | '_' | '`' | '~') {
+            i += 1;
+            continue;
+        }
+
+        out.push(ch);
+        i += 1;
+    }
+
+    out
+}
+
+fn strip_block_prefix(line: &str) -> &str {
+    let mut rest = line.trim_start();
+    loop {
+        if let Some(after) = rest.strip_prefix("> ") {
+            rest = after.trim_start();
+            continue;
+        }
+        if rest == ">" {
+            return "";
+        }
+        if let Some(after) = rest
+            .strip_prefix("- ")
+            .or_else(|| rest.strip_prefix("* "))
+            .or_else(|| rest.strip_prefix("+ "))
+        {
+            rest = strip_task_marker(after.trim_start());
+            continue;
+        }
+        if let Some(after) = strip_ordered_marker(rest) {
+            rest = after.trim_start();
+            continue;
+        }
+        break;
+    }
+    rest
+}
+
+fn strip_task_marker(line: &str) -> &str {
+    line.strip_prefix("[ ] ")
+        .or_else(|| line.strip_prefix("[x] "))
+        .or_else(|| line.strip_prefix("[X] "))
+        .unwrap_or(line)
+}
+
+fn strip_ordered_marker(line: &str) -> Option<&str> {
+    let digits_end = line.find(|c: char| !c.is_ascii_digit())?;
+    if digits_end == 0 {
+        return None;
+    }
+    let rest = &line[digits_end..];
+    rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") "))
+}
+
+/// Consume `[text](url)` (or an image when `is_image`) starting at the `[`.
+/// Pushes the visible text for links, nothing for images. Returns the index
+/// past the closing `)`, or `None` if the span is not a well-formed link.
+fn consume_link(chars: &[char], start: usize, is_image: bool, out: &mut String) -> Option<usize> {
+    let text_start = start + 1;
+    let mut depth = 1;
+    let mut j = text_start;
+    while j < chars.len() {
+        match chars[j] {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+    let text_end = j;
+
+    let paren = j + 1;
+    if chars.get(paren) != Some(&'(') {
+        return None;
+    }
+    let mut depth = 1;
+    let mut k = paren + 1;
+    while k < chars.len() {
+        match chars[k] {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    if depth != 0 {
+        return None;
+    }
+
+    if !is_image {
+        let text: String = chars[text_start..text_end]
+            .iter()
+            .filter(|c| !matches!(c, '*' | '_' | '`' | '~'))
+            .collect();
+        out.push_str(text.trim());
+    }
+    Some(k + 1)
+}
+
+/// Consume `[[target#sub|alias]]` starting at the first `[`, pushing the alias
+/// (or target) text. Returns the index past `]]`, or `None` if unterminated.
+fn consume_wiki_link(chars: &[char], start: usize, out: &mut String) -> Option<usize> {
+    let inner_start = start + 2;
+    let mut j = inner_start;
+    while j + 1 < chars.len() {
+        if chars[j] == ']' && chars[j + 1] == ']' {
+            let inner: String = chars[inner_start..j].iter().collect();
+            let display = inner.rsplit('|').next().unwrap_or("").trim();
+            let display = display.split('#').next().unwrap_or(display).trim();
+            out.push_str(display);
+            return Some(j + 2);
+        }
+        j += 1;
+    }
+    None
+}
+
+fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let truncated: String = text.chars().take(max).collect();
+    format!("{}…", truncated.trim_end())
+}
+
 fn should_skip(file_name: &OsStr) -> bool {
     matches!(
         file_name.to_str(),
@@ -3417,5 +3674,37 @@ mod tests {
             normalize_relative_path(Path::new("a/./b/../c.md")),
             "a/c.md"
         );
+    }
+
+    #[test]
+    fn excerpt_skips_frontmatter_and_heading() {
+        let content = "---\ntitle: Demo\ntags: [a]\n---\n\n# Heading\n\nFirst **bold** paragraph with a [link](http://x).\n\nSecond paragraph.";
+        assert_eq!(
+            make_excerpt(content).as_deref(),
+            Some("First bold paragraph with a link.")
+        );
+    }
+
+    #[test]
+    fn excerpt_strips_list_and_wiki_markup() {
+        // Consecutive list items (no blank line) fold into one preview block.
+        let content = "- [ ] do [[Note#Intro|the thing]]\n- next";
+        assert_eq!(
+            make_excerpt(content).as_deref(),
+            Some("do the thing next")
+        );
+    }
+
+    #[test]
+    fn excerpt_returns_none_for_headings_only() {
+        assert_eq!(make_excerpt("# Only\n## Headings").as_deref(), None);
+    }
+
+    #[test]
+    fn excerpt_truncates_long_text() {
+        let long = "word ".repeat(200);
+        let excerpt = make_excerpt(&long).expect("excerpt");
+        assert!(excerpt.ends_with('…'));
+        assert!(excerpt.chars().count() <= 161);
     }
 }

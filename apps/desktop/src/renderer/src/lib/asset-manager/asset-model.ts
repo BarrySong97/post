@@ -113,7 +113,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     status: mapIndexedAssetStatus(asset.status),
     privacy: asset.privacy,
     title: asset.title,
-    body: asset.description ?? `路径：${asset.relativePath}`,
+    body: asset.description ?? asset.markdown?.excerpt ?? undefined,
     source: `${asset.vaultName} / ${asset.relativePath}`,
     sourceType: "vault",
     fileExists: asset.fileExists,

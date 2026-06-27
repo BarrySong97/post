@@ -2,16 +2,18 @@
 
 ## Responsibility
 
-`crates/post-indexer` is the Rust CLI that scans vault files, reconciles missing files, refreshes changed paths, runs watch mode, parses markdown links, and generates thumbnails.
+`crates/post-indexer` is the Rust CLI that scans vault files, reconciles missing files, refreshes changed paths, runs watch mode, parses markdown links, derives markdown card excerpts, and generates thumbnails.
 
 ## File Map
 
-- `crates/post-indexer/src/main.rs` - CLI parsing, sync run recording, filesystem scan/watch logic, markdown link extraction, thumbnail generation, and JSON event emission.
+- `crates/post-indexer/src/main.rs` - CLI parsing, sync run recording, filesystem scan/watch logic, markdown link extraction, markdown excerpt generation, thumbnail generation, and JSON event emission.
 - `crates/post-indexer/Cargo.toml` - crate dependencies and metadata.
 
 ## Data Flow
 
 The Electron main process starts the indexer with a vault ID, root path, database path, and command. The indexer writes asset, file, link, markdown cache, thumbnail cache, sync run, and sync event data to SQLite, while emitting structured progress events to stdout for the main process to consume.
+
+When parsing markdown, the indexer derives a plain-text `excerpt` (frontmatter, code fences, headings, and inline markup stripped; first prose paragraph truncated to ~160 chars) and stores it in `markdown_cache.excerpt`. The renderer surfaces this as the text-card preview body. Because excerpts are only (re)written when a markdown file is parsed, a full reindex backfills them for existing notes; the `PARSER_VERSION` constant tracks excerpt/parse behavior changes.
 
 ## Commands
 

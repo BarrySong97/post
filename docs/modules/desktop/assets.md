@@ -38,5 +38,7 @@ The asset manager is the primary browsing and organization surface for vault con
 - Keep filter state serializable; saved views depend on stable JSON.
 - Keep shared asset contracts free of main-process dependencies so renderer forms and main routers can reuse the same constraints.
 - Keep icon sizing aligned with [../../../design.md](../../../design.md).
+- Masonry cards stay restrained: cover assets (image/video/web-with-OG) render the thumbnail only, while text assets (markdown/file/link) show a compact title, a preview body, and tags.
+- Text-card preview body comes from `asset.description`, falling back to the indexer-derived `markdown.excerpt`; a missing excerpt simply renders no body. See [post-indexer](../post-indexer/README.md).
 - Asset kinds in UI must stay compatible with `assetKinds` from the db schema.
 - Avoid direct filesystem access from renderer components.
