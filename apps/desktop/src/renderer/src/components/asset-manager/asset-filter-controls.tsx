@@ -5,6 +5,7 @@
  * @gotcha  Keep asset kind/status/tag/view contracts synchronized with packages/db schema and saved-view JSON.
  */
 
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, Dispatch, ReactNode, SetStateAction } from "react";
 import { AccordionBody, AccordionPanel, Button, Tag, TagGroup, Tabs } from "@heroui/react";
 import { FileText, Image as ImageIcon, Link as LinkIcon, Plus, Video } from "lucide-react";
@@ -174,11 +175,16 @@ type AssetFilterTagOption<T extends string = string> = {
   dotHue?: number;
 };
 
+const ASSET_TAG_ROW_PX = 24; // Tag h-5 (20px) + flex gap-1 (4px)
+const ASSET_TAG_ROWS_STEP = 2;
+const ASSET_TAGS_PER_ROW_ESTIMATE = 20; // generous; only caps how many <Tag>s mount
+
 type AssetFilterTagGroupProps<T extends string> = {
   label: string;
   options: readonly AssetFilterTagOption<T>[];
   selectedValues: readonly T[];
   onSelectedValuesChange: (values: T[]) => void;
+  collapsible?: boolean;
 };
 
 function AssetFilterTagGroup<T extends string>({
@@ -186,13 +192,59 @@ function AssetFilterTagGroup<T extends string>({
   options,
   selectedValues,
   onSelectedValuesChange,
+  collapsible = false,
 }: AssetFilterTagGroupProps<T>) {
-  return (
+  const [visibleRows, setVisibleRows] = useState(ASSET_TAG_ROWS_STEP);
+  const clampRef = useRef<HTMLDivElement | null>(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  const selectedSet = useMemo(() => new Set<string>(selectedValues), [selectedValues]);
+
+  // Selected-first so selected tags stay visible AND remain in the rendered React-Aria
+  // collection (a clamped-out selected key could otherwise be dropped on toggle).
+  const orderedOptions = useMemo(() => {
+    if (!collapsible || selectedSet.size === 0) {
+      return options;
+    }
+    const selected = options.filter((option) => selectedSet.has(option.value));
+    const unselected = options.filter((option) => !selectedSet.has(option.value));
+    return [...selected, ...unselected];
+  }, [collapsible, options, selectedSet]);
+
+  // Cap how many <Tag>s mount for huge tag sets: every selected one + enough unselected to
+  // fill the visible rows. The CSS clamp below trims to the exact row count.
+  const renderLimit = selectedSet.size + (visibleRows + 1) * ASSET_TAGS_PER_ROW_ESTIMATE;
+  const renderedOptions =
+    collapsible && renderLimit < orderedOptions.length
+      ? orderedOptions.slice(0, renderLimit)
+      : orderedOptions;
+  const hasHiddenOptions = renderedOptions.length < orderedOptions.length;
+  const maxHeight = ASSET_TAG_ROW_PX * visibleRows;
+
+  useLayoutEffect(() => {
+    if (!collapsible) {
+      return;
+    }
+    const el = clampRef.current;
+    if (!el) {
+      return;
+    }
+    const measure = () => setOverflowing(el.scrollHeight - el.clientHeight > 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [collapsible, maxHeight, renderedOptions.length]);
+
+  const canExpand = collapsible && (hasHiddenOptions || overflowing);
+  const canCollapse = collapsible && !canExpand && visibleRows > ASSET_TAG_ROWS_STEP;
+
+  const tagGroup = (
     <TagGroup
       aria-label={label}
       size="sm"
       selectionMode="multiple"
-      selectedKeys={new Set(selectedValues)}
+      selectedKeys={selectedSet}
       onSelectionChange={(keys) => {
         const nextValues =
           keys === "all"
@@ -204,7 +256,7 @@ function AssetFilterTagGroup<T extends string>({
       className="gap-0"
     >
       <TagGroup.List className="flex flex-wrap gap-1">
-        {options.map(({ value, label: optionLabel, icon: Icon, dotHue }) => (
+        {renderedOptions.map(({ value, label: optionLabel, icon: Icon, dotHue }) => (
           <Tag
             key={value}
             id={value}
@@ -222,6 +274,29 @@ function AssetFilterTagGroup<T extends string>({
         ))}
       </TagGroup.List>
     </TagGroup>
+  );
+
+  if (!collapsible) {
+    return tagGroup;
+  }
+
+  return (
+    <div className="flex w-full min-w-0 flex-col items-start gap-1">
+      <div ref={clampRef} className="w-full" style={{ maxHeight, overflow: "hidden" }}>
+        {tagGroup}
+      </div>
+      {canExpand || canCollapse ? (
+        <button
+          type="button"
+          className="rounded px-1 text-[10.5px] font-medium text-zinc-400 transition-colors hover:text-zinc-600"
+          onClick={() =>
+            setVisibleRows((rows) => (canExpand ? rows + ASSET_TAG_ROWS_STEP : ASSET_TAG_ROWS_STEP))
+          }
+        >
+          {canExpand ? "显示更多" : "收起"}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -282,6 +357,7 @@ export function AssetFilterFields({
       <AssetFilterField label="标签">
         <AssetFilterTagGroup
           label="资产标签"
+          collapsible
           options={tagOptions.map((tag) => ({
             value: tag.name,
             label: tag.name,
