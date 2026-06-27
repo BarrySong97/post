@@ -29,12 +29,7 @@ import {
   readAssetFilterOpenFromStorage,
   writeAssetFilterOpenToStorage,
 } from "@/lib/asset-manager/storage";
-import {
-  getActiveFilterCount,
-  getAssetSourceLabel,
-  getTagHue,
-  mapIndexedAsset,
-} from "@/lib/asset-manager/asset-model";
+import { getActiveFilterCount, getTagHue, mapIndexedAsset } from "@/lib/asset-manager/asset-model";
 import { resolveMarkdownImageUrl } from "@/lib/asset-manager/asset-url";
 import type {
   Asset,
@@ -110,6 +105,7 @@ import {
   sourceLabelsToTypes,
 } from "@/components/asset-manager/asset-filter-controls";
 import { ViewFormModal } from "@/components/asset-manager/asset-management-modals";
+import { ViewIconRenderer } from "@/components/asset-manager/view-icon-picker";
 
 type OpenVaultTarget = "vscode" | "cursor" | "zed" | "finder";
 type OpenVaultIcon = ComponentType<SVGProps<SVGSVGElement>>;
@@ -503,38 +499,9 @@ function VisualBlock({ asset }: { asset: Asset }) {
   return null;
 }
 
-function AssetKindMark({ asset }: { asset: Asset }) {
-  const { label, icon: Icon } = getKindMeta(asset.kind);
-
-  return (
-    <Chip
-      size="sm"
-      className="mt-0.5 h-auto min-h-0 shrink-0 gap-1 bg-transparent px-0 py-0 font-mono text-[9.5px] font-semibold tracking-wide text-zinc-400"
-    >
-      <Icon size={12} />
-      {label}
-    </Chip>
-  );
-}
-
-function getAssetCoverLabel(asset: Asset) {
-  if (asset.kind === "image") {
-    return asset.sourceType === "url"
-      ? `链接图片${asset.domain ? ` · ${asset.domain}` : ""}`
-      : `本地图片${asset.imageCount ? ` · ${asset.imageCount} 张` : ""}`;
-  }
-
-  if (asset.kind === "video") {
-    return asset.domain ? `视频链接 · ${asset.domain}` : "本地视频";
-  }
-
-  return "OG 图";
-}
-
 function AssetCardMedia({ asset }: { asset: Asset }) {
   const heightCls = { short: "h-32", medium: "h-44", tall: "h-72" }[asset.height ?? "medium"];
   const isVideo = asset.kind === "video";
-  const Icon = asset.kind === "image" ? ImageIcon : asset.kind === "video" ? Play : LinkIcon;
   const hasMediaThumbnail =
     (asset.kind === "image" || asset.kind === "video") && asset.thumbnailUrl;
   const imageAspectRatio =
@@ -547,9 +514,10 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
       className={`relative ${imageAspectRatio ? "" : heightCls} overflow-hidden`}
       style={{
         ...(imageAspectRatio ? { aspectRatio: imageAspectRatio } : {}),
+        // Neutral gray loading placeholder shown behind lazy-loaded thumbnails (no accent hue).
         background: `
-          radial-gradient(120% 90% at 18% 12%, oklch(0.86 0.06 ${asset.accent}) 0%, transparent 62%),
-          linear-gradient(150deg, oklch(0.76 0.08 ${asset.accent}) 0%, oklch(0.9 0.05 ${asset.accent + 34}) 100%)
+          radial-gradient(120% 90% at 18% 12%, oklch(0.93 0 0) 0%, transparent 62%),
+          linear-gradient(150deg, oklch(0.87 0 0) 0%, oklch(0.92 0 0) 100%)
         `,
       }}
     >
@@ -563,14 +531,6 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
           draggable={false}
         />
       ) : null}
-
-      <Chip
-        size="sm"
-        className="absolute bottom-2.5 left-2.5 h-auto min-h-0 max-w-[calc(100%-20px)] gap-1.5 rounded-[7px] bg-white/82 px-2 py-1 text-[10.5px] font-medium text-[#37322c] shadow-[0_1px_1px_rgba(20,18,14,0.06)] backdrop-blur"
-      >
-        <Icon size={11} className="shrink-0" fill={isVideo ? "currentColor" : "none"} />
-        <span className="truncate">{getAssetCoverLabel(asset)}</span>
-      </Chip>
 
       {isVideo ? (
         <>
@@ -639,25 +599,29 @@ function AssetUrlPreview({ asset }: { asset: Asset }) {
 }
 
 function AssetCardTagRow({ asset }: { asset: Asset }) {
+  const hasTag = asset.tagIds.length > 0;
+  const isPrivate = asset.privacy === "private";
+
+  // Untagged assets only carry the "待整理" placeholder (no real tag), so show nothing.
+  if (!hasTag && !isPrivate) {
+    return null;
+  }
+
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-      <Chip
-        size="sm"
-        className="h-auto min-h-0 gap-1.5 bg-transparent px-0 py-0 text-[11.5px] font-medium text-[#1c1b19]"
-      >
-        <span
-          className="h-[7px] w-[7px] rounded-full"
-          style={{ background: `oklch(0.6 0.14 ${getTagHue(asset.tag)})` }}
-        />
-        {asset.tag}
-      </Chip>
-      <Chip
-        size="sm"
-        className="h-auto min-h-0 bg-transparent px-0 py-0 text-[11.5px] text-zinc-400 before:mr-2 before:text-zinc-300 before:content-['·']"
-      >
-        {getAssetSourceLabel(asset)}
-      </Chip>
-      {asset.privacy === "private" ? (
+      {hasTag ? (
+        <Chip
+          size="sm"
+          className="h-auto min-h-0 gap-1.5 bg-transparent px-0 py-0 text-[11.5px] font-medium text-[#1c1b19]"
+        >
+          <span
+            className="h-[7px] w-[7px] rounded-full"
+            style={{ background: `oklch(0.6 0.14 ${getTagHue(asset.tag)})` }}
+          />
+          {asset.tag}
+        </Chip>
+      ) : null}
+      {isPrivate ? (
         <Chip
           size="sm"
           className="h-auto min-h-0 gap-1 bg-transparent px-0 py-0 text-[10.5px] font-semibold text-amber-700"
@@ -685,7 +649,7 @@ const AssetCard = React.memo(function AssetCard({
   const selectable = asset.kind === "image" && onToggleSelected;
 
   return (
-    <article className="relative overflow-hidden rounded-2xl bg-[#f6f5f2] transition-colors duration-150 hover:bg-[#f2f1ed]">
+    <article className="relative overflow-hidden rounded-xl bg-[#f6f5f2] transition-colors duration-150 hover:bg-[#f2f1ed]">
       {selectable ? (
         <button
           type="button"
@@ -710,32 +674,26 @@ const AssetCard = React.memo(function AssetCard({
           window.location.hash = `/assets/${asset.id}`;
         }}
       >
-        {hasCover ? <AssetCardMedia asset={asset} /> : null}
-
-        <div className="px-4 py-3.5">
-          <div className="flex items-start gap-2.5">
-            <h2 className="min-w-0 flex-1 text-[15.5px] font-semibold leading-[1.4] tracking-normal text-[#1c1b19]">
+        {hasCover ? (
+          <AssetCardMedia asset={asset} />
+        ) : (
+          <div className="px-4 py-3.5">
+            <h2 className="line-clamp-2 text-[14px] font-semibold leading-[1.4] text-[#1c1b19]">
               {asset.title}
             </h2>
-            {!hasCover ? <AssetKindMark asset={asset} /> : null}
+
+            {asset.kind === "file" ? <AssetFilePreview asset={asset} /> : null}
+            {showUrlRow ? <AssetUrlPreview asset={asset} /> : null}
+
+            {asset.body ? (
+              <p className="mt-2 line-clamp-4 whitespace-pre-line text-[13px] leading-[1.6] text-[#6c6a64]">
+                {asset.body}
+              </p>
+            ) : null}
+
+            <AssetCardTagRow asset={asset} />
           </div>
-
-          {asset.kind === "file" ? <AssetFilePreview asset={asset} /> : null}
-          {showUrlRow ? <AssetUrlPreview asset={asset} /> : null}
-
-          {asset.body ? (
-            <p className="mt-2.5 line-clamp-5 whitespace-pre-line text-[13px] leading-[1.62] text-[#6c6a64]">
-              {asset.body}
-            </p>
-          ) : null}
-
-          <AssetCardTagRow asset={asset} />
-
-          <div className="mt-3 flex items-center justify-between gap-3 border-t border-[#1c120e]/[0.06] pt-3 text-[11px] text-zinc-400">
-            <span className="min-w-0 truncate">{asset.meta}</span>
-            <span className="shrink-0">{asset.time}</span>
-          </div>
-        </div>
+        )}
       </button>
     </article>
   );
@@ -752,23 +710,17 @@ function getLayoutIndexMediaHeight(item: AssetLayoutIndexItem) {
     return 176;
   }
 
-  return Math.min(260, Math.max(128, Math.round((height / width) * 260)));
+  // Match the real cover render, which fills the column at the image's natural aspect
+  // ratio with no max-height. Capping this at 260 is what unbalanced the masonry columns:
+  // lane assignment (estimate mode) treated every tall image as <=260px tall.
+  return Math.max(128, Math.round((height / width) * 260));
 }
 
 function getAssetCardHeightEstimate(item: AssetLayoutIndexItem) {
   const mediaHeight = getLayoutIndexMediaHeight(item);
-  // Card chrome (title + body + tags + footer) is ~136px with media, ~178px without it.
+  // Cover cards are pure media (no chrome); text cards reserve ~170px for title + excerpt + tags.
   // Add the column gutter because each cell's wrapper padding is measured into its height.
-  return (mediaHeight > 0 ? mediaHeight + 136 : 178) + ASSET_COLUMN_GUTTER;
-}
-
-function getLayoutIndexKindLabel(item: AssetLayoutIndexItem) {
-  if (item.kind === "markdown") return "Markdown";
-  if (item.kind === "image") return "图片";
-  if (item.kind === "video") return "视频";
-  if (item.kind === "web") return "网页";
-
-  return (item.extension ?? item.kind).toUpperCase();
+  return (mediaHeight > 0 ? mediaHeight : 170) + ASSET_COLUMN_GUTTER;
 }
 
 const AssetCardPlaceholder = React.memo(function AssetCardPlaceholder({
@@ -782,30 +734,25 @@ const AssetCardPlaceholder = React.memo(function AssetCardPlaceholder({
   return (
     <article
       aria-busy="true"
-      className="relative overflow-hidden rounded-2xl bg-[#f6f5f2]"
-      style={{ minHeight: hasMedia ? mediaHeight + 136 : 178 }}
+      className="relative overflow-hidden rounded-xl bg-[#f6f5f2]"
+      style={{ minHeight: hasMedia ? mediaHeight : 140 }}
     >
       {hasMedia ? (
-        <div className="relative overflow-hidden bg-zinc-200/60" style={{ height: mediaHeight }}>
-          <div className="absolute inset-x-3 bottom-3 h-5 rounded-md bg-white/70" />
-        </div>
-      ) : null}
-      <div className="px-4 py-3.5">
-        <div className="h-4 w-4/5 rounded bg-zinc-200/80" />
-        <div className="mt-2 h-3 w-2/3 rounded bg-zinc-200/60" />
-        {!hasMedia ? (
-          <div className="mt-4 rounded-xl bg-white px-3 py-5 text-center text-[11px] font-semibold text-zinc-300">
-            {getLayoutIndexKindLabel(item)}
+        <div className="relative overflow-hidden bg-zinc-200/60" style={{ height: mediaHeight }} />
+      ) : (
+        <div className="px-4 py-3.5">
+          <div className="h-4 w-3/4 rounded bg-zinc-200/80" />
+          <div className="mt-2.5 space-y-1.5">
+            <div className="h-3 w-full rounded bg-zinc-200/60" />
+            <div className="h-3 w-11/12 rounded bg-zinc-200/60" />
+            <div className="h-3 w-2/3 rounded bg-zinc-200/60" />
           </div>
-        ) : null}
-        <div className="mt-4 flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-zinc-300/80" />
-          <span className="h-3 w-20 rounded bg-zinc-200/70" />
+          <div className="mt-3 flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-zinc-300/80" />
+            <span className="h-3 w-20 rounded bg-zinc-200/70" />
+          </div>
         </div>
-        <div className="mt-3 border-t border-[#1c120e]/[0.06] pt-3">
-          <div className="h-3 w-24 rounded bg-zinc-200/60" />
-        </div>
-      </div>
+      )}
     </article>
   );
 });
@@ -1050,16 +997,22 @@ function getActiveFilterChips(filters: AssetFilterState): ActiveFilterChip[] {
   ];
 }
 
+const ACTIVE_FILTER_COLLAPSE_THRESHOLD = 5;
+
 function AssetActiveFilterSummary({
   filters,
   onFiltersChange,
   resultCount,
   totalCount,
+  activeViewName,
+  activeViewIcon,
 }: {
   filters: AssetFilterState;
   onFiltersChange: React.Dispatch<React.SetStateAction<AssetFilterState>>;
   resultCount: number;
   totalCount: number;
+  activeViewName?: string;
+  activeViewIcon?: string | null;
 }) {
   const chips = getActiveFilterChips(filters);
 
@@ -1111,25 +1064,42 @@ function AssetActiveFilterSummary({
       <span className="mr-1 text-[11.5px] font-semibold text-zinc-500">
         已筛选 · {resultCount} / {totalCount} 项
       </span>
-      <TagGroup aria-label="已筛选条件" size="sm" onRemove={removeChips} className="gap-0">
-        <TagGroup.List className="flex flex-wrap gap-1.5">
-          {chips.map((chip) => (
-            <Tag
-              key={chip.key}
-              id={chip.key}
-              className="h-5 min-h-0 cursor-default gap-1.5 rounded-full bg-[#f3f2ef] px-2 py-0 text-[11px] font-medium text-zinc-700"
-            >
-              {chip.hue !== undefined ? (
-                <span
-                  className="h-[7px] w-[7px] rounded-full"
-                  style={{ background: `oklch(0.6 0.14 ${chip.hue})` }}
-                />
-              ) : null}
-              {chip.label}
-            </Tag>
-          ))}
-        </TagGroup.List>
-      </TagGroup>
+      {chips.length > ACTIVE_FILTER_COLLAPSE_THRESHOLD ? (
+        <span className="inline-flex h-5 items-center gap-1.5 rounded-full bg-[#f3f2ef] px-2.5 text-[11px] font-medium text-zinc-700">
+          {activeViewName ? (
+            <>
+              <ViewIconRenderer
+                value={activeViewIcon}
+                size={12}
+                className="shrink-0 text-zinc-500"
+              />
+              {activeViewName}
+            </>
+          ) : (
+            `${chips.length} 个条件`
+          )}
+        </span>
+      ) : (
+        <TagGroup aria-label="已筛选条件" size="sm" onRemove={removeChips} className="gap-0">
+          <TagGroup.List className="flex flex-wrap gap-1.5">
+            {chips.map((chip) => (
+              <Tag
+                key={chip.key}
+                id={chip.key}
+                className="h-5 min-h-0 cursor-default gap-1.5 rounded-full bg-[#f3f2ef] px-2 py-0 text-[11px] font-medium text-zinc-700"
+              >
+                {chip.hue !== undefined ? (
+                  <span
+                    className="h-[7px] w-[7px] rounded-full"
+                    style={{ background: `oklch(0.6 0.14 ${chip.hue})` }}
+                  />
+                ) : null}
+                {chip.label}
+              </Tag>
+            ))}
+          </TagGroup.List>
+        </TagGroup>
+      )}
       <Button
         size="sm"
         variant="ghost"
@@ -1349,6 +1319,8 @@ function AssetBoard({
   onSaveView,
   dragEnabled = true,
   queryResetKey,
+  activeViewName,
+  activeViewIcon,
 }: {
   indexItems: AssetLayoutIndexItem[];
   hydratedAssetsById: ReadonlyMap<string, Asset>;
@@ -1367,6 +1339,8 @@ function AssetBoard({
   onSaveView: (filters: AssetFilterState) => void;
   dragEnabled?: boolean;
   queryResetKey: string;
+  activeViewName?: string;
+  activeViewIcon?: string | null;
 }) {
   const [filters, setFilters] = useAtom(assetFiltersAtom);
   const [filterOpen, setFilterOpen] = useState(readAssetFilterOpenFromStorage);
@@ -1438,6 +1412,8 @@ function AssetBoard({
           onFiltersChange={setFilters}
           resultCount={resultCount}
           totalCount={totalCount}
+          activeViewName={activeViewName}
+          activeViewIcon={activeViewIcon}
         />
         {errorMessage ? (
           <div className="shrink-0 border-b border-red-100 bg-red-50 px-6 py-2 text-xs text-red-700">
@@ -2748,6 +2724,13 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   const hydrationErrorMessage =
     hydrateQuery.isError && layoutIndexItems.length > 0 ? hydrateQuery.error.message : undefined;
 
+  const activeView =
+    activeSidebarItem.kind === "view"
+      ? sidebarQuery.data?.views.find((view) => view.id === activeSidebarItem.id)
+      : undefined;
+  const activeViewName = activeView?.name;
+  const activeViewIcon = activeView?.icon;
+
   return (
     <>
       <ResizablePanelGroup
@@ -2797,6 +2780,8 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
                 setViewModalFilters(getSaveViewInitialFilters(currentFilters))
               }
               queryResetKey={listQueryResetKey}
+              activeViewName={activeViewName}
+              activeViewIcon={activeViewIcon}
             />
           )}
         </ResizablePanel>
