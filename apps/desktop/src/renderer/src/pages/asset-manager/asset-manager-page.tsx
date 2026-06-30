@@ -297,6 +297,10 @@ function prefersReducedMotion(): boolean {
 }
 const EMPTY_ASSET_LAYOUT_INDEX: AssetLayoutIndexItem[] = [];
 const MISSING_TAG_ID = "__missing_tag__";
+// Temporarily hidden: the terminal side-panel toggle isn't surfaced in the UI for now. Flip to
+// re-enable the toggle in both the asset board header and the asset detail header. The underlying
+// terminal panel/state is left wired so this is a one-line restore.
+const SHOW_TERMINAL_TOGGLE = false as boolean;
 
 function getTagIdsFromNames(tagNames: readonly string[], tagOptions: readonly SidebarTag[]) {
   if (tagNames.length === 0) {
@@ -941,20 +945,22 @@ function AssetBoardHeader({
             <ChevronDown className={HEADER_ICON_CLASS_NAME} />
           </span>
         )}
-        <Button
-          size="sm"
-          variant={terminalOpen ? "secondary" : "ghost"}
-          isDisabled={!terminalAvailable}
-          aria-label={terminalAvailable ? "打开终端侧栏" : "当前平台暂不支持终端侧栏"}
-          className={`window-no-drag h-6 min-h-0 rounded-lg border px-2 text-[11px] ${
-            terminalOpen
-              ? "border-zinc-300 bg-zinc-100 text-zinc-900"
-              : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
-          }`}
-          onPress={onToggleTerminal}
-        >
-          <PanelRightOpen className={HEADER_ICON_CLASS_NAME} />
-        </Button>
+        {SHOW_TERMINAL_TOGGLE ? (
+          <Button
+            size="sm"
+            variant={terminalOpen ? "secondary" : "ghost"}
+            isDisabled={!terminalAvailable}
+            aria-label={terminalAvailable ? "打开终端侧栏" : "当前平台暂不支持终端侧栏"}
+            className={`window-no-drag h-6 min-h-0 rounded-lg border px-2 text-[11px] ${
+              terminalOpen
+                ? "border-zinc-300 bg-zinc-100 text-zinc-900"
+                : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+            }`}
+            onPress={onToggleTerminal}
+          >
+            <PanelRightOpen className={HEADER_ICON_CLASS_NAME} />
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -2624,20 +2630,22 @@ function AssetDetail({
             )}
           </Button>
           {/* Terminal button */}
-          <Button
-            size="sm"
-            isIconOnly
-            isDisabled={!terminalAvailable}
-            aria-label={terminalAvailable ? "打开终端侧栏" : "当前平台暂不支持终端侧栏"}
-            className={`window-no-drag h-6 min-h-0 rounded-lg border px-2 text-[11px] ${
-              terminalOpen
-                ? "border-zinc-300 bg-zinc-100 text-zinc-900"
-                : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
-            }`}
-            onPress={onToggleTerminal}
-          >
-            <PanelRightOpen className={HEADER_ICON_CLASS_NAME} />
-          </Button>
+          {SHOW_TERMINAL_TOGGLE ? (
+            <Button
+              size="sm"
+              isIconOnly
+              isDisabled={!terminalAvailable}
+              aria-label={terminalAvailable ? "打开终端侧栏" : "当前平台暂不支持终端侧栏"}
+              className={`window-no-drag h-6 min-h-0 rounded-lg border px-2 text-[11px] ${
+                terminalOpen
+                  ? "border-zinc-300 bg-zinc-100 text-zinc-900"
+                  : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+              }`}
+              onPress={onToggleTerminal}
+            >
+              <PanelRightOpen className={HEADER_ICON_CLASS_NAME} />
+            </Button>
+          ) : null}
         </div>
       </div>
 
