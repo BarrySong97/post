@@ -99,7 +99,7 @@ export function KnowledgeGraphPage() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-zinc-50">
       <PageChrome>
-        <h1 className="text-[15px] font-semibold tracking-normal text-zinc-950">知识图谱</h1>
+        <h1 className="text-[13.5px] font-semibold tracking-normal text-zinc-950">知识图谱</h1>
         {statsLabel && <span className="text-xs text-zinc-400">{statsLabel}</span>}
       </PageChrome>
       <div ref={canvasRef} className="relative min-h-0 flex-1 w-full bg-zinc-50">

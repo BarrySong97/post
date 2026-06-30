@@ -339,7 +339,7 @@ function GlobalStatusLine() {
 
   const others = Math.max(0, live.length - shown);
   const hasPop = live.length > 0;
-  const appVersion = snapshot?.appVersion ?? "0.0.0";
+  const appVersion = __APP_VERSION__;
   const activeVault = snapshot?.activeVault ?? null;
   const vaultName = activeVault?.name ?? null;
   const vaultPath = activeVault?.rootPath ?? null;

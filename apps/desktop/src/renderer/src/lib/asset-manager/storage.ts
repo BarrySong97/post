@@ -11,6 +11,10 @@ export const OPEN_VAULT_TARGET_STORAGE_KEY = "post.assetManager.openVaultTarget.
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = "post.assetManager.sidebarCollapsed";
 export const SIDEBAR_WIDTH_STORAGE_KEY = "post.assetManager.sidebarPct";
 
+// Shared minimum width (px) for the main app sidebar and the Settings sidebar — wide
+// enough that the right-aligned count numbers never clip.
+export const SIDEBAR_MIN_WIDTH_PX = 320;
+
 export function readAssetFilterOpenFromStorage() {
   if (typeof window === "undefined") {
     return false;

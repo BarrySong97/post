@@ -13,6 +13,7 @@ import type { PanelImperativeHandle } from "react-resizable-panels";
 import { trpc } from "@/lib/trpc";
 import {
   SIDEBAR_COLLAPSED_STORAGE_KEY,
+  SIDEBAR_MIN_WIDTH_PX,
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from "@/lib/asset-manager/storage";
 import type { AssetSummary, SidebarTag, SidebarView } from "@/lib/asset-manager/types";
@@ -31,6 +32,7 @@ import {
   useAppLayout,
   type AppLayoutContextValue,
 } from "@/components/layout/app-layout-context";
+import { WindowChromeNav, useToolbarClearance } from "@/components/layout/window-chrome-nav";
 
 export { useAppLayout };
 
@@ -44,10 +46,12 @@ export { useAppLayout };
 export function PageChrome({ children }: { children?: ReactNode }) {
   const { backgroundWindowDragEnabled } = useAppLayout();
   const dragClassName = backgroundWindowDragEnabled ? "window-drag" : "window-no-drag";
+  const headerRef = useToolbarClearance();
 
   return (
     <div
-      className={`${dragClassName} relative z-[75] flex h-14 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}
+      ref={headerRef}
+      className={`${dragClassName} relative z-[75] flex h-10 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}
     >
       {children}
     </div>
@@ -120,8 +124,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    syncWindowControlsWithSidebar(!sidebarCollapsed || sidebarPreviewOpen);
-  }, [sidebarCollapsed, sidebarPreviewOpen]);
+    // Traffic lights stay visible in both expanded and collapsed states so the persistent
+    // WindowChromeNav toolbar always sits next to them at the same position.
+    syncWindowControlsWithSidebar(true);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(sidebarCollapsed));
@@ -159,8 +165,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   const backgroundWindowDragEnabled = !(sidebarCollapsed && sidebarPreviewOpen);
   const contextValue = useMemo<AppLayoutContextValue>(
-    () => ({ backgroundWindowDragEnabled }),
-    [backgroundWindowDragEnabled],
+    () => ({ backgroundWindowDragEnabled, sidebarCollapsed }),
+    [backgroundWindowDragEnabled, sidebarCollapsed],
   );
   const sidebarTags = useMemo(() => sidebarQuery.data?.tags ?? [], [sidebarQuery.data?.tags]);
   const sidebarViews = useMemo(() => sidebarQuery.data?.views ?? [], [sidebarQuery.data?.views]);
@@ -220,12 +226,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
                 tagItems={sidebarTags}
                 viewItems={sidebarViews}
                 vaultId={vaultId}
-                onToggleSidebar={handleToggleSidebar}
                 onCreateTag={handleCreateTag}
                 onEditTag={handleEditTag}
                 onCreateView={handleCreateView}
                 onEditView={handleEditView}
-                toggleMode="expand"
                 floating
                 summary={sidebarSummary}
               />
@@ -248,7 +252,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
               panelRef={sidebarPanelRef}
               id="sidebar"
               defaultSize={20}
-              minSize={16}
+              minSize={`${SIDEBAR_MIN_WIDTH_PX}px`}
               maxSize={28}
               collapsible
               collapsedSize={0}
@@ -290,7 +294,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   tagItems={sidebarTags}
                   viewItems={sidebarViews}
                   vaultId={vaultId}
-                  onToggleSidebar={handleToggleSidebar}
                   onCreateTag={handleCreateTag}
                   onEditTag={handleEditTag}
                   onCreateView={handleCreateView}
@@ -314,6 +317,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
               {children}
             </ResizablePanel>
           </ResizablePanelGroup>
+
+          {/* DOM-last on purpose: Chromium composites -webkit-app-region in layout order, so the
+              toolbar's no-drag buttons must come after every overlapping window-drag region (header
+              + the z-[74] drag overlay) to be clickable. z-[90] still paints it visually on top. */}
+          <WindowChromeNav
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={handleToggleSidebar}
+          />
         </div>
 
         <TagFormModal

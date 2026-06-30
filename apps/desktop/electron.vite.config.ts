@@ -5,12 +5,18 @@
  * @gotcha  Main/preload/renderer aliases and plugin ordering affect both dev startup and packaged builds.
  */
 
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 import TanStackRouter from "@tanstack/router-plugin/vite";
+
+// Single source of truth for the displayed app version: apps/desktop/package.json.
+const appVersion = (
+  JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { version: string }
+).version;
 
 export default defineConfig({
   main: {
@@ -42,6 +48,9 @@ export default defineConfig({
     },
   },
   renderer: {
+    define: {
+      __APP_VERSION__: JSON.stringify(appVersion),
+    },
     server: {
       port: 42873,
       strictPort: true,

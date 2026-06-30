@@ -13,13 +13,18 @@ import { createContext, useContext } from "react";
  * `backgroundWindowDragEnabled` is false only while the sidebar is collapsed
  * AND its floating preview is open — in that state the page must release its
  * own drag regions so the floating sidebar can capture pointer events.
+ *
+ * `sidebarCollapsed` lets page headers reserve leading space for the persistent
+ * WindowChromeNav toolbar (which overlays the main panel's top-left when collapsed).
  */
 export type AppLayoutContextValue = {
   backgroundWindowDragEnabled: boolean;
+  sidebarCollapsed: boolean;
 };
 
 export const AppLayoutContext = createContext<AppLayoutContextValue>({
   backgroundWindowDragEnabled: true,
+  sidebarCollapsed: false,
 });
 
 export function useAppLayout() {

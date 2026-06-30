@@ -1,6 +1,6 @@
 {
   "name": "desktop",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Electron desktop app scaffold for Post",
   "author": "Post",
@@ -15,6 +15,7 @@
     "test:watch": "pnpm --store-dir /private/tmp/post-pnpm-store rebuild better-sqlite3 && vitest",
     "check-types": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false",
     "package": "electron-vite build && electron-builder --dir --config electron-builder.yml",
+    "package:install": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir --config electron-builder.yml && (pkill -f '/Applications/Post.app/Contents/MacOS/Post' || true) && rm -rf /Applications/Post.app && cp -R 'release/mac-arm64/Post.app' /Applications/ && open -a /Applications/Post.app",
     "dist": "electron-vite build && electron-builder --config electron-builder.yml"
   },
   "dependencies": {

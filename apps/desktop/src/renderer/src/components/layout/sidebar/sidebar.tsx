@@ -14,7 +14,7 @@ import { isSortable, useSortable } from "@dnd-kit/react/sortable";
 import { PointerActivationConstraints, PointerSensor } from "@dnd-kit/dom";
 import { arrayMove } from "@dnd-kit/helpers";
 import { AnimatePresence, motion } from "motion/react";
-import { Button, Dropdown } from "@heroui/react";
+import { Dropdown } from "@heroui/react";
 import {
   Archive,
   ArrowDown,
@@ -22,11 +22,8 @@ import {
   ArrowUpToLine,
   ChevronDown,
   Inbox,
-  Megaphone,
   MoreHorizontal,
   Network,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pencil,
   Plus,
   Trash2,
@@ -62,6 +59,7 @@ type SidebarOrderState = {
 const SIDEBAR_SECTION_IDS: SidebarSectionId[] = ["views", "tags"];
 const SIDEBAR_SECTION_TYPE = "sidebar-section";
 const SIDEBAR_ITEM_TYPE_PREFIX = "sidebar-item:";
+// Aligns with the compact h-10 top-chrome content row (toolbar + page header), centered ~y20.
 const TRAFFIC_LIGHT_POSITION = { x: 18, y: 14 };
 const SIDEBAR_PREVIEW_MAX_WIDTH = 320;
 const SIDEBAR_PREVIEW_VIEWPORT_RATIO = 0.84;
@@ -550,24 +548,20 @@ export function Sidebar({
   viewItems,
   vaultId,
   summary,
-  onToggleSidebar,
   onCreateTag,
   onEditTag,
   onCreateView,
   onEditView,
-  toggleMode = "collapse",
   floating = false,
 }: {
   tagItems: SidebarTag[];
   viewItems: SidebarView[];
   vaultId?: string;
   summary: AssetSummary & { untagged: number };
-  onToggleSidebar: () => void;
   onCreateTag: () => void;
   onEditTag: (tag: SidebarTag) => void;
   onCreateView: () => void;
   onEditView: (view: SidebarView) => void;
-  toggleMode?: "collapse" | "expand";
   floating?: boolean;
 }) {
   const [activeSidebarItem, setActiveSidebarItem] = useAtom(activeSidebarItemAtom);
@@ -875,7 +869,6 @@ export function Sidebar({
     );
   };
 
-  const ToggleIcon = toggleMode === "expand" ? PanelLeftOpen : PanelLeftClose;
   const sidebarChromePadding = isMacWindow() ? "pl-[100px]" : "pl-3";
   const sidebarChromeClassName = `relative mt-[10.5px] h-12 ${sidebarChromePadding}`;
   const sidebarChromeDragClassName = floating ? "window-no-drag" : "window-drag";
@@ -888,21 +881,10 @@ export function Sidebar({
           : "border-white/45 bg-white/45 backdrop-blur-2xl backdrop-saturate-150"
       }`}
     >
+      {/* Chrome row spacer: reserves the traffic-light + WindowChromeNav toolbar zone and keeps
+          the window-drag region. The sidebar toggle now lives in WindowChromeNav. */}
       <div className={sidebarChromeClassName}>
         <div aria-hidden="true" className={`${sidebarChromeDragClassName} absolute inset-0 z-0`} />
-        <div className="window-no-drag pointer-events-auto relative z-10 inline-flex -ml-1 -translate-y-1.5">
-          <Button
-            isIconOnly
-            aria-label={toggleMode === "expand" ? "展开左侧栏" : "收起左侧栏"}
-            data-no-drag
-            size="sm"
-            variant="ghost"
-            className="window-no-drag h-8 w-8 text-zinc-500 hover:bg-black/5"
-            onPress={onToggleSidebar}
-          >
-            <ToggleIcon size={19} />
-          </Button>
-        </div>
       </div>
 
       <div className="shrink-0 px-3 pb-1">
@@ -943,12 +925,6 @@ export function Sidebar({
               label="知识图谱"
               active={location.pathname === "/graph"}
               onClick={() => void navigate({ to: "/graph" })}
-            />
-            <SidebarItem
-              icon={Megaphone}
-              label="发布中心"
-              active={location.pathname === "/publish"}
-              onClick={() => void navigate({ to: "/publish" })}
             />
           </div>
         </SidebarSection>
