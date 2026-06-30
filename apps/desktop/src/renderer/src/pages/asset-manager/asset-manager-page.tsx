@@ -16,6 +16,7 @@ import React, {
   type ComponentType,
   type SVGProps,
 } from "react";
+import { useReducedMotion } from "motion/react";
 import { useAtom, useAtomValue } from "jotai";
 import {
   assetFiltersAtom,
@@ -41,6 +42,7 @@ import type {
 import { isMacWindow } from "@/lib/platform";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Plyr, type PlyrOptions, type PlyrSource } from "plyr-react";
 import "plyr-react/plyr.css";
 import ReactMarkdown from "react-markdown";
@@ -92,6 +94,7 @@ import { toast } from "@/lib/toast";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppLayout } from "@/components/layout/app-layout-context";
+import { useToolbarClearance } from "@/components/layout/window-chrome-nav";
 import { emitAssetProfile, roundProfileNumber } from "@/lib/asset-profile";
 import { trpc, type RouterInputs } from "@/lib/trpc";
 import { load as yamlLoad } from "js-yaml";
@@ -277,6 +280,21 @@ const ASSET_COLUMN_GUTTER = 16;
 const ASSET_GRID_PADDING_X = 24; // px-6 viewport padding, both sides
 const ASSET_GRID_PADDING_Y = 18; // vertical padding, applied via the virtualizer
 const ASSET_CARD_OVERSCAN = 8;
+// Reflow animation: how long after the last resize tick to keep the card transition enabled. Must
+// exceed the transition duration + a couple frames so clearing the flag never snaps a mid-flight card.
+const ASSET_REFLOW_SETTLE_MS = 400;
+const ASSET_REFLOW_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+// In-band reflow (same column count): only translateY (vertical repack) moves.
+const ASSET_REFLOW_TRANSITION = `transform 0.24s ${ASSET_REFLOW_EASE}`;
+// Cross-column FLIP: slide each on-screen card from its captured old position to the new one.
+const ASSET_FLIP_DURATION_MS = 300;
+const ASSET_FLIP_TRANSITION = `transform ${ASSET_FLIP_DURATION_MS}ms ${ASSET_REFLOW_EASE}`;
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
 const EMPTY_ASSET_LAYOUT_INDEX: AssetLayoutIndexItem[] = [];
 const MISSING_TAG_ID = "__missing_tag__";
 
@@ -778,6 +796,7 @@ function AssetBoardHeader({
   onToggleTerminal,
   dragEnabled = true,
 }: AssetBoardHeaderProps) {
+  const headerRef = useToolbarClearance();
   const filterActive = filterOpen || activeFilterCount > 0;
   const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
   const [openWithMenuOpen, setOpenWithMenuOpen] = useState(false);
@@ -809,9 +828,12 @@ function AssetBoardHeader({
 
   return (
     <div
-      className={`${dragClassName} relative z-[75] flex h-14 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}
+      ref={headerRef}
+      className={`${dragClassName} relative z-[75] flex h-10 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}
     >
-      <h1 className="mr-auto text-[15px] font-semibold tracking-normal text-zinc-950">全部资产</h1>
+      <h1 className="mr-auto text-[13.5px] font-semibold tracking-normal text-zinc-950">
+        全部资产
+      </h1>
       <div className="window-no-drag relative z-[80] flex items-center gap-2.5 pointer-events-auto">
         <Button
           size="sm"
@@ -1112,21 +1134,36 @@ function AssetActiveFilterSummary({
   );
 }
 
+type MasonryVirtualizerHandle = {
+  getVirtualItems: () => Array<{ index: number; start: number; end: number }>;
+  scrollToIndex: (index: number, options?: { align?: "start" | "center" | "end" | "auto" }) => void;
+};
+
 function AssetMasonryColumns({
   scrollViewportRef,
   columnCount,
   indexItems,
   hydratedAssetsById,
   onHydrateAssets,
+  virtualizerRef,
+  reflowing,
 }: {
   scrollViewportRef: React.RefObject<HTMLDivElement | null>;
   columnCount: number;
   indexItems: AssetLayoutIndexItem[];
   hydratedAssetsById: ReadonlyMap<string, Asset>;
   onHydrateAssets: (assetIds: readonly string[]) => void;
+  virtualizerRef: React.RefObject<MasonryVirtualizerHandle | null>;
+  reflowing: boolean;
 }) {
   const hydrateFrame = useRef<number | undefined>(undefined);
   const queuedHydrateIds = useRef<string[]>([]);
+  const reduceMotion = useReducedMotion();
+  // Gate the card transition to resize-driven reflows only — a persistent virtual item's translateY
+  // is otherwise constant during scroll, so an always-on transition would animate scroll-time repacks
+  // (hydration / measurement settling). `reflowing` is cleared on a column-count change (animated by
+  // the FLIP layer instead), so this transition only covers the same-column-count vertical repack.
+  const wrapperTransition = reflowing && !reduceMotion ? ASSET_REFLOW_TRANSITION : undefined;
 
   const virtualizer = useVirtualizer({
     count: indexItems.length,
@@ -1138,6 +1175,8 @@ function AssetMasonryColumns({
     paddingStart: ASSET_GRID_PADDING_Y,
     paddingEnd: ASSET_GRID_PADDING_Y,
   });
+  // Expose the virtualizer to the parent grid for index-based scroll save/restore.
+  virtualizerRef.current = virtualizer;
 
   const virtualItems = virtualizer.getVirtualItems();
   const range = virtualizer.range;
@@ -1194,13 +1233,21 @@ function AssetMasonryColumns({
               transform: `translateY(${virtualItem.start}px)`,
               padding: ASSET_COLUMN_GUTTER / 2,
               boxSizing: "border-box",
+              transition: wrapperTransition,
+              willChange: wrapperTransition ? "transform" : undefined,
             }}
           >
-            {hydratedAsset ? (
-              <AssetCard asset={hydratedAsset} />
-            ) : (
-              <AssetCardPlaceholder item={item} />
-            )}
+            {/* FLIP layer: its transform is driven imperatively across a column-count remount to
+                slide each card from its old to new position. Kept separate from the wrapper so it
+                never fights the virtualizer's translateY (and its transform is layout-neutral, so it
+                doesn't retrigger measurement). */}
+            <div data-flip-id={item.id}>
+              {hydratedAsset ? (
+                <AssetCard asset={hydratedAsset} />
+              ) : (
+                <AssetCardPlaceholder item={item} />
+              )}
+            </div>
           </div>
         );
       })}
@@ -1225,6 +1272,22 @@ function AssetMasonryGrid({
 }) {
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const [columnCount, setColumnCount] = useState(1);
+  const navigate = useNavigate();
+  const virtualizerRef = useRef<MasonryVirtualizerHandle | null>(null);
+  const search = useSearch({ strict: false }) as { i?: number; o?: number };
+  const restoreIndexRef = useRef(search.i ?? -1);
+  const restoreOffsetRef = useRef(search.o ?? 0);
+  const firstResetRef = useRef(true);
+  // Reflow animation. In-band (same column count): pulse `reflowing` so the vertical repack
+  // transitions on the wrapper's translateY. Column-count change: a manual FLIP slides each on-screen
+  // card from its old to new position. The virtualizer is NOT remounted on a column change — a fresh
+  // virtualizer inits at scrollTop 0 (virtual-core initialOffset), losing the on-screen cards — so it
+  // persists, and the FLIP holding cards at their old screen positions is also what avoids the blank.
+  const [reflowing, setReflowing] = useState(false);
+  const columnCountRef = useRef(1);
+  const firstRecomputeRef = useRef(true);
+  const reflowTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const flipFromRef = useRef<Map<string, { x: number; y: number }> | null>(null);
 
   // Derive the column COUNT from a fixed ~260px column width, responsive to container width.
   useLayoutEffect(() => {
@@ -1237,18 +1300,110 @@ function AssetMasonryGrid({
         1,
         Math.floor((innerWidth + ASSET_COLUMN_GUTTER) / (ASSET_COLUMN_WIDTH + ASSET_COLUMN_GUTTER)),
       );
-      setColumnCount((prev) => (prev === next ? prev : next));
+      const columnChanged = next !== columnCountRef.current;
+      const isFirst = firstRecomputeRef.current;
+      firstRecomputeRef.current = false;
+
+      if (columnChanged) {
+        // FLIP "first": capture on-screen card positions BEFORE the re-layout (old columns are
+        // still rendered); the play step slides them after the lanes change. Off-screen cards aren't
+        // rendered, so they're skipped — which is exactly why this avoids the virtualization blank.
+        if (!isFirst && !prefersReducedMotion()) {
+          const from = new Map<string, { x: number; y: number }>();
+          el.querySelectorAll<HTMLElement>("[data-flip-id]").forEach((node) => {
+            const id = node.dataset.flipId;
+            if (!id) return;
+            const rect = node.getBoundingClientRect();
+            from.set(id, { x: rect.left, y: rect.top });
+          });
+          flipFromRef.current = from;
+        }
+        columnCountRef.current = next;
+        setColumnCount(next);
+        // The remount + FLIP own the column change; drop any in-flight in-band pulse.
+        setReflowing(false);
+        clearTimeout(reflowTimerRef.current);
+        return;
+      }
+
+      if (isFirst) {
+        return; // never animate the initial layout
+      }
+
+      // Same column count → animate the vertical repack.
+      setReflowing(true);
+      clearTimeout(reflowTimerRef.current);
+      reflowTimerRef.current = setTimeout(() => setReflowing(false), ASSET_REFLOW_SETTLE_MS);
     };
 
     const ro = new ResizeObserver(recompute);
     ro.observe(el);
     recompute();
 
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      clearTimeout(reflowTimerRef.current);
+    };
   }, []);
 
-  // Reset scroll to the top whenever the active query (filters/sidebar) changes.
+  // FLIP "play": after a column-count change re-packs the columns, slide each matched card from its
+  // captured old screen position to the new one. Runs pre-paint so the invert holds the cards at their
+  // old positions before the release transition; unmatched (newly-visible) cards simply appear.
+  useLayoutEffect(() => {
+    const from = flipFromRef.current;
+    if (!from) return;
+    flipFromRef.current = null;
+    const el = scrollViewportRef.current;
+    if (!el) return;
+
+    const moved: HTMLElement[] = [];
+    el.querySelectorAll<HTMLElement>("[data-flip-id]").forEach((node) => {
+      const id = node.dataset.flipId;
+      if (!id) return;
+      const start = from.get(id);
+      if (!start) return;
+      const rect = node.getBoundingClientRect();
+      const dx = start.x - rect.left;
+      const dy = start.y - rect.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+      node.style.transition = "none";
+      node.style.transform = `translate(${dx}px, ${dy}px)`;
+      // Promote to its own compositor layer so the slide is GPU-composited (no per-frame main-thread
+      // repaint of the card's image/text). Cleared after the animation to release the layer.
+      node.style.willChange = "transform";
+      moved.push(node);
+    });
+
+    if (moved.length === 0) return;
+
+    // Flush the inverted transforms as the transition's "from" value. Without this forced reflow the
+    // browser collapses invert→release into a single paint (esp. since React commits + this layout
+    // effect run in the same frame as a plain rAF) and nothing animates.
+    void el.getBoundingClientRect();
+
+    for (const node of moved) {
+      node.style.transition = ASSET_FLIP_TRANSITION;
+      node.style.transform = "translate(0px, 0px)";
+    }
+
+    const clear = setTimeout(() => {
+      for (const node of moved) {
+        node.style.transition = "";
+        node.style.transform = "";
+        node.style.willChange = "";
+      }
+    }, ASSET_FLIP_DURATION_MS + 80);
+
+    return () => clearTimeout(clear);
+  }, [columnCount]);
+
+  // Reset scroll to the top when the active query (filters/sidebar) changes — but skip the
+  // initial mount so a scroll offset restored from the URL isn't clobbered.
   useEffect(() => {
+    if (firstResetRef.current) {
+      firstResetRef.current = false;
+      return;
+    }
     const el = scrollViewportRef.current;
     if (el) {
       el.scrollTop = 0;
@@ -1260,6 +1415,115 @@ function AssetMasonryGrid({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryResetKey]);
+
+  // Restore the saved top item on mount, e.g. when returning from a detail. A pixel offset is
+  // NOT a stable anchor in a dynamically-measured list (a fresh virtualizer re-estimates every
+  // card, so the same pixel maps to different content and drifts as cards hydrate/measure).
+  // Anchor to the item index (+ the offset scrolled into it) and let the virtualizer place it.
+  // Re-apply across frames while sizes settle, stopping once stable or the user takes over.
+  useEffect(() => {
+    const targetIndex = restoreIndexRef.current;
+    if (targetIndex < 0) {
+      return;
+    }
+    const targetOffset = restoreOffsetRef.current;
+    const el = scrollViewportRef.current;
+    let frame = 0;
+    let attempts = 0;
+    let stableFrames = 0;
+    let lastTop = -1;
+    let interrupted = false;
+    const stop = () => {
+      interrupted = true;
+    };
+    el?.addEventListener("wheel", stop, { passive: true });
+    el?.addEventListener("pointerdown", stop);
+    el?.addEventListener("keydown", stop);
+    const tick = () => {
+      if (interrupted) {
+        return;
+      }
+      const virtualizer = virtualizerRef.current;
+      const node = scrollViewportRef.current;
+      if (virtualizer && node) {
+        virtualizer.scrollToIndex(targetIndex, { align: "start" });
+        if (targetOffset > 0) {
+          node.scrollTop += targetOffset;
+        }
+        if (Math.abs(node.scrollTop - lastTop) <= 1) {
+          stableFrames += 1;
+        } else {
+          stableFrames = 0;
+          lastTop = node.scrollTop;
+        }
+      }
+      attempts += 1;
+      if (stableFrames < 3 && attempts < 40) {
+        frame = requestAnimationFrame(tick);
+      }
+    };
+    frame = requestAnimationFrame(tick);
+    return () => {
+      interrupted = true;
+      cancelAnimationFrame(frame);
+      el?.removeEventListener("wheel", stop);
+      el?.removeEventListener("pointerdown", stop);
+      el?.removeEventListener("keydown", stop);
+    };
+  }, []);
+
+  // Persist the top item index (+ the offset scrolled into it) to the URL (replace) so
+  // back-navigation restores the scroll position. Debounced while scrolling + an immediate
+  // write on scrollend so the resting position is captured exactly.
+  useEffect(() => {
+    const el = scrollViewportRef.current;
+    if (!el) {
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const writeTop = () => {
+      const virtualizer = virtualizerRef.current;
+      if (!virtualizer) {
+        return;
+      }
+      const scrollTop = el.scrollTop;
+      let topIndex = 0;
+      let topStart = 0;
+      let bestStart = Infinity;
+      for (const item of virtualizer.getVirtualItems()) {
+        if (item.end > scrollTop && item.start < bestStart) {
+          bestStart = item.start;
+          topIndex = item.index;
+          topStart = item.start;
+        }
+      }
+      const offset = Math.max(0, Math.round(scrollTop - topStart));
+      void navigate({
+        to: "/",
+        replace: true,
+        search: (prev) => ({
+          ...prev,
+          i: topIndex > 0 ? topIndex : undefined,
+          o: topIndex > 0 && offset > 0 ? offset : undefined,
+        }),
+      });
+    };
+    const onScroll = () => {
+      clearTimeout(timer);
+      timer = setTimeout(writeTop, 200);
+    };
+    const onScrollEnd = () => {
+      clearTimeout(timer);
+      writeTop();
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    el.addEventListener("scrollend", onScrollEnd);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("scrollend", onScrollEnd);
+      clearTimeout(timer);
+    };
+  }, [navigate]);
 
   return (
     <ScrollArea
@@ -1275,12 +1539,13 @@ function AssetMasonryGrid({
         <div className="grid h-56 place-items-center text-sm text-zinc-400">正在读取资产库</div>
       ) : indexItems.length ? (
         <AssetMasonryColumns
-          key={columnCount}
           scrollViewportRef={scrollViewportRef}
           columnCount={columnCount}
           indexItems={indexItems}
           hydratedAssetsById={hydratedAssetsById}
           onHydrateAssets={onHydrateAssets}
+          virtualizerRef={virtualizerRef}
+          reflowing={reflowing}
         />
       ) : (
         <div className="grid h-72 place-items-center">
@@ -2189,6 +2454,7 @@ function AssetDetail({
   onToggleTerminal: () => void;
 }) {
   const { label } = getKindMeta(asset.kind);
+  const headerRef = useToolbarClearance();
   const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
   const openFileMutation = useMutation(trpc.assets.openFile.mutationOptions());
   const openVaultLocationMutation = useMutation(trpc.assets.openVaultLocation.mutationOptions());
@@ -2226,14 +2492,15 @@ function AssetDetail({
     <main className="flex h-full min-w-0 flex-col bg-white">
       {/* ── Top bar: breadcrumb + actions on one line ── */}
       <div
-        className={`${dragClassName} relative z-[75] flex h-14 shrink-0 items-center gap-2 border-b border-zinc-100 bg-white px-6`}
+        ref={headerRef}
+        className={`${dragClassName} relative z-[75] flex h-10 shrink-0 items-center gap-2 border-b border-zinc-100 bg-white px-6`}
       >
         <Button
           size="sm"
           variant="ghost"
           className="window-no-drag h-7 gap-1 px-2 text-[12.5px] font-semibold text-zinc-800"
           onPress={() => {
-            window.location.hash = "/";
+            window.history.back();
           }}
         >
           <ArrowLeft size={13} />
