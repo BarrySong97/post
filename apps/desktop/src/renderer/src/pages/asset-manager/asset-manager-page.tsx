@@ -52,7 +52,6 @@ import { Terminal as XTermTerminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
   AlignLeft,
-  ArrowLeft,
   Calendar,
   Check,
   ChevronDown,
@@ -665,6 +664,7 @@ const AssetCard = React.memo(function AssetCard({
   selected?: boolean;
   onToggleSelected?: (assetId: string) => void;
 }) {
+  const navigate = useNavigate();
   const hasCover =
     asset.kind === "image" || asset.kind === "video" || (asset.kind === "web" && asset.ogImage);
   const showUrlRow = asset.kind === "link" || (asset.kind === "web" && !asset.ogImage);
@@ -693,7 +693,7 @@ const AssetCard = React.memo(function AssetCard({
         type="button"
         className="block w-full text-left outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/20"
         onClick={() => {
-          window.location.hash = `/assets/${asset.id}`;
+          void navigate({ to: "/assets/$assetId", params: { assetId: asset.id } });
         }}
       >
         {hasCover ? (
@@ -2522,17 +2522,6 @@ function AssetDetail({
         ref={headerRef}
         className={`${dragClassName} relative z-[75] flex h-10 shrink-0 items-center gap-2 border-b border-zinc-100 bg-white px-6`}
       >
-        <Button
-          size="sm"
-          variant="ghost"
-          className="window-no-drag h-7 gap-1 px-2 text-[12.5px] font-semibold text-zinc-800"
-          onPress={() => {
-            window.history.back();
-          }}
-        >
-          <ArrowLeft size={13} />
-          返回
-        </Button>
         <span className="text-xs text-zinc-400">全部资产 / {asset.tag}</span>
         <div className="flex-1" />
         <div className="window-no-drag flex items-center gap-2">
