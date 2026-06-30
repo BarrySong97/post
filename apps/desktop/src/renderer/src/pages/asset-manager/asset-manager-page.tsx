@@ -17,7 +17,7 @@ import React, {
   type SVGProps,
 } from "react";
 import { useReducedMotion } from "motion/react";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   assetFiltersAtom,
   activeSidebarItemAtom,
@@ -1024,6 +1024,7 @@ const ACTIVE_FILTER_COLLAPSE_THRESHOLD = 5;
 function AssetActiveFilterSummary({
   filters,
   onFiltersChange,
+  onClearFilters,
   resultCount,
   totalCount,
   activeViewName,
@@ -1031,6 +1032,7 @@ function AssetActiveFilterSummary({
 }: {
   filters: AssetFilterState;
   onFiltersChange: React.Dispatch<React.SetStateAction<AssetFilterState>>;
+  onClearFilters: () => void;
   resultCount: number;
   totalCount: number;
   activeViewName?: string;
@@ -1045,40 +1047,47 @@ function AssetActiveFilterSummary({
   const removeChips = (keys: Set<React.Key>) => {
     const chipsByKey = new Map(chips.map((chip) => [chip.key, chip]));
 
-    onFiltersChange((current) => {
-      return Array.from(keys).reduce<AssetFilterState>((nextFilters, key) => {
-        const chip = chipsByKey.get(String(key));
+    const nextFilters = Array.from(keys).reduce<AssetFilterState>((accFilters, key) => {
+      const chip = chipsByKey.get(String(key));
 
-        if (!chip) {
-          return nextFilters;
-        }
+      if (!chip) {
+        return accFilters;
+      }
 
-        if (chip.group === "type") {
-          return { ...nextFilters, types: nextFilters.types.filter((type) => type !== chip.value) };
-        }
+      if (chip.group === "type") {
+        return { ...accFilters, types: accFilters.types.filter((type) => type !== chip.value) };
+      }
 
-        if (chip.group === "tag") {
-          return { ...nextFilters, tags: nextFilters.tags.filter((tag) => tag !== chip.value) };
-        }
+      if (chip.group === "tag") {
+        return { ...accFilters, tags: accFilters.tags.filter((tag) => tag !== chip.value) };
+      }
 
-        if (chip.group === "source") {
-          return {
-            ...nextFilters,
-            sources: nextFilters.sources.filter((source) => source !== chip.value),
-          };
-        }
+      if (chip.group === "source") {
+        return {
+          ...accFilters,
+          sources: accFilters.sources.filter((source) => source !== chip.value),
+        };
+      }
 
-        if (chip.group === "time") {
-          return { ...nextFilters, time: "any" };
-        }
+      if (chip.group === "time") {
+        return { ...accFilters, time: "any" };
+      }
 
-        if (chip.group === "sort") {
-          return { ...nextFilters, sort: "updated_desc" };
-        }
+      if (chip.group === "sort") {
+        return { ...accFilters, sort: "updated_desc" };
+      }
 
-        return { ...nextFilters, status: "any" };
-      }, current);
-    });
+      return { ...accFilters, status: "any" };
+    }, filters);
+
+    // Removing the last chip is the same as "clear" — also drop the sidebar selection so the query
+    // stops falling back to the active view/tag (otherwise the content would stay filtered).
+    if (getActiveFilterCount(nextFilters) === 0) {
+      onClearFilters();
+      return;
+    }
+
+    onFiltersChange(nextFilters);
   };
 
   return (
@@ -1126,7 +1135,7 @@ function AssetActiveFilterSummary({
         size="sm"
         variant="ghost"
         className="h-5 min-h-0 px-1 text-[11px] text-zinc-400 hover:text-zinc-700"
-        onPress={() => onFiltersChange((current) => getEmptyAssetFilters(current.match))}
+        onPress={onClearFilters}
       >
         清除
       </Button>
@@ -1608,8 +1617,18 @@ function AssetBoard({
   activeViewIcon?: string | null;
 }) {
   const [filters, setFilters] = useAtom(assetFiltersAtom);
+  const setActiveSidebarItem = useSetAtom(activeSidebarItemAtom);
   const [filterOpen, setFilterOpen] = useState(readAssetFilterOpenFromStorage);
   const activeFilterCount = getActiveFilterCount(filters);
+
+  // Clearing filters must also drop the sidebar selection. The displayed list is derived from BOTH
+  // the filter atom and `activeSidebarItem` (buildAssetListInput falls back to the selection's tag
+  // ids when no filter tags are set), so resetting filters alone would hide the chips while the query
+  // stays scoped to the still-active view/tag.
+  const clearAllFilters = useCallback(() => {
+    setFilters((current) => getEmptyAssetFilters(current.match));
+    setActiveSidebarItem({ kind: "mgmt", id: "all" });
+  }, [setFilters, setActiveSidebarItem]);
 
   useEffect(() => {
     writeAssetFilterOpenToStorage(filterOpen);
@@ -1665,6 +1684,7 @@ function AssetBoard({
             <AssetFilterPanel
               filters={filters}
               onFiltersChange={setFilters}
+              onClearFilters={clearAllFilters}
               tagOptions={tagOptions}
               sourceOptions={sourceOptions}
               resultCount={resultCount}
@@ -1675,6 +1695,7 @@ function AssetBoard({
         <AssetActiveFilterSummary
           filters={filters}
           onFiltersChange={setFilters}
+          onClearFilters={clearAllFilters}
           resultCount={resultCount}
           totalCount={totalCount}
           activeViewName={activeViewName}

@@ -11,7 +11,6 @@ import { AccordionBody, AccordionPanel, Button, Tag, TagGroup, Tabs } from "@her
 import { FileText, Image as ImageIcon, Link as LinkIcon, Plus, Video } from "lucide-react";
 
 import {
-  getEmptyAssetFilters,
   type AssetFilterMatch,
   type AssetFilterState,
   type AssetSortOrder,
@@ -409,11 +408,13 @@ export function AssetFilterFields({
 type AssetFilterPanelProps = AssetFilterFieldsProps & {
   resultCount: number;
   onSaveView?: () => void;
+  onClearFilters: () => void;
 };
 
 export function AssetFilterPanel({
   filters,
   onFiltersChange,
+  onClearFilters,
   tagOptions,
   sourceOptions,
   resultCount,
@@ -437,7 +438,7 @@ export function AssetFilterPanel({
             size="sm"
             variant="ghost"
             className="h-7 min-h-0 px-1 text-[11.5px] text-zinc-500"
-            onPress={() => onFiltersChange((current) => getEmptyAssetFilters(current.match))}
+            onPress={onClearFilters}
           >
             重置全部
           </Button>
