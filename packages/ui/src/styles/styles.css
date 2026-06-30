@@ -72,15 +72,16 @@
   }
 }
 
-/* Panel collapse/expand animation */
-.panel-layout #sidebar,
-.panel-layout #agent {
+/* Panel collapse/expand animation.
+   Gated behind `.panel-animating`, which the layout adds only while an intentional
+   collapse/expand toggle is in flight. It must NOT be a standing transition:
+   react-resizable-panels sizes panels via flex-grow and recomputes it every resize
+   tick to preserve pixel width (groupResizeBehavior="preserve-pixel-size"). A permanent
+   flex-grow transition would animate that per-frame correction, so on window resize the
+   panel visibly scales with the window and then eases back. */
+.panel-layout.panel-animating #sidebar,
+.panel-layout.panel-animating #agent {
   transition: flex-grow 0.25s ease-in-out;
-}
-
-.panel-layout:has([data-separator="active"]) #sidebar,
-.panel-layout:has([data-separator="active"]) #agent {
-  transition: none;
 }
 
 .window-drag {

@@ -13,6 +13,7 @@ import type { PanelImperativeHandle } from "react-resizable-panels";
 import { trpc } from "@/lib/trpc";
 import {
   SIDEBAR_COLLAPSED_STORAGE_KEY,
+  SIDEBAR_MAX_WIDTH_PX,
   SIDEBAR_MIN_WIDTH_PX,
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from "@/lib/asset-manager/storage";
@@ -95,11 +96,17 @@ export function AppLayout({ children }: { children: ReactNode }) {
     () => localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true",
   );
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false);
+  // True only for the duration of an intentional collapse/expand toggle. Drives the
+  // `panel-animating` class that enables the flex-grow transition. It must stay off
+  // during window resizes, otherwise the transition animates the panel's per-tick
+  // pixel-preservation and the sidebar appears to scale with the window then ease back.
+  const [sidebarAnimating, setSidebarAnimating] = useState(false);
   const [tagModalState, setTagModalState] = useState<SidebarTagModalState | null>(null);
   const [viewModalState, setViewModalState] = useState<SidebarViewModalState | null>(null);
   const sidebarPanelRef = useRef<PanelImperativeHandle | null>(null);
   const sidebarCollapseIntentRef = useRef<"collapsed" | "expanded" | null>(null);
   const sidebarInitializingRef = useRef(true);
+  const sidebarAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // First-paint sidebar size. Passing this as defaultLayout lets the panel
   // render at its real width immediately instead of growing from 0.
@@ -108,7 +115,21 @@ export function AppLayout({ children }: { children: ReactNode }) {
     return Number.isFinite(stored) ? Math.min(28, Math.max(16, stored)) : 20;
   });
 
+  // Briefly enable the flex-grow transition so the collapse/expand toggle animates,
+  // then turn it back off so window resizes stay instant.
+  const playSidebarToggleAnimation = () => {
+    if (sidebarAnimationTimerRef.current !== null) {
+      clearTimeout(sidebarAnimationTimerRef.current);
+    }
+    setSidebarAnimating(true);
+    sidebarAnimationTimerRef.current = setTimeout(() => {
+      setSidebarAnimating(false);
+      sidebarAnimationTimerRef.current = null;
+    }, 300);
+  };
+
   const handleToggleSidebar = () => {
+    playSidebarToggleAnimation();
     if (sidebarCollapsed || sidebarPanelRef.current?.isCollapsed()) {
       sidebarCollapseIntentRef.current = "expanded";
       setSidebarPreviewOpen(false);
@@ -160,6 +181,14 @@ export function AppLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     return () => {
       syncWindowControlsWithSidebar(true);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (sidebarAnimationTimerRef.current !== null) {
+        clearTimeout(sidebarAnimationTimerRef.current);
+      }
     };
   }, []);
 
@@ -240,7 +269,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <ResizablePanelGroup
             id="app-layout"
             direction="horizontal"
-            className="panel-layout h-full min-h-0 overflow-hidden bg-transparent"
+            className={`panel-layout h-full min-h-0 overflow-hidden bg-transparent ${
+              sidebarAnimating ? "panel-animating" : ""
+            }`}
             resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
             defaultLayout={
               sidebarCollapsed
@@ -253,7 +284,15 @@ export function AppLayout({ children }: { children: ReactNode }) {
               id="sidebar"
               defaultSize={20}
               minSize={`${SIDEBAR_MIN_WIDTH_PX}px`}
-              maxSize={28}
+              // Keep both constraints in pixels. A percentage maxSize rescales with the
+              // window and can drop below the pixel minSize, which makes the clamp fight
+              // `preserve-pixel-size` on every resize tick (the panel scales with the
+              // window, then snaps back). Pixel units stay stable in both directions.
+              maxSize={`${SIDEBAR_MAX_WIDTH_PX}px`}
+              // Freeze the sidebar at a fixed pixel width when the window resizes; only
+              // the main panel absorbs the delta. (Default behavior preserves the
+              // percentage, which rescales the sidebar's pixel width.)
+              groupResizeBehavior="preserve-pixel-size"
               collapsible
               collapsedSize={0}
               onResize={(size) => {

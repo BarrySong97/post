@@ -15,6 +15,11 @@ export const SIDEBAR_WIDTH_STORAGE_KEY = "post.assetManager.sidebarPct";
 // enough that the right-aligned count numbers never clip.
 export const SIDEBAR_MIN_WIDTH_PX = 320;
 
+// Maximum sidebar width (px). Kept in pixels (not a window-relative percentage) so the
+// resize constraint never collides with the pixel minSize and never rescales with the
+// window — required for the panel's `preserve-pixel-size` freeze to stay stable.
+export const SIDEBAR_MAX_WIDTH_PX = 560;
+
 export function readAssetFilterOpenFromStorage() {
   if (typeof window === "undefined") {
     return false;
