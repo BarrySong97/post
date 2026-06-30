@@ -12,6 +12,7 @@ import { pathToFileURL } from "node:url";
 import { APP_DISPLAY_NAME } from "./app-info";
 import { isDevRuntime } from "./runtime-env";
 
+// Aligns with the compact h-10 top-chrome content row (toolbar + page header), centered ~y20.
 export const TRAFFIC_LIGHT_POSITION = { x: 18, y: 14 };
 
 export type WindowControlsState = {
@@ -53,9 +54,13 @@ export function createWindow(): BrowserWindow {
   const macWindowOptions =
     process.platform === "darwin"
       ? ({
+          // Vibrancy WITHOUT `transparent: true`. A fully-transparent window is what makes macOS
+          // draggable regions (-webkit-app-region) go stale after resize / focus (electron#31862 &
+          // friends). Vibrancy itself only needs `visualEffectState` + a transparent page background
+          // (styles.css: `body { background: transparent }`), so the frosted sidebar survives while
+          // the window stays opaque → draggable regions stay reliable.
           backgroundColor: "#00000000",
           trafficLightPosition: TRAFFIC_LIGHT_POSITION,
-          transparent: true,
           vibrancy: "sidebar",
           visualEffectState: "active",
         } as const)
