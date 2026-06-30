@@ -40,7 +40,7 @@ import type {
   SidebarView,
 } from "@/lib/asset-manager/types";
 import { isMacWindow } from "@/lib/platform";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Plyr, type PlyrOptions, type PlyrSource } from "plyr-react";
@@ -2728,6 +2728,9 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
     ...trpc.assets.layoutIndex.queryOptions(listQueryInput),
     enabled: !assetId,
     staleTime: 30_000,
+    // Switching views/tags swaps the query key. Keep the previous result on screen while the next
+    // one loads so the masonry grid doesn't flash blank (white) during the brief fetch gap.
+    placeholderData: keepPreviousData,
   });
   const layoutIndexItems = layoutIndexQuery.data?.items ?? EMPTY_ASSET_LAYOUT_INDEX;
   const resultCount = layoutIndexQuery.data?.total ?? 0;
