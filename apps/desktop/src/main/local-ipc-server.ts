@@ -13,6 +13,8 @@ import path from "node:path";
 
 import { appEventBus } from "./events";
 import { getDatabasePath } from "./db";
+import { getLiveFilterSnapshot, type LiveFilterSnapshot } from "./live-filter-state";
+import { commandMessageSchema, type CommandMessage, type CommandOp } from "./local-ipc-messages";
 
 type LedgerChangedMessage = {
   type: "ledger.changed";
@@ -27,6 +29,14 @@ type LocalIpcAck = {
   type: "ledger.changed.ack";
   ok: boolean;
   message?: string;
+};
+
+type CommandAck = {
+  type: "command.ack";
+  ok: boolean;
+  op: CommandOp | "unknown";
+  message?: string;
+  snapshot?: LiveFilterSnapshot | null;
 };
 
 let server: Server | null = null;
@@ -86,6 +96,109 @@ function sendAck(socket: Socket, ack: LocalIpcAck): void {
   });
 }
 
+function sendCommandAck(socket: Socket, ack: CommandAck): void {
+  socket.write(`${JSON.stringify(ack)}\n`, () => {
+    socket.end();
+  });
+}
+
+function isCommandEnvelope(value: unknown): value is { type: string } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const type = (value as { type?: unknown }).type;
+  return typeof type === "string" && (type.startsWith("filter.") || type === "asset.open");
+}
+
+function opForCommand(type: CommandMessage["type"]): CommandOp {
+  switch (type) {
+    case "filter.apply":
+      return "apply";
+    case "filter.activateView":
+      return "activateView";
+    case "filter.selectSidebar":
+      return "selectSidebar";
+    case "filter.clear":
+      return "clear";
+    case "filter.get":
+      return "get";
+    case "asset.open":
+      return "openAsset";
+  }
+}
+
+function handleCommandMessage(socket: Socket, raw: unknown): void {
+  const parsed = commandMessageSchema.safeParse(raw);
+  if (!parsed.success) {
+    sendCommandAck(socket, {
+      type: "command.ack",
+      ok: false,
+      op: "unknown",
+      message: "Invalid live command message.",
+    });
+    return;
+  }
+
+  const message = parsed.data;
+  const op = opForCommand(message.type);
+
+  if (path.resolve(message.dbPath) !== path.resolve(getDatabasePath())) {
+    sendCommandAck(socket, {
+      type: "command.ack",
+      ok: false,
+      op,
+      message: "Live command database path did not match the running app.",
+    });
+    return;
+  }
+
+  const emittedAt = typeof message.emittedAt === "number" ? message.emittedAt : Date.now();
+
+  switch (message.type) {
+    case "filter.apply":
+      appEventBus.publish({
+        type: "asset-filter.apply",
+        emittedAt,
+        filters: message.filters,
+        sort: message.sort,
+      });
+      sendCommandAck(socket, { type: "command.ack", ok: true, op });
+      return;
+    case "filter.activateView":
+      appEventBus.publish({
+        type: "asset-filter.activate-view",
+        emittedAt,
+        viewId: message.viewId,
+      });
+      sendCommandAck(socket, { type: "command.ack", ok: true, op });
+      return;
+    case "filter.selectSidebar":
+      appEventBus.publish({ type: "asset-filter.select-sidebar", emittedAt, item: message.item });
+      sendCommandAck(socket, { type: "command.ack", ok: true, op });
+      return;
+    case "filter.clear":
+      appEventBus.publish({ type: "asset-filter.clear", emittedAt });
+      sendCommandAck(socket, { type: "command.ack", ok: true, op });
+      return;
+    case "asset.open":
+      appEventBus.publish({ type: "asset-detail.open", emittedAt, assetId: message.assetId });
+      sendCommandAck(socket, { type: "command.ack", ok: true, op });
+      return;
+    case "filter.get": {
+      const snapshot = getLiveFilterSnapshot();
+      sendCommandAck(socket, {
+        type: "command.ack",
+        ok: true,
+        op,
+        snapshot,
+        message: snapshot ? undefined : "No live filter has been reported yet.",
+      });
+      return;
+    }
+  }
+}
+
 function handleSocket(socket: Socket): void {
   let buffer = "";
 
@@ -110,6 +223,8 @@ function handleSocket(socket: Socket): void {
                 ? undefined
                 : "Notification database path did not match the running app.",
             });
+          } else if (isCommandEnvelope(message)) {
+            handleCommandMessage(socket, message);
           } else {
             sendAck(socket, {
               type: "ledger.changed.ack",

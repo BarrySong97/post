@@ -5,9 +5,16 @@
  * @gotcha  Keep event payloads serializable because they cross Electron IPC boundaries.
  */
 
+import type { AssetListSortInput } from "@shared/contracts/assets/asset-list.contract";
+import type { SavedViewFiltersInput } from "@shared/contracts/assets/saved-views/saved-view.contract";
+
 import type { BackgroundTask } from "./background-tasks";
 
 export type WatcherStatus = "idle" | "starting" | "watching" | "auditing" | "stopped" | "error";
+
+export type AssetFilterSidebarTarget =
+  | { kind: "mgmt"; id: "all" | "inbox" }
+  | { kind: "tag"; id: string };
 
 export type WatcherScope =
   | {
@@ -37,6 +44,31 @@ export type AppEvent =
       dbPath: string;
       changed: string[];
       operationCount: number;
+    }
+  | {
+      type: "asset-filter.apply";
+      emittedAt: number;
+      filters: SavedViewFiltersInput;
+      sort: AssetListSortInput;
+    }
+  | {
+      type: "asset-filter.activate-view";
+      emittedAt: number;
+      viewId: string;
+    }
+  | {
+      type: "asset-filter.select-sidebar";
+      emittedAt: number;
+      item: AssetFilterSidebarTarget;
+    }
+  | {
+      type: "asset-filter.clear";
+      emittedAt: number;
+    }
+  | {
+      type: "asset-detail.open";
+      emittedAt: number;
+      assetId: string;
     }
   | {
       type: "task.updated";

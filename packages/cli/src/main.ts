@@ -18,6 +18,7 @@ import {
   createTag,
   deleteSavedView,
   deleteTagAndCleanViews,
+  getAssetOrThrow,
   getAssetTags,
   getRequestedOrActiveVault,
   listAssets,
@@ -29,6 +30,7 @@ import {
   reorderTags,
   updateSavedView,
   updateTag,
+  DomainError,
   type AssetListSort,
   type SavedViewFilters,
 } from "@post/domain";
@@ -36,7 +38,13 @@ import { schema, type AssetKind, type AssetStatus } from "@post/db";
 
 import { writeError, writeSuccess, exitCodeForError } from "./output/format";
 import { createCliRuntime, type CliGlobalOptions } from "./runtime/context";
-import { notifyDesktopLedgerChanged } from "./runtime/local-ipc";
+import { resolveDefaultDbPath } from "./runtime/database";
+import {
+  notifyDesktopLedgerChanged,
+  requestFilterState,
+  sendLiveCommand,
+  type LiveCommandResult,
+} from "./runtime/local-ipc";
 
 type CommandOptions = CliGlobalOptions & {
   json?: boolean;
@@ -170,6 +178,67 @@ function filtersFromOptions(options: {
   };
 }
 
+function collect(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
+function resolveLiveDbPath(options: CommandOptions): string {
+  return path.resolve(options.db ?? resolveDefaultDbPath(options.env ?? "prod"));
+}
+
+function emitLiveResult(
+  result: LiveCommandResult,
+  options: CommandOptions,
+  mode: "command" | "get" = "command",
+): void {
+  if (result.status === "ok") {
+    if (mode === "get") {
+      const snapshot = result.snapshot ?? null;
+      const warnings =
+        snapshot === null
+          ? [
+              {
+                code: "NO_LIVE_FILTER",
+                message: "The app has not reported a live filter yet. Open the asset manager.",
+              },
+            ]
+          : [];
+      writeSuccess({ snapshot }, { json: options.json }, warnings);
+      return;
+    }
+
+    writeSuccess({ applied: true }, { json: options.json });
+    return;
+  }
+
+  const message =
+    result.status === "unreachable"
+      ? `Post desktop app is not running or unreachable; live commands require the app to be open. (${result.reason})`
+      : `Post app rejected the live command: ${result.reason}`;
+  writeError(new Error(message), { json: options.json });
+  process.exitCode = 3;
+}
+
+function runLiveWithRuntime(
+  options: CommandOptions,
+  callback: (runtime: ReturnType<typeof createCliRuntime>) => Promise<LiveCommandResult>,
+): Promise<void> {
+  try {
+    const runtime = createCliRuntime(options);
+    return callback(runtime).then(
+      (result) => emitLiveResult(result, options),
+      (error: unknown) => {
+        writeError(error, { json: options.json });
+        process.exitCode = exitCodeForError(error);
+      },
+    );
+  } catch (error) {
+    writeError(error, { json: options.json });
+    process.exitCode = exitCodeForError(error);
+    return Promise.resolve();
+  }
+}
+
 function executePatchOperation(
   runtime: ReturnType<typeof createCliRuntime>,
   operation: PatchOperation,
@@ -239,7 +308,7 @@ program
         database: { path: runtime.dbPath, migrationsFolder: runtime.migrationsFolder },
         activeVault: vault,
         counts: { assets: assetCount, tags: tagCount, views: viewCount },
-        operations: ["tag.*", "asset.tag.*", "view.*", "apply-patch"],
+        operations: ["tag.*", "asset.tag.*", "view.*", "apply-patch", "filter.*", "asset.open"],
       };
     });
   });
@@ -286,6 +355,17 @@ asset
   .argument("<assetId>")
   .action((assetId: string) => {
     runRead(globalOptions(), (runtime) => getAssetTags(runtime.ctx, assetId));
+  });
+asset
+  .command("open")
+  .argument("<assetId>")
+  .description("Open an asset's detail view in the running app")
+  .action((assetId: string) => {
+    const options = globalOptions();
+    return runLiveWithRuntime(options, (runtime) => {
+      getAssetOrThrow(runtime.ctx, assetId);
+      return sendLiveCommand(runtime.dbPath, { type: "asset.open", assetId });
+    });
   });
 const assetTag = asset.command("tag").description("Manage asset-tag bindings");
 assetTag
@@ -514,6 +594,127 @@ view
     const options = { ...globalOptions(), ...local };
     return runWrite("view.reorder", options, { viewIds }, (runtime) =>
       reorderSavedViews(runtime.ctx, { orderedIds: viewIds }),
+    );
+  });
+
+const filter = program
+  .command("filter")
+  .description("Control the running desktop app's live asset filter (requires the app to be open)");
+filter
+  .command("apply")
+  .description("Apply an ad-hoc filter to the running app")
+  .option("--tag <tagId>", "Tag id (repeatable)", collect, [])
+  .option("--kind <kind>", "Asset kind (repeatable)", collect, [])
+  .option("--source <source>", "Source type: vault|external_file|url (repeatable)", collect, [])
+  .option("--match <match>", "Match mode: and|or")
+  .option("--time <time>", "Time filter: any|today|week|m30")
+  .option("--status <status>", "Status filter")
+  .option("--sort <sort>", "Sort order")
+  .action(
+    (local: {
+      tag?: string[];
+      kind?: string[];
+      source?: string[];
+      match?: string;
+      time?: string;
+      status?: string;
+      sort?: string;
+    }) => {
+      const options = globalOptions();
+      const message = {
+        type: "filter.apply",
+        filters: {
+          match: local.match ?? "and",
+          tagIds: local.tag ?? [],
+          types: local.kind ?? [],
+          sources: local.source ?? [],
+          time: local.time ?? "any",
+          status: local.status ?? "any",
+        },
+        sort: local.sort ?? "updated_desc",
+      };
+      return sendLiveCommand(resolveLiveDbPath(options), message).then((result) =>
+        emitLiveResult(result, options),
+      );
+    },
+  );
+filter
+  .command("view")
+  .argument("<nameOrId>")
+  .description("Activate a saved view in the running app")
+  .action((nameOrId: string) => {
+    const options = globalOptions();
+    return runLiveWithRuntime(options, (runtime) => {
+      const views = listSavedViews(runtime.ctx);
+      const view =
+        views.find((item) => item.id === nameOrId) ?? views.find((item) => item.name === nameOrId);
+      if (!view) {
+        throw new DomainError("VIEW_NOT_FOUND", `Saved view not found: ${nameOrId}`, {
+          status: "NOT_FOUND",
+        });
+      }
+
+      return sendLiveCommand(runtime.dbPath, { type: "filter.activateView", viewId: view.id });
+    });
+  });
+filter
+  .command("tag")
+  .argument("<nameOrId>")
+  .description("Select a tag in the running app sidebar")
+  .action((nameOrId: string) => {
+    const options = globalOptions();
+    return runLiveWithRuntime(options, (runtime) => {
+      const tags = listTags(runtime.ctx);
+      const tag =
+        tags.find((item) => item.id === nameOrId) ?? tags.find((item) => item.name === nameOrId);
+      if (!tag) {
+        throw new DomainError("TAG_NOT_FOUND", `Tag not found: ${nameOrId}`, {
+          status: "NOT_FOUND",
+        });
+      }
+
+      return sendLiveCommand(runtime.dbPath, {
+        type: "filter.selectSidebar",
+        item: { kind: "tag", id: tag.id },
+      });
+    });
+  });
+filter
+  .command("all")
+  .description("Select the All view in the running app")
+  .action(() => {
+    const options = globalOptions();
+    return sendLiveCommand(resolveLiveDbPath(options), {
+      type: "filter.selectSidebar",
+      item: { kind: "mgmt", id: "all" },
+    }).then((result) => emitLiveResult(result, options));
+  });
+filter
+  .command("inbox")
+  .description("Select the Inbox view in the running app")
+  .action(() => {
+    const options = globalOptions();
+    return sendLiveCommand(resolveLiveDbPath(options), {
+      type: "filter.selectSidebar",
+      item: { kind: "mgmt", id: "inbox" },
+    }).then((result) => emitLiveResult(result, options));
+  });
+filter
+  .command("clear")
+  .description("Reset the running app's live filter to default")
+  .action(() => {
+    const options = globalOptions();
+    return sendLiveCommand(resolveLiveDbPath(options), { type: "filter.clear" }).then((result) =>
+      emitLiveResult(result, options),
+    );
+  });
+filter
+  .command("get")
+  .description("Read the running app's current live filter")
+  .action(() => {
+    const options = globalOptions();
+    return requestFilterState(resolveLiveDbPath(options)).then((result) =>
+      emitLiveResult(result, options, "get"),
     );
   });
 

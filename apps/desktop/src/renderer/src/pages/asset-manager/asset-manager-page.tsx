@@ -95,7 +95,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppLayout } from "@/components/layout/app-layout-context";
 import { useToolbarClearance } from "@/components/layout/window-chrome-nav";
 import { emitAssetProfile, roundProfileNumber } from "@/lib/asset-profile";
-import { trpc, type RouterInputs } from "@/lib/trpc";
+import { trpc, trpcClient, type RouterInputs } from "@/lib/trpc";
 import { load as yamlLoad } from "js-yaml";
 import {
   AssetFilterPanel,
@@ -103,6 +103,7 @@ import {
   STATUS_FILTER_LABELS,
   TIME_FILTER_LABELS,
   TYPE_FILTER_LABELS,
+  assetFiltersToSavedViewFilters,
   savedViewFiltersToAssetFilters,
   sourceLabelsToTypes,
 } from "@/components/asset-manager/asset-filter-controls";
@@ -2702,6 +2703,20 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
     refetchOnWindowFocus: false,
     staleTime: 30_000,
   });
+
+  // Report the current live filter (canonical, id-based) to main so the CLI `filter get` can read
+  // it back. Debounced so rapid hand edits don't spam the mutation.
+  useEffect(() => {
+    const tagOptions = sidebarQuery.data?.tags ?? [];
+    const timer = window.setTimeout(() => {
+      void trpcClient.events.reportFilterState.mutate({
+        filters: assetFiltersToSavedViewFilters(filters, tagOptions),
+        sort: filters.sort,
+        activeItem: activeSidebarItem,
+      });
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [filters, activeSidebarItem, sidebarQuery.data?.tags]);
 
   const listQueryInput = useMemo(
     () =>

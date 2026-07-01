@@ -15,6 +15,7 @@ import { getToastSnapshot, subscribeToasts, toast, type ToastItem } from "@/lib/
 import { heroToastQueue } from "@/lib/hero-toast";
 
 import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
+import { applyFilterCommand } from "@/lib/asset-manager/apply-filter-command";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { useHistoryNavigationShortcuts } from "@/hooks/use-history-navigation-shortcuts";
 import { ConfirmModalProvider } from "@/components/common/confirm-modal";
@@ -224,6 +225,19 @@ function GlobalStatusLine() {
         if (event.type === "ledger.changed") {
           void queryClient.invalidateQueries();
         }
+
+        if (
+          event.type === "asset-filter.apply" ||
+          event.type === "asset-filter.activate-view" ||
+          event.type === "asset-filter.select-sidebar" ||
+          event.type === "asset-filter.clear"
+        ) {
+          void applyFilterCommand(event);
+        }
+
+        if (event.type === "asset-detail.open") {
+          void navigate({ to: "/assets/$assetId", params: { assetId: event.assetId } });
+        }
       },
       onError: (error) => {
         console.error("Task event subscription failed", error);
@@ -237,7 +251,7 @@ function GlobalStatusLine() {
         taskEventInvalidationTimer.current = null;
       }
     };
-  }, [invalidateVaultState, queryClient]);
+  }, [invalidateVaultState, navigate, queryClient]);
 
   useEffect(() => {
     if (!snapshot) {

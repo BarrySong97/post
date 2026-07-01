@@ -36,6 +36,8 @@ The asset manager is the primary browsing and organization surface for vault con
 ## Notes
 
 - Keep filter state serializable; saved views depend on stable JSON.
+- Live filter control (CLI): the Post CLI drives the two filter atoms over local IPC. Main publishes `asset-filter.*` events; `apps/desktop/src/renderer/src/lib/asset-manager/apply-filter-command.ts` resolves canonical id-based payloads to names/labels via `sidebarMeta` and sets the atoms, mirroring the sidebar handlers. `asset-manager-page.tsx` reports the current filter back through `events.reportFilterState` so `filter get` can read it.
+- Live navigation (CLI): `asset open <id>` publishes `asset-detail.open`; `app-shell.tsx` navigates to `/assets/$assetId`, opening the same detail view a card click uses.
 - Keep shared asset contracts free of main-process dependencies so renderer forms and main routers can reuse the same constraints.
 - Keep icon sizing aligned with [../../../design.md](../../../design.md).
 - Masonry cards stay restrained: cover assets (image/video/web-with-OG) render the thumbnail only, while text assets (markdown/file/link) show a compact title, a preview body, and tags.

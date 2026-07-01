@@ -38,3 +38,4 @@ React component
 - Add new server-side behavior as tRPC procedures, not ad hoc IPC channels, unless the capability is not request/response shaped.
 - Keep subscription cleanup tied to WebContents destruction.
 - Return serialized error messages across IPC; do not leak native error objects.
+- The tRPC link is renderer->main only. The one inbound channel for a separate OS process (the `post-cli` tool) is the local socket in `apps/desktop/src/main/local-ipc-server.ts`; it carries `ledger.changed` refresh hints and live UI commands (`filter.*`, `asset.open`) that reply with `command.ack`, all guarded by a `dbPath` match. For read-back, the renderer pushes its current filter through the `events.reportFilterState` mutation into a main-process cache that answers the socket's `filter.get`.

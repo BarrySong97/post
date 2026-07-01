@@ -34,7 +34,8 @@ For the detailed IPC contract, see [../../topics/electron-trpc-ipc.md](../../top
 - Shared renderer/main contracts under `apps/desktop/src/shared/contracts/`.
 - Terminal IPC handlers in `apps/desktop/src/main/terminal.ts`.
 - Runtime data under Electron `userData`, currently pinned to the legacy `desktop` app data directory unless `POST_USER_DATA_DIR` overrides it.
-- Local IPC server in `apps/desktop/src/main/local-ipc-server.ts` receives best-effort `post-cli` commit notifications and publishes `ledger.changed` events for renderer cache invalidation.
+- Local IPC server in `apps/desktop/src/main/local-ipc-server.ts` receives best-effort `post-cli` commit notifications (`ledger.changed`) and live UI commands (`filter.*` -> `asset-filter.*` events; `asset.open` -> `asset-detail.open` navigation), replying with `command.ack`; message shapes are validated in `apps/desktop/src/main/local-ipc-messages.ts`.
+- Live filter read-back: the renderer reports its current filter through the `events.reportFilterState` tRPC mutation into the `apps/desktop/src/main/live-filter-state.ts` snapshot cache, which answers `filter.get` socket requests.
 
 ## Notes
 

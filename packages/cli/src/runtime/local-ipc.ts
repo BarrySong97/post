@@ -152,3 +152,118 @@ export function notifyDesktopLedgerChanged(input: NotifyInput): Promise<OutputWa
     });
   });
 }
+
+type CommandAck = {
+  type: "command.ack";
+  ok: boolean;
+  op?: string;
+  message?: string;
+  snapshot?: unknown;
+};
+
+export type LiveCommandResult =
+  | { status: "ok"; op?: string; snapshot?: unknown }
+  | { status: "rejected"; reason: string }
+  | { status: "unreachable"; reason: string };
+
+function isCommandAck(value: unknown): value is CommandAck {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const ack = value as Partial<CommandAck>;
+  return ack.type === "command.ack" && typeof ack.ok === "boolean";
+}
+
+/**
+ * Send a live UI command to the running desktop app and await its `command.ack`.
+ * Unlike ledger notifications, these commands are live-only: an unreachable app is an error,
+ * not a warning, because there is no database fallback for UI control.
+ */
+export function sendLiveCommand(
+  dbPath: string,
+  message: Record<string, unknown>,
+): Promise<LiveCommandResult> {
+  const address = getLocalIpcAddress(path.dirname(dbPath));
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let buffer = "";
+    const socket = net.createConnection(address);
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      socket.destroy();
+      resolve({
+        status: "unreachable",
+        reason: "The running Post app did not respond in time.",
+      });
+    }, NOTIFY_TIMEOUT_MS);
+
+    const settle = (result: LiveCommandResult): void => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(result);
+    };
+
+    socket.once("connect", () => {
+      socket.write(
+        `${JSON.stringify({ ...message, source: "post-cli", dbPath, emittedAt: Date.now() })}\n`,
+      );
+    });
+
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+
+      let newlineIndex = buffer.indexOf("\n");
+      while (newlineIndex >= 0) {
+        const line = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+
+        if (line.length > 0) {
+          try {
+            const ack: unknown = JSON.parse(line);
+            if (isCommandAck(ack)) {
+              if (ack.ok) {
+                settle({ status: "ok", op: ack.op, snapshot: ack.snapshot });
+              } else {
+                settle({
+                  status: "rejected",
+                  reason: ack.message ?? "The running Post app rejected the live command.",
+                });
+              }
+              return;
+            }
+
+            settle({
+              status: "rejected",
+              reason: "The running Post app returned an invalid acknowledgement.",
+            });
+            return;
+          } catch (error) {
+            settle({ status: "rejected", reason: getErrorMessage(error) });
+            return;
+          }
+        }
+
+        newlineIndex = buffer.indexOf("\n");
+      }
+    });
+
+    socket.once("error", (error) => {
+      settle({ status: "unreachable", reason: getErrorMessage(error) });
+    });
+  });
+}
+
+export function requestFilterState(dbPath: string): Promise<LiveCommandResult> {
+  return sendLiveCommand(dbPath, { type: "filter.get" });
+}
