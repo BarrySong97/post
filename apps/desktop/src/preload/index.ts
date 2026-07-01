@@ -98,6 +98,13 @@ const api = {
     ipcRenderer.on("trpc:subscription:event", listener);
     return () => ipcRenderer.off("trpc:subscription:event", listener);
   },
+  onHistoryNavigate: (callback: (direction: "back" | "forward") => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, direction: "back" | "forward") => {
+      callback(direction);
+    };
+    ipcRenderer.on("history:navigate", listener);
+    return () => ipcRenderer.off("history:navigate", listener);
+  },
 };
 
 if (process.contextIsolated) {

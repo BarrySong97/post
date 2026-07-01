@@ -16,6 +16,7 @@ import { heroToastQueue } from "@/lib/hero-toast";
 
 import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
+import { useHistoryNavigationShortcuts } from "@/hooks/use-history-navigation-shortcuts";
 import { ConfirmModalProvider } from "@/components/common/confirm-modal";
 
 type TaskSnapshot = RouterOutputs["tasks"]["snapshot"];
@@ -44,6 +45,10 @@ const PF_TYPE: Record<FooterTaskType, { label: string }> = {
 };
 
 export function AppShell({ children }: { children: ReactNode }) {
+  // Mounted at the root shell (not AppLayout) so back/forward works on every route —
+  // including /settings, which renders outside the /_app layout.
+  useHistoryNavigationShortcuts();
+
   return (
     <ConfirmModalProvider>
       <GlobalToasts />

@@ -73,6 +73,7 @@ declare global {
       trpcSubscribe: (request: { id: string; path: string; input: unknown }) => void;
       trpcUnsubscribe: (request: { id: string }) => void;
       onTRPCSubscriptionEvent: (callback: (event: TRPCSubscriptionEvent) => void) => () => void;
+      onHistoryNavigate: (callback: (direction: "back" | "forward") => void) => () => void;
     };
   }
 }
