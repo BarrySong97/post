@@ -38,6 +38,12 @@
      update downloads it, and Post restarts into the newer version without
      losing user data.
 
+6. No-update path
+   - Install the latest signed Post.app from the current GitHub Release.
+   - Launch the app, then run Settings -> General -> Software Update -> Check.
+   - Expected: the app reports that it is already up to date and does not offer
+     a stale download.
+
 ## Cloudflare Pages Deploy
 
 Project settings:
@@ -46,8 +52,8 @@ Project settings:
 - Production URL: `https://posttt.pages.dev`
 - Git provider: GitHub
 - Repository: `BarrySong97/post`
-- Production branch: `main`
-- Framework preset: Next.js static export
+- Production branch: `codex-vault-asset-data-model`
+- Framework preset: None
 - Build command: `pnpm -F website build`
 - Build output directory: `apps/website/out`
 - Environment variable: `NODE_VERSION=22`
@@ -61,7 +67,19 @@ Verification:
 - Run `pnpm -F website build`.
 - Confirm `apps/website/out/index.html` and `apps/website/out/releases.html`
   exist.
+- Confirm Cloudflare automatically creates a production deployment after a push
+  to `codex-vault-asset-data-model`.
 - After Cloudflare deploys, open `https://posttt.pages.dev` and
   `https://posttt.pages.dev/releases`.
 - Confirm the Download links point at
   `https://github.com/BarrySong97/post/releases/latest`.
+
+Current deployment notes:
+
+- The first production deploy failed because Cloudflare built `main` at
+  `ad8c6a4`, which did not include the website workspace.
+- The successful preview deploy for `7ae63fe` served
+  `https://47789bff.posttt.pages.dev`.
+- Production branch was switched to `codex-vault-asset-data-model`; a follow-up
+  commit on that branch should trigger the first `posttt.pages.dev` production
+  deploy.

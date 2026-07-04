@@ -31,7 +31,7 @@ Type checks, unit tests, and production builds do not prove every Electron rende
 - Indexer: run `pnpm indexer:check` and `pnpm indexer:test`; for behavior changes, test against a small vault fixture manually until automated fixtures exist.
 - Packaging or ffmpeg: run `pnpm ffmpeg:prepare`; for distributable changes, run `pnpm package`.
 - Mac updates/release: run `pnpm -F desktop check-types`, `pnpm -F website check-types`, `pnpm -F website build`, `pnpm ffmpeg:prepare`, `pnpm indexer:build`, `pnpm -F desktop build`, `node scripts/release.mjs <version> --dry-run --no-checks --no-wait --no-publish`, and `node scripts/check-docs.mjs`. In dev, Settings -> Check Updates should resolve to "already latest" without missing update metadata errors.
-- Website deploy: run `pnpm -F website build`, then verify `apps/website/out/index.html` and `apps/website/out/releases.html` exist. Cloudflare Pages should deploy `apps/website/out` from `main` to `https://posttt.pages.dev`.
+- Website deploy: run `pnpm -F website build`, then verify `apps/website/out/index.html` and `apps/website/out/releases.html` exist. Cloudflare Pages should deploy `apps/website/out` from the configured production branch to `https://posttt.pages.dev`.
 
 ## Future Gates
 
