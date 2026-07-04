@@ -8,6 +8,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
 
+import type { UpdateStatusEvent } from "@shared/contracts/update/update.contract";
+
 type TerminalDataEvent = {
   sessionId: string;
   data: string;
@@ -81,6 +83,17 @@ const api = {
   },
   trpcRequest: (request: { type: string; path: string; input: unknown }) =>
     ipcRenderer.invoke("trpc:request", request) as Promise<unknown>,
+  updater: {
+    check: () => ipcRenderer.invoke("post:updater:check") as Promise<void>,
+    download: () => ipcRenderer.invoke("post:updater:download") as Promise<void>,
+    onStatus: (callback: (event: UpdateStatusEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: UpdateStatusEvent) => {
+        callback(payload);
+      };
+      ipcRenderer.on("post:updater:status", listener);
+      return () => ipcRenderer.off("post:updater:status", listener);
+    },
+  },
   getAssetProfileLogPath: () => ipcRenderer.invoke("asset-prof:get-log-path") as Promise<string>,
   assetProfileLog: (entry: { event: string; data?: Record<string, unknown> }) => {
     ipcRenderer.send("asset-prof:log", entry);

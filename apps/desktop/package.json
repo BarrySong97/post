@@ -41,6 +41,7 @@
     "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "catalog:",
     "drizzle-orm": "catalog:",
+    "electron-updater": "^6.8.9",
     "jotai": "^2.20.1",
     "js-yaml": "^4.2.0",
     "lucide-react": "catalog:",

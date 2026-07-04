@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare ffmpeg
+        run: pnpm ffmpeg:prepare
+
+      - name: Build indexer
+        run: pnpm indexer:build
+
+      - name: Build desktop app
+        run: pnpm -F desktop build
+
+      - name: Configure Apple signing
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::No APPLE_CERTIFICATE secret - building unsigned and unnotarized."
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
+            echo "ELECTRON_BUILDER_EXTRA_ARGS=-c.mac.notarize=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s' "$APPLE_API_KEY_P8" > "$KEY_PATH"
+
+          append_env() {
+            local name="$1"
+            local value="$2"
+            local marker="${name}_EOF"
+            {
+              echo "$name<<$marker"
+              printf '%s\n' "$value"
+              echo "$marker"
+            } >> "$GITHUB_ENV"
+          }
+
+          append_env "CSC_LINK" "$APPLE_CERTIFICATE"
+          append_env "CSC_KEY_PASSWORD" "$APPLE_CERTIFICATE_PASSWORD"
+          append_env "APPLE_API_KEY" "$KEY_PATH"
+          append_env "APPLE_API_KEY_ID" "$APPLE_API_KEY"
+          append_env "APPLE_API_ISSUER" "$APPLE_API_ISSUER"
+
+      - name: Build and publish Mac release
+        run: pnpm -F desktop exec electron-builder --mac --publish always $ELECTRON_BUILDER_EXTRA_ARGS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

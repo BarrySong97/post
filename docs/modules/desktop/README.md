@@ -34,12 +34,14 @@ For the detailed IPC contract, see [../../topics/electron-trpc-ipc.md](../../top
 - Shared renderer/main contracts under `apps/desktop/src/shared/contracts/`.
 - Terminal IPC handlers in `apps/desktop/src/main/terminal.ts`.
 - Runtime data under Electron `userData`, currently pinned to the legacy `desktop` app data directory unless `POST_USER_DATA_DIR` overrides it.
+- Mac auto-update uses `electron-updater` in `src/main/bootstrap/auto-update.ts`, GitHub Releases metadata from `electron-builder.yml`, and the preload `window.api.updater` bridge. Renderer code only observes `UpdateStatusEvent` and triggers check/download; main owns update checks, downloads, and `quitAndInstall()`.
 - Local IPC server in `apps/desktop/src/main/local-ipc-server.ts` receives best-effort `post-cli` commit notifications (`ledger.changed`) and live UI commands (`filter.*` -> `asset-filter.*` events; `asset.open` -> `asset-detail.open` navigation), replying with `command.ack`; message shapes are validated in `apps/desktop/src/main/local-ipc-messages.ts`.
 - Live filter read-back: the renderer reports its current filter through the `events.reportFilterState` tRPC mutation into the `apps/desktop/src/main/live-filter-state.ts` snapshot cache, which answers `filter.get` socket requests.
 
 ## Notes
 
 - Do not bypass preload or import main-process code into renderer code.
+- Do not call `electron-updater` from preload or renderer. Add update state to shared browser-safe contracts, then expose a narrow preload method.
 - Keep reusable renderer/main input schemas in `src/shared/contracts`; shared contracts must stay browser-safe and avoid Electron, filesystem, and database imports.
 - Keep subscriptions tied to renderer WebContents lifetime; the main IPC handler tracks sender IDs for cleanup.
 - Keep filesystem paths and native process work in main-process services or the Rust indexer.

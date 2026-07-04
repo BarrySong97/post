@@ -1,0 +1,9 @@
+/* @purpose Import the shared Post theme for the website app.
+ * @role    Root stylesheet imported by the app layout.
+ * @deps    @post/ui/theme.css (Tailwind v4 + HeroUI + desktop-matched canvas tokens).
+ * @gotcha  Canvas colors come from @post/ui so the site matches the desktop app; do not redeclare
+ *          tokens here. Button corner radius is set in app/components/ui.tsx (rounded-lg, matching
+ *          the desktop product), not here — a global .button override loses to HeroUI's own layer. */
+@import "@post/ui/theme.css";
+
+@source "../../../packages/**/*.{ts,tsx}";

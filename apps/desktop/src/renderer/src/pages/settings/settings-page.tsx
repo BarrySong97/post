@@ -6,12 +6,15 @@
  */
 
 import { useState } from "react";
+import { useAtomValue } from "jotai";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Settings } from "lucide-react";
 import { Button, Input, ListBox, Select } from "@heroui/react";
 
 import { readSidebarWidthPct, SIDEBAR_MIN_WIDTH_PX } from "@/lib/asset-manager/storage";
 import { isMacWindow } from "@/lib/platform";
+import { updateStatusAtom } from "@/store/update-atoms";
+import type { UpdateStatusEvent } from "@shared/contracts/update/update.contract";
 
 type SettingsSection = "general";
 
@@ -21,6 +24,49 @@ const NAV = [
     items: [{ id: "general" as const, label: "通用", Icon: Settings }],
   },
 ];
+
+function updateStatusNote(status: UpdateStatusEvent | null): string {
+  switch (status?.state) {
+    case "checking":
+      return "检查中...";
+    case "available":
+      return `发现新版本 ${status.version ?? ""}`.trim();
+    case "downloading":
+      return `下载中 ${status.percent ?? 0}%`;
+    case "downloaded":
+      return "已下载，正在重启...";
+    case "not-available":
+      return "已是最新版本";
+    case "error":
+      return "检查失败";
+    default:
+      return "启动时会自动检查更新";
+  }
+}
+
+function updateActionLabel(status: UpdateStatusEvent | null): string {
+  if (status?.state === "available") {
+    return "下载更新";
+  }
+  if (status?.state === "checking") {
+    return "检查中";
+  }
+  if (status?.state === "downloading") {
+    return "下载中";
+  }
+  if (status?.state === "downloaded") {
+    return "重启中";
+  }
+  return "检查更新";
+}
+
+function isUpdateActionDisabled(status: UpdateStatusEvent | null): boolean {
+  return (
+    status?.state === "checking" ||
+    status?.state === "downloading" ||
+    status?.state === "downloaded"
+  );
+}
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -177,6 +223,20 @@ function SettingSelect({
 // ── Sections ──────────────────────────────────────────────────────────────
 
 function GeneralSection() {
+  const updateStatus = useAtomValue(updateStatusAtom);
+  const updateButtonLabel = updateActionLabel(updateStatus);
+  const updateButtonDisabled = isUpdateActionDisabled(updateStatus);
+  const handleUpdateAction = () => {
+    if (updateButtonDisabled) {
+      return;
+    }
+    if (updateStatus?.state === "available") {
+      void window.api.updater.download();
+      return;
+    }
+    void window.api.updater.check();
+  };
+
   return (
     <>
       <SectionTitle>通用</SectionTitle>
@@ -203,6 +263,22 @@ function GeneralSection() {
               English
             </ListBox.Item>
           </SettingSelect>
+        </SettingRow>
+      </SettingGroup>
+
+      <SettingGroup>
+        <SettingRow title="当前版本" desc="Post 桌面应用">
+          <span className="font-mono text-[12.5px] text-zinc-500">v{__APP_VERSION__}</span>
+        </SettingRow>
+        <SettingRow title="软件更新" desc={updateStatusNote(updateStatus)}>
+          <Button
+            size="sm"
+            className="h-8 rounded-lg px-3 text-[12.5px]"
+            isDisabled={updateButtonDisabled}
+            onPress={handleUpdateAction}
+          >
+            {updateButtonLabel}
+          </Button>
         </SettingRow>
       </SettingGroup>
     </>

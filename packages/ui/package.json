@@ -5,18 +5,31 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./styles.css": "./src/styles/styles.css"
+    "./styles.css": "./src/styles/styles.css",
+    "./theme.css": "./src/styles/theme.css"
   },
   "scripts": {
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
+    "@dnd-kit/dom": "catalog:",
+    "@dnd-kit/helpers": "catalog:",
+    "@dnd-kit/react": "catalog:",
+    "@heroui/react": "catalog:",
     "@heroui/styles": "catalog:",
+    "@radix-ui/react-scroll-area": "catalog:",
+    "@tanstack/react-virtual": "^3.14.4",
+    "lucide-react": "catalog:",
+    "motion": "^12.40.0",
+    "react": "catalog:",
+    "react-force-graph-2d": "^1.29.1",
+    "react-resizable-panels": "catalog:",
     "tailwindcss": "catalog:"
   },
   "devDependencies": {
     "@post/config": "workspace:*",
     "@types/node": "catalog:",
+    "@types/react": "catalog:",
     "typescript": "catalog:"
   }
 }

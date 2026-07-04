@@ -22,10 +22,20 @@ asarUnpack:
   - "**/*.node"
   - "node_modules/node-pty/**"
 npmRebuild: true
+publish:
+  provider: github
+  owner: BarrySong97
+  repo: post
+  releaseType: draft
 mac:
   icon: resources/icons/Post.icns
   target:
-    - dmg
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
 win:
   icon: resources/icons/Post.ico
   target:

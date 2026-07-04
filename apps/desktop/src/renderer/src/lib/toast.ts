@@ -9,9 +9,12 @@ import type { ReactNode } from "react";
 
 type ToastVariant = "default" | "accent" | "success" | "warning" | "danger";
 type ToastOptions = {
+  id?: string;
   description?: ReactNode;
   variant?: ToastVariant;
   timeout?: number;
+  actionLabel?: string;
+  onAction?: () => void;
   onClose?: () => void;
 };
 export type ToastItem = {
@@ -19,6 +22,8 @@ export type ToastItem = {
   title: ReactNode;
   description?: ReactNode;
   variant: ToastVariant;
+  actionLabel?: string;
+  onAction?: () => void;
 };
 
 const DEFAULT_TIMEOUT = 4000;
@@ -49,10 +54,24 @@ function closeToast(id: string) {
 }
 
 function addToast(title: ReactNode, options?: ToastOptions) {
-  const id = `toast_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  const id =
+    options?.id ?? `toast_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+  const existingTimer = timers.get(id);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    timers.delete(id);
+  }
+
   items = [
-    { id, title, description: options?.description, variant: options?.variant ?? "default" },
-    ...items,
+    {
+      id,
+      title,
+      description: options?.description,
+      variant: options?.variant ?? "default",
+      actionLabel: options?.actionLabel,
+      onAction: options?.onAction,
+    },
+    ...items.filter((item) => item.id !== id),
   ].slice(0, 3);
   emit();
 

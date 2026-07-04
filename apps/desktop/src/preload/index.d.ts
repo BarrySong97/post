@@ -7,6 +7,8 @@
 
 import type { ElectronAPI } from "@electron-toolkit/preload";
 
+import type { UpdateStatusEvent } from "@shared/contracts/update/update.contract";
+
 type TerminalSnapshot = {
   sessionId: string;
   cwd: string;
@@ -68,6 +70,11 @@ declare global {
         onExit: (callback: (event: TerminalExitEvent) => void) => () => void;
       };
       trpcRequest: (request: { type: string; path: string; input: unknown }) => Promise<unknown>;
+      updater: {
+        check: () => Promise<void>;
+        download: () => Promise<void>;
+        onStatus: (callback: (event: UpdateStatusEvent) => void) => () => void;
+      };
       getAssetProfileLogPath: () => Promise<string>;
       assetProfileLog: (entry: { event: string; data?: Record<string, unknown> }) => void;
       trpcSubscribe: (request: { id: string; path: string; input: unknown }) => void;

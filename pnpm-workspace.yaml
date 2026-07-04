@@ -2,6 +2,16 @@ packages:
   - apps/*
   - packages/*
 
+allowBuilds:
+  '@ffmpeg-installer/darwin-arm64': set this to true or false
+  better-sqlite3: set this to true or false
+  core-js: set this to true or false
+  electron: set this to true or false
+  electron-winstaller: set this to true or false
+  esbuild: set this to true or false
+  node-pty: set this to true or false
+  sharp: set this to true or false
+
 catalog:
   '@electron-toolkit/preload': ^3.0.2
   '@electron-toolkit/tsconfig': ^2.0.0
@@ -12,6 +22,7 @@ catalog:
   '@heroui/react': ^3.1.0
   '@heroui/styles': ^3.1.0
   '@radix-ui/react-scroll-area': ^1.2.10
+  '@tailwindcss/postcss': ^4.1.18
   '@tailwindcss/vite': ^4.1.18
   '@tanstack/react-query': ^5.90.16
   '@tanstack/react-router': ^1.146.2
@@ -31,6 +42,7 @@ catalog:
   electron-builder: ^26.0.12
   electron-vite: ^5.0.0
   lucide-react: ^0.546.0
+  next: ^15.5.19
   react: ^19.2.3
   react-dom: ^19.2.3
   react-resizable-panels: ^4.11.2

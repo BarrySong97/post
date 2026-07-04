@@ -5,4 +5,4 @@
  * @gotcha  Keep app-specific component behavior in apps/desktop unless it is genuinely shared.
  */
 
-export {};
+export * from "./post-preview";

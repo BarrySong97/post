@@ -19,6 +19,7 @@ import { applyFilterCommand } from "@/lib/asset-manager/apply-filter-command";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { useHistoryNavigationShortcuts } from "@/hooks/use-history-navigation-shortcuts";
 import { ConfirmModalProvider } from "@/components/common/confirm-modal";
+import { AutoUpdateProvider } from "@/providers/auto-update-provider";
 
 type TaskSnapshot = RouterOutputs["tasks"]["snapshot"];
 type BackgroundTask = NonNullable<TaskSnapshot["activeTask"]>;
@@ -55,6 +56,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <GlobalToasts />
       {/* HeroUI toast region wired to our custom queue (no view-transition wrapUpdate). */}
       <Toast.Provider queue={heroToastQueue} placement="bottom end" />
+      <AutoUpdateProvider />
       <div className="flex h-screen min-h-0 flex-col overflow-hidden text-zinc-950">
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
         <GlobalStatusLine />
@@ -99,6 +101,15 @@ function GlobalToast({ item }: { item: ToastItem }) {
           </div>
         ) : null}
       </div>
+      {item.actionLabel ? (
+        <button
+          type="button"
+          className="h-7 shrink-0 rounded-md bg-zinc-950 px-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
+          onClick={item.onAction}
+        >
+          {item.actionLabel}
+        </button>
+      ) : null}
       <button
         type="button"
         aria-label="关闭通知"

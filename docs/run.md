@@ -73,9 +73,18 @@ pnpm indexer:build
 pnpm ffmpeg:prepare
 pnpm package
 pnpm dist
+pnpm release <version>
 ```
 
 `pnpm package` and `pnpm dist` prepare ffmpeg, build the Rust indexer, then run the desktop package scripts.
+
+`pnpm release <version>` is the Mac release path. Add the new first entry in
+`apps/website/app/components/releases/release-timeline.tsx`, move
+`badge: "latest"` to it, then run the helper from `main`. The helper bumps the
+desktop and website package versions, commits the release, pushes a `v<version>`
+tag, waits for the GitHub Actions Release workflow, and publishes the generated
+GitHub Release as latest. Use `--dry-run --no-checks --no-wait --no-publish` to
+validate the release note/version wiring without mutating git state.
 
 ## Harness Checks
 

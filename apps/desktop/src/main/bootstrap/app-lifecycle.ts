@@ -23,8 +23,11 @@ import {
   writeAssetProfileLog,
 } from "../services/asset-profile-log-service";
 import { APP_DISPLAY_NAME } from "./app-info";
+import { initAutoUpdate } from "./auto-update";
 import { isDevRuntime } from "./runtime-env";
 import { createWindow, getDevDockIconPath } from "./window";
+
+let mainWindow: BrowserWindow | null = null;
 
 function applyDevDockIcon(): void {
   if (process.platform !== "darwin" || !isDevRuntime()) {
@@ -69,7 +72,8 @@ export function bootApplication(): void {
     registerAssetProtocol();
     registerTerminalHandlers();
 
-    createWindow();
+    mainWindow = createWindow();
+    initAutoUpdate(() => mainWindow);
   });
 
   app.on("window-all-closed", () => {
@@ -85,7 +89,7 @@ export function bootApplication(): void {
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      mainWindow = createWindow();
     }
   });
 }
