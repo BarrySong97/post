@@ -27,7 +27,7 @@ export function FaqSection() {
         {FAQS.map((faq) => (
           <div key={faq.q}>
             <dt className="text-sm font-bold">{faq.q}</dt>
-            <dd className="mt-1 text-sm leading-relaxed text-foreground/60">└ {faq.a}</dd>
+            <dd className="mt-1 text-sm leading-relaxed text-foreground/60">{faq.a}</dd>
           </div>
         ))}
       </dl>

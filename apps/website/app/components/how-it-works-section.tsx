@@ -17,6 +17,10 @@ const HOW_IT_WORKS = [
     title: "Organize for reuse.",
     body: "Apply tags, save filtered views, and keep the materials for each publishing workflow easy to find.",
   },
+  {
+    title: "Use your agent and command line.",
+    body: "Use your agent and our command line tool to manage your assets.",
+  },
 ];
 
 export function HowItWorksSection() {

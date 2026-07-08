@@ -13,7 +13,7 @@ Canvas colors come from the shared [ui](../ui/README.md) package (`@post/ui/them
 - `apps/website/app/sitemap.ts` - static `sitemap.xml` metadata route.
 - `apps/website/app/page.tsx` - index route (Server Component).
 - `apps/website/app/components/ui.tsx` - `"use client"` re-export of HeroUI primitives, so `page.tsx` can stay a Server Component.
-- `apps/website/app/components/site-header.tsx` - landing-page brand header and top navigation.
+- `apps/website/app/components/site-header.tsx` - landing-page brand header and top navigation; the header download link uses the same HeroUI primary button styling as the hero CTA at the compact header size.
 - `apps/website/app/components/hero-section.tsx` - compact hero copy and primary CTA.
 - `apps/website/app/components/product-preview.tsx` - client-side interactive Post desktop preview composition; owns demo-only history, sidebar resize/collapse, filter values, editor target selection, footer popovers, and mock sidebar reorder state.
 - `apps/website/app/components/how-it-works-section.tsx` - Post desktop workflow steps.

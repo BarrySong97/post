@@ -4,7 +4,7 @@
  * @purpose Render the site-wide fixed navigation header shared by every route.
  * @role    Client component rendered once from the root layout, not per-page — needs "use client"
  *          for the scroll listener that toggles its glass background.
- * @deps    ./ui (HeroUI Button/Link behind a client boundary).
+ * @deps    ./ui (HeroUI Link behind a client boundary), HeroUI button class tokens.
  * @gotcha  Stays `fixed` and fully transparent at the top on purpose: it floats over each page's top
  *          content (e.g. the hero's full-bleed background image), so at scrollY 0 it must never gain
  *          an opaque/blurred background or it will hide the image. Past SCROLL_THRESHOLD_PX it swaps
@@ -69,7 +69,7 @@ export function SiteHeader() {
           </ul>
           <Link
             href={DOWNLOAD_URL}
-            className="inline-flex h-8 items-center rounded-lg bg-foreground px-3 text-xs font-semibold text-background transition-colors hover:bg-foreground/85"
+            className="button button--md button--primary h-8 min-h-0 rounded-lg px-3 text-xs font-semibold"
           >
             Download Post
           </Link>
