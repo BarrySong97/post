@@ -11,12 +11,79 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
 import { SiteHeader } from "./components/site-header";
+import {
+  APPLE_TOUCH_ICON_URL,
+  FAVICON_URL,
+  OG_IMAGE_URL,
+  SITE_DESCRIPTION,
+  SITE_ICON_URL,
+  SITE_KEYWORDS,
+  SITE_NAME,
+  SITE_TITLE,
+  SITE_URL,
+} from "./lib/seo";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Post — Local-first desktop workspace",
-  description:
-    "Post is a local-first desktop workspace for organizing vault files, assets, notes, tags, saved views, and publishing workflows.",
+  metadataBase: new URL(SITE_URL),
+  applicationName: SITE_NAME,
+  title: {
+    default: SITE_TITLE,
+    template: `%s | ${SITE_NAME}`,
+  },
+  description: SITE_DESCRIPTION,
+  keywords: SITE_KEYWORDS,
+  alternates: {
+    canonical: "/",
+  },
+  icons: {
+    icon: [
+      { url: FAVICON_URL, sizes: "any" },
+      { url: SITE_ICON_URL, type: "image/png", sizes: "512x512" },
+    ],
+    shortcut: FAVICON_URL,
+    apple: [{ url: APPLE_TOUCH_ICON_URL, type: "image/png", sizes: "256x256" }],
+  },
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: "/",
+    siteName: SITE_NAME,
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: [
+      {
+        url: OG_IMAGE_URL,
+        width: 1200,
+        height: 630,
+        alt: `${SITE_NAME} desktop workspace preview`,
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: [OG_IMAGE_URL],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  },
+  appleWebApp: {
+    capable: true,
+    title: SITE_NAME,
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

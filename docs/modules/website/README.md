@@ -9,6 +9,8 @@ Canvas colors come from the shared [ui](../ui/README.md) package (`@post/ui/them
 ## File Map
 
 - `apps/website/app/layout.tsx` - App Router root layout and metadata.
+- `apps/website/app/robots.ts` - static `robots.txt` metadata route.
+- `apps/website/app/sitemap.ts` - static `sitemap.xml` metadata route.
 - `apps/website/app/page.tsx` - index route (Server Component).
 - `apps/website/app/components/ui.tsx` - `"use client"` re-export of HeroUI primitives, so `page.tsx` can stay a Server Component.
 - `apps/website/app/components/site-header.tsx` - landing-page brand header and top navigation.
@@ -22,6 +24,8 @@ Canvas colors come from the shared [ui](../ui/README.md) package (`@post/ui/them
 - `apps/website/app/components/releases/release-timeline.tsx` - release note data rendered by the changelog and validated before release.
 - `apps/website/app/lib/seo.ts` - shared site, GitHub, release, and download URLs.
 - `apps/website/app/globals.css` - imports `@post/ui/theme.css`; no locally-defined color tokens.
+- `apps/website/public/post-icon.png`, `favicon.ico`, and `apple-touch-icon.png` - website icon assets copied from the desktop icon set.
+- `apps/website/public/og-image.png` - Open Graph/Twitter share image generated from the landing hero background and real desktop preview mock.
 - `apps/website/public/product-preview/` - generated bitmap thumbnails used by the product preview mock data.
 - `apps/website/next.config.ts` - Next.js build configuration, including monorepo tracing root and workspace package transpilation.
 - `apps/website/postcss.config.mjs` - Tailwind v4 PostCSS wiring.

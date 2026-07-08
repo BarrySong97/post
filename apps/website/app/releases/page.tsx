@@ -10,13 +10,37 @@ import type { Metadata } from "next";
 import { SiteFooter } from "../components/site-footer";
 import { Link } from "../components/ui";
 import { ReleaseTimeline } from "../components/releases/release-timeline";
-import { DOWNLOAD_URL, SITE_DESCRIPTION, SITE_NAME } from "../lib/seo";
+import { DOWNLOAD_URL, OG_IMAGE_URL, SITE_DESCRIPTION, SITE_NAME } from "../lib/seo";
+
+const RELEASES_TITLE = `${SITE_NAME} Changelog`;
+const RELEASES_DESCRIPTION = `Release notes and Mac desktop downloads for ${SITE_NAME}. ${SITE_DESCRIPTION}`;
 
 export const metadata: Metadata = {
-  title: `${SITE_NAME} Changelog`,
-  description: `Release notes and Mac desktop downloads for ${SITE_NAME}. ${SITE_DESCRIPTION}`,
+  title: RELEASES_TITLE,
+  description: RELEASES_DESCRIPTION,
   alternates: {
     canonical: "/releases",
+  },
+  openGraph: {
+    type: "website",
+    url: "/releases",
+    siteName: SITE_NAME,
+    title: RELEASES_TITLE,
+    description: RELEASES_DESCRIPTION,
+    images: [
+      {
+        url: OG_IMAGE_URL,
+        width: 1200,
+        height: 630,
+        alt: `${SITE_NAME} desktop workspace preview`,
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: RELEASES_TITLE,
+    description: RELEASES_DESCRIPTION,
+    images: [OG_IMAGE_URL],
   },
 };
 
