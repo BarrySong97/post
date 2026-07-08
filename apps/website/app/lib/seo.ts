@@ -6,7 +6,7 @@
  */
 
 export const SITE_NAME = "Post";
-export const SITE_URL = "https://posttt.pages.dev";
+export const SITE_URL = "https://topostt.pages.dev";
 export const SITE_TITLE = "Post — Local-first desktop workspace";
 export const SITE_DESCRIPTION =
   "Post is a local-first desktop workspace for organizing vault files, assets, notes, tags, saved views, and publishing workflows.";

@@ -37,7 +37,7 @@ Canvas colors come from the shared [ui](../ui/README.md) package (`@post/ui/them
 - Workspace commands: `pnpm -F website dev | build | start | check-types`.
 - Public download URL: `https://github.com/BarrySong97/post/releases/latest`.
 - Changelog route: `/releases`.
-- Cloudflare Pages production URL: `https://posttt.pages.dev`.
+- Cloudflare Pages production URL: `https://topostt.pages.dev`.
 - Cloudflare Pages build command: `pnpm -F website build`.
 - Cloudflare Pages build output directory: `apps/website/out`.
 
