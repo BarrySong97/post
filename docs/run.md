@@ -21,6 +21,7 @@ pnpm install
 pnpm dev
 pnpm dev:debug
 pnpm post-cli --env dev ledger-info --json
+npx @barrysongdev4real/post-cli ledger-info --json
 ```
 
 There is no browser URL and no HTTP API server. The app runs through Electron, with renderer calls crossing the preload bridge into main-process tRPC procedures.
@@ -30,6 +31,12 @@ On macOS, `pnpm -F desktop dev` prepares a local `apps/desktop/.electron-dev/Pos
 The renderer dev server uses a strict local port. If `pnpm dev` reports that port `42873` is already in use, an existing dev app may already be running; reuse or stop that process before starting another instance. `pnpm dev` rebuilds Electron native modules such as `better-sqlite3`, while `pnpm test` may rebuild the same dependency for the Node ABI.
 
 `pnpm post-cli` runs the CLI through Electron Node mode so it can use the Electron ABI build of `better-sqlite3`. By default it targets the packaged app database; use `--env dev` for the development database and `--db <path>` for fixture databases or sandboxed AI workflows.
+
+The npm CLI package is built separately from `packages/cli/npm` and runs through
+the user's Node runtime instead of Electron Node mode. Build and inspect it with
+`pnpm -F @post/cli pack:dry`. Publish it with
+`pnpm -F @post/cli publish:npm` after npm auth is available through
+`NODE_AUTH_TOKEN` or user-level npm login.
 
 ## Build And Type-Check
 

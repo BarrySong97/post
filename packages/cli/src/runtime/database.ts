@@ -2,7 +2,7 @@
  * @purpose Resolve and open the Post SQLite database for CLI commands.
  * @role    CLI runtime adapter around @post/db connection and migration helpers.
  * @deps    node fs/path/os, @post/db.
- * @gotcha  Electron RUN_AS_NODE has Electron ABI but no app.getPath; resolve userData manually.
+ * @gotcha  npm builds carry their own copied Drizzle migrations under dist/drizzle.
  */
 
 import { existsSync, mkdirSync } from "node:fs";
@@ -43,7 +43,22 @@ export function resolveDefaultDbPath(appEnv = "prod"): string {
 }
 
 export function resolveMigrationsFolder(): string {
-  return path.join(getRepoRoot(), "packages", "db", "drizzle");
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    process.env.POST_CLI_MIGRATIONS_DIR,
+    path.join(moduleDir, "drizzle"),
+    path.join(moduleDir, "migrations"),
+    path.join(getRepoRoot(), "packages", "db", "drizzle"),
+    path.resolve(process.cwd(), "packages", "db", "drizzle"),
+    path.resolve(process.cwd(), "..", "db", "drizzle"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  const folder = candidates.find((candidate) => existsSync(candidate));
+  if (!folder) {
+    throw new Error(`Drizzle migrations folder was not found. Checked: ${candidates.join(", ")}`);
+  }
+
+  return folder;
 }
 
 export function openCliDatabase(input: { dbPath?: string; appEnv?: string }): DatabaseRuntime {
@@ -51,10 +66,6 @@ export function openCliDatabase(input: { dbPath?: string; appEnv?: string }): Da
   mkdirSync(path.dirname(dbPath), { recursive: true });
 
   const migrationsFolder = resolveMigrationsFolder();
-  if (!existsSync(migrationsFolder)) {
-    throw new Error(`Drizzle migrations folder was not found: ${migrationsFolder}`);
-  }
-
   const db = createDatabase(dbPath);
   migrateDatabase(db, migrationsFolder);
 

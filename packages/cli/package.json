@@ -1,7 +1,9 @@
 {
   "name": "@post/cli",
-  "version": "0.0.0",
+  "version": "0.1.2",
   "private": true,
+  "description": "Safe local Post workspace CLI for users and agents.",
+  "license": "UNLICENSED",
   "bin": {
     "post-cli": "./bin/post-cli.mjs"
   },
@@ -10,7 +12,10 @@
     ".": "./src/main.ts"
   },
   "scripts": {
+    "build": "node ./scripts/build.mjs",
     "check-types": "tsc --noEmit",
+    "pack:dry": "pnpm build && node ./scripts/pack-dry.mjs",
+    "publish:npm": "pnpm build && node ./scripts/publish-npm.mjs",
     "post-cli": "ELECTRON_RUN_AS_NODE=1 electron --import tsx -- src/main.ts"
   },
   "dependencies": {
@@ -23,6 +28,7 @@
     "@post/config": "workspace:*",
     "@types/node": "catalog:",
     "electron": "catalog:",
+    "esbuild": "^0.28.0",
     "tsx": "^4.22.4",
     "typescript": "catalog:"
   }

@@ -21,10 +21,14 @@ import {
   getAssetOrThrow,
   getAssetTags,
   getRequestedOrActiveVault,
+  getSavedViewOrThrow,
+  getTagOrThrow,
   listAssets,
   listSavedViews,
   listTags,
   listVaults,
+  parseSavedViewFilters,
+  parseSavedViewSort,
   removeTagFromAsset,
   reorderSavedViews,
   reorderTags,
@@ -79,6 +83,59 @@ type PatchFile = {
 };
 
 const program = new Command();
+const topLevelCommands = new Set([
+  "ledger-info",
+  "vault",
+  "asset",
+  "tag",
+  "view",
+  "filter",
+  "apply-patch",
+]);
+const cliVersion = readCliVersion();
+const supportedOperations = [
+  "ledger-info",
+  "vault.list",
+  "vault.current",
+  "asset.list",
+  "asset.get",
+  "asset.tags",
+  "asset.tag.add",
+  "asset.tag.remove",
+  "asset.tag.add-many",
+  "asset.tag.remove-many",
+  "asset.open",
+  "tag.list",
+  "tag.get",
+  "tag.create",
+  "tag.update",
+  "tag.delete",
+  "tag.reorder",
+  "view.list",
+  "view.get",
+  "view.create",
+  "view.update",
+  "view.delete",
+  "view.reorder",
+  "filter.apply",
+  "filter.view",
+  "filter.tag",
+  "filter.all",
+  "filter.inbox",
+  "filter.clear",
+  "filter.get",
+  "apply-patch",
+] as const;
+
+class DryRunRollback extends Error {
+  readonly result: unknown;
+
+  constructor(result: unknown) {
+    super("Rollback dry-run transaction");
+    this.name = "DryRunRollback";
+    this.result = result;
+  }
+}
 
 function globalOptions(): CommandOptions {
   return program.opts<CommandOptions>();
@@ -86,6 +143,27 @@ function globalOptions(): CommandOptions {
 
 function readJsonFile<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
+}
+
+function readCliVersion(): string {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(moduleDir, "../package.json"),
+    path.resolve(moduleDir, "../../package.json"),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const packageJson = JSON.parse(readFileSync(candidate, "utf8")) as { version?: unknown };
+      if (typeof packageJson.version === "string") {
+        return packageJson.version;
+      }
+    } catch {
+      // Continue to the next candidate; bundled and workspace paths differ.
+    }
+  }
+
+  return "0.0.0";
 }
 
 function runRead<T>(
@@ -107,12 +185,15 @@ function runWrite<T>(
   callback: (runtime: ReturnType<typeof createCliRuntime>) => T,
 ): Promise<void> {
   try {
+    const runtime = createCliRuntime(options);
     if (!options.commit) {
+      const result = runDryRun(runtime, callback);
       writeSuccess(
         {
           dryRun: true,
           operation: label,
           input,
+          result,
           message: "No changes written. Re-run with --commit to apply.",
         },
         { json: options.json },
@@ -120,7 +201,6 @@ function runWrite<T>(
       return Promise.resolve();
     }
 
-    const runtime = createCliRuntime(options);
     const result = callback(runtime);
     return notifyDesktopLedgerChanged({
       dbPath: runtime.dbPath,
@@ -134,6 +214,30 @@ function runWrite<T>(
     process.exitCode = exitCodeForError(error);
     return Promise.resolve();
   }
+}
+
+function runDryRun<T>(
+  runtime: ReturnType<typeof createCliRuntime>,
+  callback: (runtime: ReturnType<typeof createCliRuntime>) => T,
+): T {
+  try {
+    runtime.ctx.db.transaction((tx) => {
+      const dryRunRuntime = {
+        ...runtime,
+        db: tx,
+        ctx: { ...runtime.ctx, db: tx },
+      } as ReturnType<typeof createCliRuntime>;
+      throw new DryRunRollback(callback(dryRunRuntime));
+    });
+  } catch (error) {
+    if (error instanceof DryRunRollback) {
+      return error.result as T;
+    }
+
+    throw error;
+  }
+
+  throw new Error("Dry-run transaction finished without rollback");
 }
 
 function changedScopesForOperation(operation: string): string[] {
@@ -172,10 +276,24 @@ function filtersFromOptions(options: {
   return {
     tagIds: optionArray(options.tag),
     types: optionArray(options.kind).filter((kind) =>
-      ["markdown", "image", "video", "link", "file"].includes(kind),
+      ["markdown", "post", "image", "video", "link", "file"].includes(kind),
     ) as SavedViewFilters["types"],
     status: options.status ?? "any",
   };
+}
+
+function hasFilterOptions(options: {
+  tag?: string[];
+  kind?: string[];
+  status?: AssetStatus;
+  clearFilters?: boolean;
+}): boolean {
+  return Boolean(
+    options.clearFilters ||
+    (options.tag && options.tag.length > 0) ||
+    (options.kind && options.kind.length > 0) ||
+    options.status,
+  );
 }
 
 function collect(value: string, previous: string[] = []): string[] {
@@ -282,6 +400,21 @@ function executePatchOperation(
   }
 }
 
+function executePatchOperations(
+  runtime: ReturnType<typeof createCliRuntime>,
+  operations: PatchOperation[],
+  options: CommandOptions,
+) {
+  return operations.map((operation, index) => {
+    try {
+      return { index, op: operation.op, result: executePatchOperation(runtime, operation) };
+    } catch (error) {
+      writeError(error, { json: options.json }, index);
+      throw error;
+    }
+  });
+}
+
 program
   .name("post-cli")
   .description("Safe command line interface for organizing a local Post workspace")
@@ -304,11 +437,11 @@ program
       const viewCount =
         runtime.ctx.db.select({ total: count() }).from(schema.savedViews).get()?.total ?? 0;
       return {
-        cli: { name: "post-cli", version: "0.0.0", patchVersion: 1 },
+        cli: { name: "post-cli", version: cliVersion, patchVersion: 1 },
         database: { path: runtime.dbPath, migrationsFolder: runtime.migrationsFolder },
         activeVault: vault,
         counts: { assets: assetCount, tags: tagCount, views: viewCount },
-        operations: ["tag.*", "asset.tag.*", "view.*", "apply-patch", "filter.*", "asset.open"],
+        operations: supportedOperations,
       };
     });
   });
@@ -350,6 +483,12 @@ asset
       );
     },
   );
+asset
+  .command("get")
+  .argument("<assetId>")
+  .action((assetId: string) => {
+    runRead(globalOptions(), (runtime) => getAssetOrThrow(runtime.ctx, assetId));
+  });
 asset
   .command("tags")
   .argument("<assetId>")
@@ -430,10 +569,7 @@ tag
   .command("get")
   .argument("<tagId>")
   .action((tagId: string) => {
-    runRead(
-      globalOptions(),
-      (runtime) => listTags(runtime.ctx).find((item) => item.id === tagId) ?? null,
-    );
+    runRead(globalOptions(), (runtime) => getTagOrThrow(runtime.ctx, tagId));
   });
 tag
   .command("create")
@@ -497,10 +633,7 @@ view
   .command("get")
   .argument("<viewId>")
   .action((viewId: string) => {
-    runRead(
-      globalOptions(),
-      (runtime) => listSavedViews(runtime.ctx).find((item) => item.id === viewId) ?? null,
-    );
+    runRead(globalOptions(), (runtime) => getSavedViewOrThrow(runtime.ctx, viewId));
   });
 view
   .command("create")
@@ -554,6 +687,7 @@ view
     [],
   )
   .option("--status <status>", "Status")
+  .option("--clear-filters", "Replace existing filters with the default unfiltered view")
   .option("--sort <sort>", "Sort order")
   .option("--commit", "Write changes")
   .action(
@@ -564,24 +698,26 @@ view
         tag?: string[];
         kind?: string[];
         status?: AssetStatus;
+        clearFilters?: boolean;
         sort?: AssetListSort;
       },
     ) => {
       const options = { ...globalOptions(), ...local };
+      const filterInput = hasFilterOptions(local) ? filtersFromOptions(local) : undefined;
       const input = {
         viewId,
         name: local.name,
-        filters: filtersFromOptions(local),
+        filters: filterInput,
         sort: local.sort,
       };
       return runWrite("view.update", options, input, (runtime) => {
-        const current = listSavedViews(runtime.ctx).find((item) => item.id === viewId);
+        const current = getSavedViewOrThrow(runtime.ctx, viewId);
         return updateSavedView(runtime.ctx, {
           id: viewId,
           name: local.name ?? current?.name ?? "",
           icon: current?.icon,
-          filters: input.filters,
-          sort: local.sort,
+          filters: filterInput ?? parseSavedViewFilters(current.filterJson),
+          sort: local.sort ?? parseSavedViewSort(current.sortJson),
         });
       });
     },
@@ -731,12 +867,17 @@ program
         throw new Error("Unsupported patch file");
       }
 
+      const runtime = createCliRuntime(options);
       if (!options.commit) {
+        const results = runDryRun(runtime, (dryRunRuntime) =>
+          executePatchOperations(dryRunRuntime, patch.operations, options),
+        );
         writeSuccess(
           {
             dryRun: true,
             operationCount: patch.operations.length,
             operations: patch.operations,
+            results,
             message: "No changes written. Re-run with --commit to apply.",
           },
           { json: options.json },
@@ -744,16 +885,8 @@ program
         return;
       }
 
-      const runtime = createCliRuntime(options);
       const results = runtime.ctx.db.transaction(() =>
-        patch.operations.map((operation, index) => {
-          try {
-            return { index, op: operation.op, result: executePatchOperation(runtime, operation) };
-          } catch (error) {
-            writeError(error, { json: options.json }, index);
-            throw error;
-          }
-        }),
+        executePatchOperations(runtime, patch.operations, options),
       );
       const warnings =
         results.length > 0
@@ -775,13 +908,20 @@ program
 
 function getUserArgv(): string[] {
   const mainPath = fileURLToPath(import.meta.url);
-  return process.argv.slice(1).filter((arg) => {
+  const argv = process.argv.slice(1).filter((arg) => {
     if (arg === "src/main.ts") {
       return false;
     }
 
     return path.resolve(arg) !== mainPath;
   });
+
+  const firstArg = argv[0];
+  if (firstArg && argv.length > 1 && !firstArg.startsWith("-") && !topLevelCommands.has(firstArg)) {
+    return argv.slice(1);
+  }
+
+  return argv;
 }
 
 program.parseAsync(getUserArgv(), { from: "user" }).catch((error: unknown) => {

@@ -14,6 +14,7 @@ pnpm build
 pnpm indexer:check
 pnpm indexer:test
 pnpm post-cli --db /private/tmp/post-cli-smoke.sqlite --json ledger-info
+pnpm -F @post/cli pack:dry
 node scripts/check-docs.mjs
 ```
 
@@ -24,7 +25,8 @@ Type checks, unit tests, and production builds do not prove every Electron rende
 ## Focused Verification By Area
 
 - Electron IPC or tRPC routers: run `pnpm test`, `pnpm lint`, and `pnpm check-types`, then exercise the renderer flow in `pnpm dev`.
-- CLI or shared domain workflows: run `pnpm -F @post/domain check-types`, `pnpm -F @post/cli check-types`, and a smoke command such as `pnpm post-cli --db /private/tmp/post-cli-smoke.sqlite --json ledger-info`.
+- CLI or shared domain workflows: run `pnpm -F @post/domain check-types`, `pnpm -F @post/db check-types`, `pnpm -F @post/cli check-types`, and a smoke command such as `pnpm post-cli --db /private/tmp/post-cli-smoke.sqlite --json ledger-info`.
+- CLI npm packaging: run `pnpm -F @post/cli build`, `npm pack --dry-run packages/cli/npm`, install the generated tarball into a temporary prefix, then run the installed `post-cli --db /private/tmp/post-cli-installed-smoke.sqlite --json ledger-info`.
 - Renderer UI: run `pnpm test`, `pnpm lint`, and `pnpm check-types`, then start `pnpm dev` and verify the changed workflow in the app.
 - Asset UI: verify board filtering, pagination, asset route navigation, thumbnail rendering, and metadata actions in the Electron app.
 - Database schema: run `pnpm db:generate`, inspect the migration, then run `pnpm test` and `pnpm check-types`.
