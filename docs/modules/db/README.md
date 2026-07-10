@@ -15,6 +15,8 @@
 
 Main-process code imports schema and database helpers, opens the SQLite database in Electron `userData`, and uses Drizzle repositories to query or mutate data. The Rust indexer writes to the same schema through its own SQLite access path, so schema changes must preserve both TypeScript and Rust expectations.
 
+X Post captures use normal `assets`, `asset_files`, `asset_tags`, `asset_links`, and `markdown_cache` rows plus `post_cache` for normalized query fields. The Vault Markdown remains the durable source; `post_cache` is rebuildable application metadata keyed uniquely by Vault, platform, and external Post ID.
+
 ## Public Interfaces
 
 - Schema exports from `packages/db/src/schema.ts`.

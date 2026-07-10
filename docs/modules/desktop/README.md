@@ -29,13 +29,15 @@ For the detailed IPC contract, see [../../topics/electron-trpc-ipc.md](../../top
 - Renderer routes under `apps/desktop/src/renderer/src/routes/`.
 - Preload `window.api` surface in `apps/desktop/src/preload/index.ts`.
 - Main tRPC router in `apps/desktop/src/main/trpc/router.ts`.
+- BrowserWindow bootstrap in `apps/desktop/src/main/bootstrap/window.ts` keeps application navigation inside Electron and opens external `http/https` links with the operating system's default browser.
 - tRPC IPC adapter in `apps/desktop/src/main/presentation/trpc/ipc-adapter.ts`.
 - Domain routers under `apps/desktop/src/main/trpc/routers/`.
 - Shared renderer/main contracts under `apps/desktop/src/shared/contracts/`.
 - Terminal IPC handlers in `apps/desktop/src/main/terminal.ts`.
 - Runtime data under Electron `userData`, currently pinned to the legacy `desktop` app data directory unless `POST_USER_DATA_DIR` overrides it.
 - Mac auto-update uses `electron-updater` in `src/main/bootstrap/auto-update.ts`, GitHub Releases metadata from `electron-builder.yml`, and the preload `window.api.updater` bridge. Renderer code only observes `UpdateStatusEvent` and triggers check/download; main owns update checks, downloads, and `quitAndInstall()`.
-- Local IPC server in `apps/desktop/src/main/local-ipc-server.ts` receives best-effort `post-cli` commit notifications (`ledger.changed`) and live UI commands (`filter.*` -> `asset-filter.*` events; `asset.open` -> `asset-detail.open` navigation), replying with `command.ack`; message shapes are validated in `apps/desktop/src/main/local-ipc-messages.ts`.
+- Local IPC server in `apps/desktop/src/main/local-ipc-server.ts` receives best-effort `post-cli` commit notifications (`ledger.changed`), live UI commands (`filter.*` -> `asset-filter.*` events; `asset.open` -> `asset-detail.open` navigation), and extension native-host requests for context plus image, video, and X Post imports. Message shapes are validated in `apps/desktop/src/main/local-ipc-messages.ts`.
+- Extension image imports are content-hash idempotent: if the same image already exists in the active vault, Desktop reuses the existing asset and only adds the selected tag instead of writing another file.
 - Live filter read-back: the renderer reports its current filter through the `events.reportFilterState` tRPC mutation into the `apps/desktop/src/main/live-filter-state.ts` snapshot cache, which answers `filter.get` socket requests.
 
 ## Notes

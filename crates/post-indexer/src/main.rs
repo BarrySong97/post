@@ -494,17 +494,23 @@ fn file_entry_from_metadata(
         .extension()
         .and_then(OsStr::to_str)
         .map(|value| value.to_ascii_lowercase());
-    let kind = kind_for_extension(extension.as_deref()).to_string();
+    let kind = kind_for_path(path, extension.as_deref()).to_string();
     let file_name = path
         .file_name()
         .and_then(OsStr::to_str)
         .ok_or_else(|| format!("file name is not valid UTF-8: {}", path.display()))?
         .to_string();
-    let title = path
-        .file_stem()
-        .and_then(OsStr::to_str)
-        .unwrap_or(&file_name)
-        .to_string();
+    let title = if kind == "post" {
+        markdown_frontmatter_value(path, "title")
+    } else {
+        None
+    }
+    .unwrap_or_else(|| {
+        path.file_stem()
+            .and_then(OsStr::to_str)
+            .unwrap_or(&file_name)
+            .to_string()
+    });
     let mtime_ms = metadata.modified().ok().map(system_time_ms).unwrap_or(0);
     let ctime_ms = metadata.created().ok().map(system_time_ms);
     let quick_fingerprint = format!(
@@ -1441,7 +1447,7 @@ SELECT
   COALESCE(af.quick_fingerprint, ''),
   COALESCE(ic.status, ''),
   COALESCE(ic.thumbnail_path, ''),
-  COALESCE(ic.error_message, ''),
+  REPLACE(REPLACE(REPLACE(COALESCE(ic.error_message, ''), char(9), ' '), char(10), ' '), char(13), ' '),
   COALESCE(ic.source_size_bytes, -1),
   COALESCE(ic.source_mtime_ms, -1),
   COALESCE(ic.source_quick_fingerprint, '')
@@ -1526,7 +1532,7 @@ fn thumbnail_generation_needed(target: &ThumbnailTarget) -> bool {
 
 fn thumbnail_failure_is_retryable(error_message: Option<&str>) -> bool {
     let message = error_message.unwrap_or("").to_ascii_lowercase();
-    message.contains("ffmpeg") || message.contains("post_ffmpeg_path")
+    message.contains("ffmpeg executable unavailable")
 }
 
 fn generate_thumbnail(
@@ -1673,6 +1679,7 @@ fn decode_image_file(path: &Path, label: &str) -> Result<DynamicImage, String> {
 
 fn extract_video_frame_with_ffmpeg(source_path: &Path, frame_path: &Path) -> Result<(), String> {
     let mut failures = Vec::new();
+    let mut executable_started = false;
 
     for ffmpeg_path in ffmpeg_candidates() {
         let output = Command::new(&ffmpeg_path)
@@ -1694,6 +1701,7 @@ fn extract_video_frame_with_ffmpeg(source_path: &Path, frame_path: &Path) -> Res
         match output {
             Ok(output) if output.status.success() && frame_path.is_file() => return Ok(()),
             Ok(output) => {
+                executable_started = true;
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 failures.push(format!(
                     "{}: {}",
@@ -1715,10 +1723,16 @@ fn extract_video_frame_with_ffmpeg(source_path: &Path, frame_path: &Path) -> Res
         }
     }
 
-    Err(format!(
-        "failed to extract video frame with ffmpeg; bundle ffmpeg with the app resources or set POST_FFMPEG_PATH ({})",
-        failures.join("; ")
-    ))
+    let summary = failures.join("; ");
+    if executable_started {
+        Err(format!(
+            "failed to extract video frame with ffmpeg ({summary})"
+        ))
+    } else {
+        Err(format!(
+            "ffmpeg executable unavailable; bundle ffmpeg with the app resources or set POST_FFMPEG_PATH ({summary})"
+        ))
+    }
 }
 
 fn ffmpeg_candidates() -> Vec<PathBuf> {
@@ -1993,7 +2007,7 @@ fn load_link_refresh_entries(
     let mut affected_aliases = HashSet::new();
 
     for entry in entries {
-        let title = if entry.kind == "markdown" {
+        let title = if is_markdown_kind(&entry.kind) {
             fs::read_to_string(config.root_path.join(&entry.relative_path))
                 .ok()
                 .and_then(|content| markdown_title(&content))
@@ -2119,7 +2133,7 @@ INNER JOIN assets a ON a.id = al.source_asset_id
 INNER JOIN asset_files af ON af.asset_id = al.source_asset_id
 WHERE al.vault_id = {}
   AND al.created_from = 'markdown_parse'
-  AND a.kind = 'markdown'
+  AND a.kind IN ('markdown', 'post')
   AND a.deleted_at IS NULL
   AND af.file_exists = 1
   AND {target_filter}
@@ -2171,7 +2185,7 @@ INNER JOIN assets a ON a.id = af.asset_id
 WHERE af.vault_id = {}
   AND af.asset_id IN ({asset_filter})
   AND af.file_exists = 1
-  AND a.kind = 'markdown'
+  AND a.kind IN ('markdown', 'post')
   AND a.deleted_at IS NULL
 ORDER BY af.relative_path;\n",
         sql_text(&config.vault_id)
@@ -2400,7 +2414,7 @@ fn write_index(
             None,
         );
 
-        if entry.kind == "markdown" {
+        if is_markdown_kind(&entry.kind) {
             let markdown_path = config.root_path.join(&entry.relative_path);
             if let Ok(content) = fs::read_to_string(markdown_path) {
                 if let Some(title) = markdown_title(&content) {
@@ -2411,7 +2425,7 @@ fn write_index(
     }
     let refreshed_markdown_asset_ids = entries
         .iter()
-        .filter(|entry| entry.kind == "markdown")
+        .filter(|entry| is_markdown_kind(&entry.kind))
         .map(|entry| entry.asset_id.clone())
         .collect::<HashSet<_>>();
     let link_refresh_entries = if options.include_existing_lookup {
@@ -2464,7 +2478,7 @@ fn write_index(
         }
     }
 
-    for entry in entries.iter().filter(|entry| entry.kind == "markdown") {
+    for entry in entries.iter().filter(|entry| is_markdown_kind(&entry.kind)) {
         push_markdown_parse_sql(
             &mut sql,
             config,
@@ -3462,10 +3476,11 @@ fn truncate_chars(text: &str, max: usize) -> String {
 }
 
 fn should_skip(file_name: &OsStr) -> bool {
-    matches!(
-        file_name.to_str(),
-        Some(".git" | "node_modules" | ".DS_Store")
-    )
+    match file_name.to_str() {
+        Some(".git" | "node_modules" | ".DS_Store") => true,
+        Some(value) => value.starts_with(".post-import-"),
+        None => false,
+    }
 }
 
 fn kind_for_extension(extension: Option<&str>) -> &'static str {
@@ -3481,6 +3496,63 @@ fn kind_for_extension(extension: Option<&str>) -> &'static str {
         "url" | "webloc" => "web",
         _ => "other",
     }
+}
+
+fn kind_for_path(path: &Path, extension: Option<&str>) -> &'static str {
+    let kind = kind_for_extension(extension);
+    if kind == "markdown" && markdown_declares_x_post(path) {
+        return "post";
+    }
+
+    kind
+}
+
+fn is_markdown_kind(kind: &str) -> bool {
+    matches!(kind, "markdown" | "post")
+}
+
+fn markdown_declares_x_post(path: &Path) -> bool {
+    markdown_frontmatter_value(path, "type").as_deref() == Some("x-post")
+}
+
+fn markdown_frontmatter_value(path: &Path, key: &str) -> Option<String> {
+    let Ok(file) = File::open(path) else {
+        return None;
+    };
+    let reader = io::BufReader::new(file);
+    let mut frontmatter_started = false;
+    let prefix = format!("{key}:");
+
+    for line in reader.lines().take(80) {
+        let Ok(line) = line else {
+            return None;
+        };
+        let trimmed = line.trim();
+
+        if trimmed == "---" {
+            if frontmatter_started {
+                return None;
+            }
+            frontmatter_started = true;
+            continue;
+        }
+
+        if !frontmatter_started {
+            if trimmed.is_empty() {
+                continue;
+            }
+            return None;
+        }
+
+        if let Some(value) = trimmed.strip_prefix(&prefix) {
+            let normalized = value
+                .trim()
+                .trim_matches(|character| character == '\"' || character == '\'');
+            return (!normalized.is_empty()).then(|| normalized.to_string());
+        }
+    }
+
+    None
 }
 
 fn is_external_url(value: &str) -> bool {
@@ -3706,5 +3778,35 @@ mod tests {
         let excerpt = make_excerpt(&long).expect("excerpt");
         assert!(excerpt.ends_with('…'));
         assert!(excerpt.chars().count() <= 161);
+    }
+
+    #[test]
+    fn detects_x_post_markdown_frontmatter() {
+        let path = env::temp_dir().join(format!("post-indexer-x-post-{}.md", now_ms()));
+        fs::write(
+            &path,
+            "---\ntype: x-post\ntitle: Captured title\npost_id: \"123\"\n---\n\nCaptured post.\n",
+        )
+        .expect("write x post fixture");
+
+        assert_eq!(kind_for_path(&path, Some("md")), "post");
+        assert_eq!(
+            markdown_frontmatter_value(&path, "title").as_deref(),
+            Some("Captured title")
+        );
+        fs::remove_file(path).expect("remove x post fixture");
+    }
+
+    #[test]
+    fn retries_thumbnail_only_when_ffmpeg_is_unavailable() {
+        assert!(thumbnail_failure_is_retryable(Some(
+            "ffmpeg executable unavailable; ffmpeg: not found"
+        )));
+        assert!(!thumbnail_failure_is_retryable(Some(
+            "failed to extract video frame with ffmpeg (/bundled/ffmpeg: Stream map '0:v:0' matches no streams; ffmpeg: not found)"
+        )));
+        assert!(!thumbnail_failure_is_retryable(Some(
+            "failed to extract video frame with ffmpeg: Invalid data found when processing input"
+        )));
     }
 }

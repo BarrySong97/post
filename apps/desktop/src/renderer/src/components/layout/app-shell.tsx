@@ -31,6 +31,7 @@ type FooterTask = {
   state: FooterTaskState;
   done: number;
   total: number;
+  label?: string;
   reason?: string;
   completedAt?: number;
 };
@@ -44,6 +45,7 @@ const PF_TYPE: Record<FooterTaskType, { label: string }> = {
   reconcile: { label: "校验" },
   sync: { label: "同步" },
   thumbnails: { label: "缩略图" },
+  import: { label: "导入" },
 };
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -544,6 +546,7 @@ function toFooterTask(task: BackgroundTask): FooterTask {
     state: task.status,
     done,
     total,
+    label: task.progress?.label,
     reason: task.errorMessage,
     completedAt: task.completedAt,
   };
@@ -698,6 +701,10 @@ function PFRow({
 }
 
 function getTaskProgressLabel(task: FooterTask) {
+  if (task.label) {
+    return task.label;
+  }
+
   if (task.total > 0) {
     return `${task.done}/${task.total}`;
   }

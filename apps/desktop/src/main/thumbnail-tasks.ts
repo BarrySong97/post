@@ -17,6 +17,7 @@ type ThumbnailVault = {
 type ThumbnailTaskInput = {
   assetIds?: string[];
   limit?: number;
+  hidden?: boolean;
 };
 
 type ThumbnailTaskState = {
@@ -32,6 +33,7 @@ export function runThumbnailTask(vault: ThumbnailVault, input: ThumbnailTaskInpu
     title: "Generating thumbnails",
     vaultId: vault.id,
     vaultName: vault.name,
+    hidden: input.hidden,
   });
   const state: ThumbnailTaskState = {
     requested: 0,

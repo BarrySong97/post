@@ -1,0 +1,22 @@
+{
+  "name": "extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Post browser extension scaffold.",
+  "type": "module",
+  "scripts": {
+    "build": "vite build --config vite.config.chrome.ts",
+    "check-types": "tsc --noEmit",
+    "dev": "nodemon --config nodemon.chrome.json",
+    "native-host:install": "node native-host/install-native-host.mjs"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.3",
+    "@post/config": "workspace:*",
+    "@types/chrome": "^0.1.0",
+    "@types/node": "catalog:",
+    "nodemon": "^3.1.10",
+    "typescript": "catalog:",
+    "vite": "^6.3.5"
+  }
+}

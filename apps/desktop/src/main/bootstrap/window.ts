@@ -2,7 +2,7 @@
  * @purpose Create and configure Electron BrowserWindow instances for the desktop app.
  * @role    Main-process window factory and macOS window-control state helper.
  * @deps    Electron BrowserWindow/shell APIs, runtime env detection, preload/renderer/resource paths.
- * @gotcha  __dirname resolves to out/main after bundling, while packaged extraResources live under process.resourcesPath.
+ * @gotcha  Allow the dev renderer origin to navigate internally; send every other http(s) URL to the system browser.
  */
 
 import { BrowserWindow, shell } from "electron";
@@ -75,6 +75,49 @@ function attachHistoryNavigationForwarding(window: BrowserWindow): void {
   });
 }
 
+function shouldOpenInSystemBrowser(rawUrl: string, internalWebOrigin?: string): boolean {
+  let target: URL;
+  try {
+    target = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+
+  if (target.protocol !== "http:" && target.protocol !== "https:") {
+    return false;
+  }
+
+  return !internalWebOrigin || target.origin !== internalWebOrigin;
+}
+
+function openInSystemBrowser(rawUrl: string): void {
+  void shell.openExternal(rawUrl).catch((error) => {
+    console.error("Failed to open external URL", error);
+  });
+}
+
+function attachExternalNavigationHandling(window: BrowserWindow): void {
+  const internalWebOrigin = process.env.ELECTRON_RENDERER_URL
+    ? new URL(process.env.ELECTRON_RENDERER_URL).origin
+    : undefined;
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (shouldOpenInSystemBrowser(url, internalWebOrigin)) {
+      openInSystemBrowser(url);
+    }
+    return { action: "deny" };
+  });
+
+  window.webContents.on("will-navigate", (event, url) => {
+    if (!shouldOpenInSystemBrowser(url, internalWebOrigin)) {
+      return;
+    }
+
+    event.preventDefault();
+    openInSystemBrowser(url);
+  });
+}
+
 export function getWindowIconPath(): string {
   if (isDevRuntime()) {
     return join(__dirname, "../../resources/icons/Post-512.png");
@@ -128,11 +171,7 @@ export function createWindow(): BrowserWindow {
     }
   });
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url);
-    return { action: "deny" };
-  });
-
+  attachExternalNavigationHandling(mainWindow);
   attachHistoryNavigationForwarding(mainWindow);
 
   if (isDevRuntime() && process.env.ELECTRON_RENDERER_URL) {

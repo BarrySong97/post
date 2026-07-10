@@ -9,7 +9,7 @@ import { app } from "electron";
 
 import { appEventBus } from "./events";
 
-export type BackgroundTaskType = "indexing" | "reconcile" | "sync" | "thumbnails";
+export type BackgroundTaskType = "indexing" | "reconcile" | "sync" | "thumbnails" | "import";
 export type BackgroundTaskStatus = "queued" | "running" | "completed" | "failed";
 
 export type BackgroundTaskProgress = {
@@ -31,6 +31,7 @@ export type BackgroundTask = {
   updatedAt: number;
   completedAt?: number;
   errorMessage?: string;
+  hidden?: boolean;
 };
 
 export type BackgroundTaskSnapshot = {
@@ -53,6 +54,7 @@ type CreateTaskInput = {
   vaultId?: string;
   vaultName?: string;
   progress?: BackgroundTaskProgress;
+  hidden?: boolean;
 };
 
 type SnapshotContext = {
@@ -76,6 +78,7 @@ class BackgroundTaskManager {
       vaultId: input.vaultId,
       vaultName: input.vaultName,
       progress: input.progress,
+      hidden: input.hidden,
       startedAt: now,
       updatedAt: now,
     };
@@ -150,9 +153,9 @@ class BackgroundTaskManager {
   getSnapshot(context: SnapshotContext = {}): BackgroundTaskSnapshot {
     this.prune();
 
-    const tasks = Array.from(this.tasks.values()).sort(
-      (left, right) => right.updatedAt - left.updatedAt,
-    );
+    const tasks = Array.from(this.tasks.values())
+      .filter((task) => !task.hidden)
+      .sort((left, right) => right.updatedAt - left.updatedAt);
     const running = tasks.filter((task) => task.status === "running");
     const queued = tasks.filter((task) => task.status === "queued");
     const failed = tasks.filter((task) => task.status === "failed");
@@ -193,6 +196,10 @@ class BackgroundTaskManager {
   }
 
   private publishTaskEvents(task: BackgroundTask, previousStatus?: BackgroundTaskStatus): void {
+    if (task.hidden) {
+      return;
+    }
+
     const emittedAt = Date.now();
     appEventBus.publish({
       type: "task.updated",

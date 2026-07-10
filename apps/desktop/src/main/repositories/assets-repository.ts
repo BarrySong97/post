@@ -27,7 +27,7 @@ import {
 import { schema } from "@post/db";
 import { getDatabase } from "../db";
 
-export type AssetListTypeFilter = "markdown" | "image" | "video" | "link" | "file";
+export type AssetListTypeFilter = "markdown" | "post" | "image" | "video" | "link" | "file";
 export type AssetListTimeFilter = "any" | "today" | "week" | "m30";
 export type AssetListSourceType = "vault" | "external_file" | "url";
 export type AssetListTagMatch = "and" | "or";
@@ -58,7 +58,7 @@ export type AssetListPageInput = AssetListFilters & {
 export type AssetLayoutIndexInput = AssetListFilters;
 
 const URL_FILE_EXTENSIONS = ["url", "webloc"] as const;
-const NON_FILE_ASSET_KINDS = ["markdown", "image", "video", "web"] as const;
+const NON_FILE_ASSET_KINDS = ["markdown", "post", "image", "video", "web"] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const EMPTY_ASSET_SUMMARY = {
@@ -91,6 +91,7 @@ const EMPTY_SAVED_VIEW_FILTERS: SavedViewFilters = {
 
 const ASSET_LIST_TYPE_FILTERS = new Set<AssetListTypeFilter>([
   "markdown",
+  "post",
   "image",
   "video",
   "link",
@@ -324,7 +325,7 @@ function getTypeFilterCondition(typeFilters: readonly AssetListTypeFilter[] | un
   }
 
   const conditions = typeFilters.flatMap((type): SQL[] => {
-    if (type === "markdown" || type === "image" || type === "video") {
+    if (type === "markdown" || type === "post" || type === "image" || type === "video") {
       return [eq(schema.assets.kind, type)];
     }
 

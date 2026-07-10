@@ -17,6 +17,7 @@ import {
 
 export const assetKinds = [
   "markdown",
+  "post",
   "image",
   "video",
   "audio",
@@ -44,6 +45,9 @@ export const assetLinkRelationTypes = [
   "markdown_link",
   "markdown_image",
   "external_url",
+  "post_media",
+  "reply_to",
+  "quoted_post",
 ] as const;
 export type AssetLinkRelationType = (typeof assetLinkRelationTypes)[number];
 
@@ -55,6 +59,9 @@ export type AssetLinkCreatedFrom = (typeof assetLinkCreatedFromValues)[number];
 
 export const markdownParseStatuses = ["pending", "parsed", "failed"] as const;
 export type MarkdownParseStatus = (typeof markdownParseStatuses)[number];
+
+export const postCaptureStatuses = ["complete", "partial"] as const;
+export type PostCaptureStatus = (typeof postCaptureStatuses)[number];
 
 export const imageCacheStatuses = ["pending", "ready", "failed"] as const;
 export type ImageCacheStatus = (typeof imageCacheStatuses)[number];
@@ -323,6 +330,49 @@ export const markdownCache = sqliteTable(
   ],
 );
 
+export const postCache = sqliteTable(
+  "post_cache",
+  {
+    assetId: text("asset_id")
+      .primaryKey()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    vaultId: text("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(),
+    externalPostId: text("external_post_id").notNull(),
+    canonicalUrl: text("canonical_url").notNull(),
+    text: text("text").notNull(),
+    authorName: text("author_name"),
+    authorHandle: text("author_handle"),
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull(),
+    language: text("language"),
+    replyToExternalId: text("reply_to_external_id"),
+    replyToUrl: text("reply_to_url"),
+    quotedExternalId: text("quoted_external_id"),
+    quotedUrl: text("quoted_url"),
+    repostedByHandle: text("reposted_by_handle"),
+    captureStatus: text("capture_status").$type<PostCaptureStatus>().notNull(),
+    mediaJson: text("media_json").notNull().default("[]"),
+    quotedPostJson: text("quoted_post_json"),
+    pollJson: text("poll_json"),
+    linkCardJson: text("link_card_json"),
+    warningsJson: text("warnings_json").notNull().default("[]"),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("post_cache_vault_platform_external_unique").on(
+      table.vaultId,
+      table.platform,
+      table.externalPostId,
+    ),
+    index("post_cache_vault_captured_at_idx").on(table.vaultId, table.capturedAt),
+    index("post_cache_author_handle_idx").on(table.authorHandle),
+  ],
+);
+
 export const syncRuns = sqliteTable(
   "sync_runs",
   {
@@ -395,6 +445,8 @@ export type AssetLinkRecord = typeof assetLinks.$inferSelect;
 export type NewAssetLinkRecord = typeof assetLinks.$inferInsert;
 export type MarkdownCacheRecord = typeof markdownCache.$inferSelect;
 export type NewMarkdownCacheRecord = typeof markdownCache.$inferInsert;
+export type PostCacheRecord = typeof postCache.$inferSelect;
+export type NewPostCacheRecord = typeof postCache.$inferInsert;
 export type SyncRunRecord = typeof syncRuns.$inferSelect;
 export type NewSyncRunRecord = typeof syncRuns.$inferInsert;
 export type SyncEventRecord = typeof syncEvents.$inferSelect;

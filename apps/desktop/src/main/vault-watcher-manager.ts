@@ -20,6 +20,7 @@ import {
   type IndexerWatchScope,
 } from "./indexer";
 import { runThumbnailTask } from "./thumbnail-tasks";
+import { filterThumbnailAssetIdsNeedingWork } from "./services/thumbnail-service";
 
 export type VaultWatcherScopeInput =
   | {
@@ -419,8 +420,15 @@ class VaultWatcherManager {
     }
 
     const vault = this.pendingThumbnailVault;
-    const assetIds = Array.from(this.pendingThumbnailAssetIds);
+    const assetIds = filterThumbnailAssetIdsNeedingWork(
+      vault,
+      Array.from(this.pendingThumbnailAssetIds),
+    );
     this.pendingThumbnailAssetIds.clear();
+    if (assetIds.length === 0) {
+      this.pendingThumbnailVault = null;
+      return;
+    }
     this.thumbnailRunning = true;
 
     void runThumbnailTask(vault, { assetIds, limit: assetIds.length })

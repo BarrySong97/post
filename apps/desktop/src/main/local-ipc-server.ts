@@ -11,10 +11,26 @@ import net, { type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { asc, eq } from "drizzle-orm";
+
+import { schema } from "@post/db";
 import { appEventBus } from "./events";
 import { getDatabasePath } from "./db";
 import { getLiveFilterSnapshot, type LiveFilterSnapshot } from "./live-filter-state";
-import { commandMessageSchema, type CommandMessage, type CommandOp } from "./local-ipc-messages";
+import { getDatabase } from "./db";
+import { getRequestedOrActiveVault } from "./repositories/vaults-repository";
+import {
+  commandMessageSchema,
+  extensionContextGetMessageSchema,
+  extensionImageSaveMessageSchema,
+  extensionPostSaveMessageSchema,
+  extensionVideoSaveMessageSchema,
+  type CommandMessage,
+  type CommandOp,
+} from "./local-ipc-messages";
+import { saveExtensionImage } from "./services/extension-image-import-service";
+import { saveExtensionPost } from "./services/extension-post-import-service";
+import { saveExtensionVideo } from "./services/extension-video-import-service";
 
 type LedgerChangedMessage = {
   type: "ledger.changed";
@@ -37,6 +53,64 @@ type CommandAck = {
   op: CommandOp | "unknown";
   message?: string;
   snapshot?: LiveFilterSnapshot | null;
+};
+
+type ExtensionContextAck = {
+  type: "extension.context.ack";
+  ok: boolean;
+  message?: string;
+  context?: {
+    vault: {
+      id: string;
+      name: string;
+      rootPath: string;
+    };
+    tags: Array<{
+      id: string;
+      name: string;
+      color: string | null;
+      sortOrder: number;
+    }>;
+  };
+};
+
+type ExtensionImageSaveAck = {
+  type: "extension.image.save.ack";
+  ok: boolean;
+  message?: string;
+  asset?: {
+    id: string;
+    title: string;
+    relativePath: string;
+    tagId: string;
+  };
+};
+
+type ExtensionVideoSaveAck = {
+  type: "extension.video.save.ack";
+  ok: boolean;
+  message?: string;
+  asset?: {
+    id: string;
+    title: string;
+    relativePath: string;
+    tagId: string;
+  };
+};
+
+type ExtensionPostSaveAck = {
+  type: "extension.post.save.ack";
+  ok: boolean;
+  message?: string;
+  asset?: {
+    id: string;
+    title: string;
+    relativePath: string;
+    tagId: string;
+    status: "created" | "updated";
+    childAssetIds: string[];
+    warnings: string[];
+  };
 };
 
 let server: Server | null = null;
@@ -102,6 +176,30 @@ function sendCommandAck(socket: Socket, ack: CommandAck): void {
   });
 }
 
+function sendExtensionContextAck(socket: Socket, ack: ExtensionContextAck): void {
+  socket.write(`${JSON.stringify(ack)}\n`, () => {
+    socket.end();
+  });
+}
+
+function sendExtensionImageSaveAck(socket: Socket, ack: ExtensionImageSaveAck): void {
+  socket.write(`${JSON.stringify(ack)}\n`, () => {
+    socket.end();
+  });
+}
+
+function sendExtensionVideoSaveAck(socket: Socket, ack: ExtensionVideoSaveAck): void {
+  socket.write(`${JSON.stringify(ack)}\n`, () => {
+    socket.end();
+  });
+}
+
+function sendExtensionPostSaveAck(socket: Socket, ack: ExtensionPostSaveAck): void {
+  socket.write(`${JSON.stringify(ack)}\n`, () => {
+    socket.end();
+  });
+}
+
 function isCommandEnvelope(value: unknown): value is { type: string } {
   if (!value || typeof value !== "object") {
     return false;
@@ -109,6 +207,20 @@ function isCommandEnvelope(value: unknown): value is { type: string } {
 
   const type = (value as { type?: unknown }).type;
   return typeof type === "string" && (type.startsWith("filter.") || type === "asset.open");
+}
+
+function isExtensionEnvelope(value: unknown): value is { type: string } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const type = (value as { type?: unknown }).type;
+  return (
+    type === "extension.context.get" ||
+    type === "extension.image.save" ||
+    type === "extension.video.save" ||
+    type === "extension.post.save"
+  );
 }
 
 function opForCommand(type: CommandMessage["type"]): CommandOp {
@@ -199,6 +311,254 @@ function handleCommandMessage(socket: Socket, raw: unknown): void {
   }
 }
 
+function handleExtensionContextMessage(socket: Socket, raw: unknown): void {
+  const parsed = extensionContextGetMessageSchema.safeParse(raw);
+  if (!parsed.success) {
+    sendExtensionContextAck(socket, {
+      type: "extension.context.ack",
+      ok: false,
+      message: "Invalid extension context message.",
+    });
+    return;
+  }
+
+  const message = parsed.data;
+  if (path.resolve(message.dbPath) !== path.resolve(getDatabasePath())) {
+    sendExtensionContextAck(socket, {
+      type: "extension.context.ack",
+      ok: false,
+      message: "Extension context database path did not match the running app.",
+    });
+    return;
+  }
+
+  const vault = getRequestedOrActiveVault(message.vaultId);
+  if (!vault) {
+    sendExtensionContextAck(socket, {
+      type: "extension.context.ack",
+      ok: false,
+      message: "No active vault selected.",
+    });
+    return;
+  }
+
+  const tags = getDatabase()
+    .select({
+      id: schema.tags.id,
+      name: schema.tags.name,
+      color: schema.tags.color,
+      sortOrder: schema.tags.sortOrder,
+    })
+    .from(schema.tags)
+    .where(eq(schema.tags.vaultId, vault.id))
+    .orderBy(asc(schema.tags.sortOrder), asc(schema.tags.name))
+    .all();
+
+  sendExtensionContextAck(socket, {
+    type: "extension.context.ack",
+    ok: true,
+    context: {
+      vault: {
+        id: vault.id,
+        name: vault.name,
+        rootPath: vault.rootPath,
+      },
+      tags,
+    },
+  });
+}
+
+async function handleExtensionImageSaveMessage(socket: Socket, raw: unknown): Promise<void> {
+  const parsed = extensionImageSaveMessageSchema.safeParse(raw);
+  if (!parsed.success) {
+    sendExtensionImageSaveAck(socket, {
+      type: "extension.image.save.ack",
+      ok: false,
+      message: "Invalid extension image save message.",
+    });
+    return;
+  }
+
+  const message = parsed.data;
+  if (path.resolve(message.dbPath) !== path.resolve(getDatabasePath())) {
+    sendExtensionImageSaveAck(socket, {
+      type: "extension.image.save.ack",
+      ok: false,
+      message: "Extension image save database path did not match the running app.",
+    });
+    return;
+  }
+
+  try {
+    const saved = await saveExtensionImage({
+      srcUrl: message.srcUrl,
+      pageUrl: message.pageUrl,
+      pageTitle: message.pageTitle,
+      tagId: message.tagId,
+      vaultId: message.vaultId,
+    });
+
+    appEventBus.publish({
+      type: "ledger.changed",
+      emittedAt: Date.now(),
+      source: "post-extension",
+      dbPath: message.dbPath,
+      changed: ["assets", "assetFiles", "assetTags", "imageCache"],
+      operationCount: 1,
+    });
+
+    sendExtensionImageSaveAck(socket, {
+      type: "extension.image.save.ack",
+      ok: true,
+      asset: {
+        id: saved.assetId,
+        title: saved.title,
+        relativePath: saved.relativePath,
+        tagId: saved.tagId,
+      },
+    });
+  } catch (error) {
+    sendExtensionImageSaveAck(socket, {
+      type: "extension.image.save.ack",
+      ok: false,
+      message: error instanceof Error ? error.message : "Image import failed.",
+    });
+  }
+}
+
+async function handleExtensionVideoSaveMessage(socket: Socket, raw: unknown): Promise<void> {
+  const parsed = extensionVideoSaveMessageSchema.safeParse(raw);
+  if (!parsed.success) {
+    sendExtensionVideoSaveAck(socket, {
+      type: "extension.video.save.ack",
+      ok: false,
+      message: "Invalid extension video save message.",
+    });
+    return;
+  }
+
+  const message = parsed.data;
+  if (path.resolve(message.dbPath) !== path.resolve(getDatabasePath())) {
+    sendExtensionVideoSaveAck(socket, {
+      type: "extension.video.save.ack",
+      ok: false,
+      message: "Extension video save database path did not match the running app.",
+    });
+    return;
+  }
+
+  try {
+    const saved = await saveExtensionVideo({
+      srcUrl: message.srcUrl,
+      candidateUrls: message.candidateUrls,
+      pageUrl: message.pageUrl,
+      pageTitle: message.pageTitle,
+      tweetId: message.tweetId,
+      tweetUrl: message.tweetUrl,
+      tagId: message.tagId,
+      vaultId: message.vaultId,
+    });
+
+    appEventBus.publish({
+      type: "ledger.changed",
+      emittedAt: Date.now(),
+      source: "post-extension",
+      dbPath: message.dbPath,
+      changed: ["assets", "assetFiles", "assetTags", "imageCache"],
+      operationCount: 1,
+    });
+
+    sendExtensionVideoSaveAck(socket, {
+      type: "extension.video.save.ack",
+      ok: true,
+      asset: {
+        id: saved.assetId,
+        title: saved.title,
+        relativePath: saved.relativePath,
+        tagId: saved.tagId,
+      },
+    });
+  } catch (error) {
+    sendExtensionVideoSaveAck(socket, {
+      type: "extension.video.save.ack",
+      ok: false,
+      message: error instanceof Error ? error.message : "Video import failed.",
+    });
+  }
+}
+
+async function handleExtensionPostSaveMessage(socket: Socket, raw: unknown): Promise<void> {
+  const parsed = extensionPostSaveMessageSchema.safeParse(raw);
+  if (!parsed.success) {
+    sendExtensionPostSaveAck(socket, {
+      type: "extension.post.save.ack",
+      ok: false,
+      message: "Invalid extension post save message.",
+    });
+    return;
+  }
+
+  const message = parsed.data;
+  if (path.resolve(message.dbPath) !== path.resolve(getDatabasePath())) {
+    sendExtensionPostSaveAck(socket, {
+      type: "extension.post.save.ack",
+      ok: false,
+      message: "Extension post save database path did not match the running app.",
+    });
+    return;
+  }
+
+  try {
+    const saved = await saveExtensionPost({
+      postId: message.postId,
+      canonicalUrl: message.canonicalUrl,
+      pageUrl: message.pageUrl,
+      pageTitle: message.pageTitle,
+      capturedAt: message.capturedAt,
+      visibleSnapshot: message.visibleSnapshot,
+      tagId: message.tagId,
+      vaultId: message.vaultId,
+    });
+
+    appEventBus.publish({
+      type: "ledger.changed",
+      emittedAt: Date.now(),
+      source: "post-extension",
+      dbPath: message.dbPath,
+      changed: [
+        "assets",
+        "assetFiles",
+        "assetTags",
+        "assetLinks",
+        "markdownCache",
+        "postCache",
+        "imageCache",
+      ],
+      operationCount: 1,
+    });
+
+    sendExtensionPostSaveAck(socket, {
+      type: "extension.post.save.ack",
+      ok: true,
+      asset: {
+        id: saved.assetId,
+        title: saved.title,
+        relativePath: saved.relativePath,
+        tagId: saved.tagId,
+        status: saved.status,
+        childAssetIds: saved.childAssetIds,
+        warnings: saved.warnings,
+      },
+    });
+  } catch (error) {
+    sendExtensionPostSaveAck(socket, {
+      type: "extension.post.save.ack",
+      ok: false,
+      message: error instanceof Error ? error.message : "Post import failed.",
+    });
+  }
+}
+
 function handleSocket(socket: Socket): void {
   let buffer = "";
 
@@ -225,6 +585,16 @@ function handleSocket(socket: Socket): void {
             });
           } else if (isCommandEnvelope(message)) {
             handleCommandMessage(socket, message);
+          } else if (isExtensionEnvelope(message)) {
+            if (message.type === "extension.context.get") {
+              handleExtensionContextMessage(socket, message);
+            } else if (message.type === "extension.image.save") {
+              void handleExtensionImageSaveMessage(socket, message);
+            } else if (message.type === "extension.video.save") {
+              void handleExtensionVideoSaveMessage(socket, message);
+            } else {
+              void handleExtensionPostSaveMessage(socket, message);
+            }
           } else {
             sendAck(socket, {
               type: "ledger.changed.ack",

@@ -8,6 +8,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm rebuild:electron && turbo -F desktop dev",
+    "dev:extension": "pnpm -F extension dev",
     "dev:website": "pnpm -F website dev",
     "build": "turbo build",
     "test": "turbo test",

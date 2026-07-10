@@ -36,9 +36,26 @@ export function startThumbnailPrewarm(vault: VaultRecord, options: { force?: boo
   });
 }
 
+export function filterThumbnailAssetIdsNeedingWork(vault: { id: string }, assetIds: string[]) {
+  if (assetIds.length === 0) {
+    return [];
+  }
+
+  const requestedIds = new Set(assetIds);
+  return getThumbnailRows(vault, assetIds)
+    .filter(thumbnailRowNeedsWork)
+    .map((row) => row.assetId)
+    .filter((assetId) => requestedIds.has(assetId));
+}
+
 function hasThumbnailWork(vault: VaultRecord) {
+  return getThumbnailRows(vault).some(thumbnailRowNeedsWork);
+}
+
+function getThumbnailRows(vault: { id: string }, assetIds?: string[]) {
   const rows = getDatabase()
     .select({
+      assetId: schema.assets.id,
       sizeBytes: schema.assetFiles.sizeBytes,
       mtimeMs: schema.assetFiles.mtimeMs,
       quickFingerprint: schema.assetFiles.quickFingerprint,
@@ -58,31 +75,36 @@ function hasThumbnailWork(vault: VaultRecord) {
         inArray(schema.assets.kind, ["image", "video"]),
         isNull(schema.assets.deletedAt),
         eq(schema.assetFiles.fileExists, true),
+        ...(assetIds ? [inArray(schema.assets.id, assetIds)] : []),
       ),
     )
     .all();
 
-  return rows.some((row) => {
-    if (row.cacheStatus == null || row.cacheStatus === "pending") {
-      return true;
-    }
+  return rows;
+}
 
-    const sourceMatches =
-      row.sourceSizeBytes === row.sizeBytes &&
-      getTimestampMs(row.sourceMtimeMs) === getTimestampMs(row.mtimeMs) &&
-      row.sourceQuickFingerprint === row.quickFingerprint;
+type ThumbnailRow = ReturnType<typeof getThumbnailRows>[number];
 
-    if (row.cacheStatus === "failed") {
-      return !sourceMatches || isRetryableThumbnailFailure(row.errorMessage);
-    }
+function thumbnailRowNeedsWork(row: ThumbnailRow) {
+  if (row.cacheStatus == null || row.cacheStatus === "pending") {
+    return true;
+  }
 
-    return !sourceMatches || !row.thumbnailPath || !existsSync(row.thumbnailPath);
-  });
+  const sourceMatches =
+    row.sourceSizeBytes === row.sizeBytes &&
+    getTimestampMs(row.sourceMtimeMs) === getTimestampMs(row.mtimeMs) &&
+    row.sourceQuickFingerprint === row.quickFingerprint;
+
+  if (row.cacheStatus === "failed") {
+    return !sourceMatches || isRetryableThumbnailFailure(row.errorMessage);
+  }
+
+  return !sourceMatches || !row.thumbnailPath || !existsSync(row.thumbnailPath);
 }
 
 function isRetryableThumbnailFailure(errorMessage: string | null) {
   const normalized = errorMessage?.toLowerCase() ?? "";
-  return normalized.includes("ffmpeg") || normalized.includes("post_ffmpeg_path");
+  return normalized.includes("ffmpeg executable unavailable");
 }
 
 function getTimestampMs(value: Date | number | null) {

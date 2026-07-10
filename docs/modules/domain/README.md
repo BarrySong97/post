@@ -31,4 +31,4 @@ Desktop main translates `DomainError` to `TRPCError`. The CLI translates the sam
 
 - Keep this package free of Electron, tRPC, renderer, preload, filesystem UI, and process-management imports.
 - Keep all write workflows explicit and relationship-aware; do not add raw SQL passthrough helpers here.
-- Keep saved-view filter serialization compatible with desktop renderer contracts.
+- Keep saved-view filter serialization compatible with desktop renderer contracts, including the first-class `post` asset type used by X captures.

@@ -23,7 +23,13 @@ export function getTagHue(name: string): number {
 }
 
 function mapIndexedAssetKind(kind: IndexedAsset["kind"], extension?: string | null): AssetKind {
-  if (kind === "markdown" || kind === "image" || kind === "video" || kind === "web") {
+  if (
+    kind === "markdown" ||
+    kind === "post" ||
+    kind === "image" ||
+    kind === "video" ||
+    kind === "web"
+  ) {
     return kind;
   }
 
@@ -98,6 +104,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
       : undefined;
   const metaPrefix = {
     markdown: "Markdown",
+    post: "X Post",
     image: "图片",
     video: "视频",
     link: "链接",

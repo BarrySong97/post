@@ -8,7 +8,14 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, Dispatch, ReactNode, SetStateAction } from "react";
 import { AccordionBody, AccordionPanel, Button, Tag, TagGroup, Tabs } from "@heroui/react";
-import { FileText, Image as ImageIcon, Link as LinkIcon, Plus, Video } from "lucide-react";
+import {
+  FileText,
+  Image as ImageIcon,
+  Link as LinkIcon,
+  MessageSquareQuote,
+  Plus,
+  Video,
+} from "lucide-react";
 
 import {
   type AssetFilterMatch,
@@ -24,6 +31,7 @@ import type { RouterInputs, RouterOutputs } from "@/lib/trpc";
 
 export const ASSET_TYPE_FILTERS = [
   { value: "markdown", label: "文字", icon: FileText },
+  { value: "post", label: "Post", icon: MessageSquareQuote },
   { value: "image", label: "图片", icon: ImageIcon },
   { value: "video", label: "视频", icon: Video },
   { value: "link", label: "链接", icon: LinkIcon },

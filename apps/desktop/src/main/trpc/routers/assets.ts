@@ -10,7 +10,7 @@ import { performance } from "node:perf_hooks";
 
 import { clipboard, shell } from "electron";
 import { TRPCError } from "@trpc/server";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 
 import {
   addTagToAsset,
@@ -34,6 +34,7 @@ import {
   assetByIdInputSchema,
   assetMarkdownContentInputSchema,
   copyAssetPathInputSchema,
+  deleteAssetInputSchema,
   ensureThumbnailsInputSchema,
   openAssetInEditorInputSchema,
   openFileInputSchema,
@@ -79,6 +80,7 @@ import {
 } from "../../repositories/vaults-repository";
 import { runThumbnailTask } from "../../thumbnail-tasks";
 import { openVaultInEditor } from "../../services/editor-launch-service";
+import { deleteAsset } from "../../services/asset-delete-service";
 import { runIndexerTask } from "../../services/indexer-task-service";
 import { readMarkdownContent } from "../../services/markdown-preview-service";
 import { writeAssetProfileLog } from "../../services/asset-profile-log-service";
@@ -326,6 +328,10 @@ export const assetsRouter = router({
     return asset;
   }),
 
+  deleteAsset: publicProcedure
+    .input(deleteAssetInputSchema)
+    .mutation(({ input }) => deleteAsset(input.id)),
+
   graphData: publicProcedure.input(optionalVaultInputSchema.optional()).query(({ input }) => {
     const vault = getRequestedOrActiveVault(input?.vaultId);
     if (!vault) return { nodes: [], edges: [] };
@@ -344,7 +350,7 @@ export const assetsRouter = router({
       .from(schema.assets)
       .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
       .leftJoin(schema.markdownCache, eq(schema.markdownCache.assetId, schema.assets.id))
-      .where(eq(schema.assets.vaultId, vault.id))
+      .where(and(eq(schema.assets.vaultId, vault.id), isNull(schema.assets.deletedAt)))
       .all();
 
     const nodes = assetRows.map((r) => ({

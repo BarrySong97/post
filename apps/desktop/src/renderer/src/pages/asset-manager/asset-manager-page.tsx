@@ -31,7 +31,7 @@ import {
   writeAssetFilterOpenToStorage,
 } from "@/lib/asset-manager/storage";
 import { getActiveFilterCount, getTagHue, mapIndexedAsset } from "@/lib/asset-manager/asset-model";
-import { resolveMarkdownImageUrl } from "@/lib/asset-manager/asset-url";
+import { resolveMarkdownAssetUrl } from "@/lib/asset-manager/asset-url";
 import type {
   Asset,
   AssetKind,
@@ -67,6 +67,7 @@ import {
   Hash,
   Image as ImageIcon,
   Link as LinkIcon,
+  MessageSquareQuote,
   PanelRightOpen,
   Play,
   Plus,
@@ -108,6 +109,10 @@ import {
   sourceLabelsToTypes,
 } from "@/components/asset-manager/asset-filter-controls";
 import { ViewFormModal } from "@/components/asset-manager/asset-management-modals";
+import {
+  AssetCardContextMenu,
+  type AssetCardContextMenuState,
+} from "@/components/asset-manager/asset-card-context-menu";
 import { ViewIconRenderer } from "@/components/asset-manager/view-icon-picker";
 
 type OpenVaultTarget = "vscode" | "cursor" | "zed" | "finder";
@@ -260,6 +265,7 @@ function getOpenVaultTarget(id: OpenVaultTarget) {
 function getKindMeta(kind: AssetKind) {
   const map = {
     markdown: { label: "MD", icon: FileText },
+    post: { label: "POST", icon: MessageSquareQuote },
     image: { label: "IMG", icon: ImageIcon },
     video: { label: "VIDEO", icon: Video },
     link: { label: "LINK", icon: LinkIcon },
@@ -620,6 +626,21 @@ function AssetUrlPreview({ asset }: { asset: Asset }) {
   );
 }
 
+function AssetCardPrimaryTagChip({ asset, className }: { asset: Asset; className?: string }) {
+  return (
+    <Chip
+      size="sm"
+      className={`h-auto min-h-0 max-w-full gap-1.5 px-0 py-0 text-[11.5px] font-medium text-[#1c1b19] ${className ?? "bg-transparent"}`}
+    >
+      <span
+        className="h-[7px] w-[7px] shrink-0 rounded-full"
+        style={{ background: `oklch(0.6 0.14 ${getTagHue(asset.tag)})` }}
+      />
+      <span className="min-w-0 truncate">{asset.tag}</span>
+    </Chip>
+  );
+}
+
 function AssetCardTagRow({ asset }: { asset: Asset }) {
   const hasTag = asset.tagIds.length > 0;
   const isPrivate = asset.privacy === "private";
@@ -631,18 +652,7 @@ function AssetCardTagRow({ asset }: { asset: Asset }) {
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-      {hasTag ? (
-        <Chip
-          size="sm"
-          className="h-auto min-h-0 gap-1.5 bg-transparent px-0 py-0 text-[11.5px] font-medium text-[#1c1b19]"
-        >
-          <span
-            className="h-[7px] w-[7px] rounded-full"
-            style={{ background: `oklch(0.6 0.14 ${getTagHue(asset.tag)})` }}
-          />
-          {asset.tag}
-        </Chip>
-      ) : null}
+      {hasTag ? <AssetCardPrimaryTagChip asset={asset} /> : null}
       {isPrivate ? (
         <Chip
           size="sm"
@@ -660,10 +670,12 @@ const AssetCard = React.memo(function AssetCard({
   asset,
   selected = false,
   onToggleSelected,
+  onOpenContextMenu,
 }: {
   asset: Asset;
   selected?: boolean;
   onToggleSelected?: (assetId: string) => void;
+  onOpenContextMenu?: (state: AssetCardContextMenuState) => void;
 }) {
   const navigate = useNavigate();
   const hasCover =
@@ -672,7 +684,14 @@ const AssetCard = React.memo(function AssetCard({
   const selectable = asset.kind === "image" && onToggleSelected;
 
   return (
-    <article className="relative overflow-hidden rounded-xl bg-[#f6f5f2] transition-colors duration-150 hover:bg-[#f2f1ed]">
+    <article
+      className="relative overflow-hidden rounded-xl bg-[#f6f5f2] transition-colors duration-150 hover:bg-[#f2f1ed]"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onOpenContextMenu?.({ asset, x: event.clientX, y: event.clientY });
+      }}
+    >
       {selectable ? (
         <button
           type="button"
@@ -1163,6 +1182,7 @@ function AssetMasonryColumns({
   onHydrateAssets,
   virtualizerRef,
   reflowing,
+  onOpenContextMenu,
 }: {
   scrollViewportRef: React.RefObject<HTMLDivElement | null>;
   columnCount: number;
@@ -1171,6 +1191,7 @@ function AssetMasonryColumns({
   onHydrateAssets: (assetIds: readonly string[]) => void;
   virtualizerRef: React.RefObject<MasonryVirtualizerHandle | null>;
   reflowing: boolean;
+  onOpenContextMenu: (state: AssetCardContextMenuState) => void;
 }) {
   const hydrateFrame = useRef<number | undefined>(undefined);
   const queuedHydrateIds = useRef<string[]>([]);
@@ -1259,7 +1280,7 @@ function AssetMasonryColumns({
                 doesn't retrigger measurement). */}
             <div data-flip-id={item.id}>
               {hydratedAsset ? (
-                <AssetCard asset={hydratedAsset} />
+                <AssetCard asset={hydratedAsset} onOpenContextMenu={onOpenContextMenu} />
               ) : (
                 <AssetCardPlaceholder item={item} />
               )}
@@ -1288,6 +1309,8 @@ function AssetMasonryGrid({
 }) {
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const [columnCount, setColumnCount] = useState(1);
+  const [contextMenu, setContextMenu] = useState<AssetCardContextMenuState | null>(null);
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const navigate = useNavigate();
   const virtualizerRef = useRef<MasonryVirtualizerHandle | null>(null);
   const search = useSearch({ strict: false }) as { i?: number; o?: number };
@@ -1542,43 +1565,47 @@ function AssetMasonryGrid({
   }, [navigate]);
 
   return (
-    <ScrollArea
-      type="hover"
-      scrollHideDelay={260}
-      className="min-h-0 flex-1"
-      viewportRef={scrollViewportRef}
-      viewportClassName="px-6"
-      scrollbarClassName="w-2 border-l-0 bg-transparent p-[2px] opacity-0 transition-opacity duration-150 data-[state=visible]:opacity-100 hover:opacity-100"
-      thumbClassName="bg-zinc-400/35 hover:bg-zinc-500/45"
-    >
-      {loading ? (
-        <div className="grid h-56 place-items-center text-sm text-zinc-400">正在读取资产库</div>
-      ) : indexItems.length ? (
-        <AssetMasonryColumns
-          scrollViewportRef={scrollViewportRef}
-          columnCount={columnCount}
-          indexItems={indexItems}
-          hydratedAssetsById={hydratedAssetsById}
-          onHydrateAssets={onHydrateAssets}
-          virtualizerRef={virtualizerRef}
-          reflowing={reflowing}
-        />
-      ) : (
-        <div className="grid h-72 place-items-center">
-          <div className="text-center">
-            <FolderKanban className="mx-auto text-zinc-300" size={36} />
-            <h2 className="mt-3 text-sm font-semibold text-zinc-800">
-              {vaultAvailable ? "没有匹配的资产" : "选择一个文件夹开始索引"}
-            </h2>
-            <p className="mt-1 text-xs text-zinc-500">
-              {vaultAvailable
-                ? "调整筛选条件后再试一次。"
-                : "文件留在原地，标签和关系写入 SQLite。"}
-            </p>
+    <>
+      <ScrollArea
+        type="hover"
+        scrollHideDelay={260}
+        className="min-h-0 flex-1"
+        viewportRef={scrollViewportRef}
+        viewportClassName="px-6"
+        scrollbarClassName="w-2 border-l-0 bg-transparent p-[2px] opacity-0 transition-opacity duration-150 data-[state=visible]:opacity-100 hover:opacity-100"
+        thumbClassName="bg-zinc-400/35 hover:bg-zinc-500/45"
+      >
+        {loading ? (
+          <div className="grid h-56 place-items-center text-sm text-zinc-400">正在读取资产库</div>
+        ) : indexItems.length ? (
+          <AssetMasonryColumns
+            scrollViewportRef={scrollViewportRef}
+            columnCount={columnCount}
+            indexItems={indexItems}
+            hydratedAssetsById={hydratedAssetsById}
+            onHydrateAssets={onHydrateAssets}
+            virtualizerRef={virtualizerRef}
+            reflowing={reflowing}
+            onOpenContextMenu={setContextMenu}
+          />
+        ) : (
+          <div className="grid h-72 place-items-center">
+            <div className="text-center">
+              <FolderKanban className="mx-auto text-zinc-300" size={36} />
+              <h2 className="mt-3 text-sm font-semibold text-zinc-800">
+                {vaultAvailable ? "没有匹配的资产" : "选择一个文件夹开始索引"}
+              </h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                {vaultAvailable
+                  ? "调整筛选条件后再试一次。"
+                  : "文件留在原地，标签和关系写入 SQLite。"}
+              </p>
+            </div>
           </div>
-        </div>
-      )}
-    </ScrollArea>
+        )}
+      </ScrollArea>
+      {contextMenu ? <AssetCardContextMenu state={contextMenu} onClose={closeContextMenu} /> : null}
+    </>
   );
 }
 
@@ -2223,7 +2250,9 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
   }
 
   const hasFrontmatter = Object.keys(parsed.data).length > 0;
-  const bodyContent = parsed.content.trim();
+  const bodyContent = parsed.content
+    .replace(/(?:&lt;|<)!--\s*post:generated:(?:start|end)\s*--(?:&gt;|>)/g, "")
+    .trim();
 
   return (
     <div className="max-w-[760px]">
@@ -2233,15 +2262,51 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
+              p({ children }) {
+                const items = React.Children.toArray(children);
+                const onlyChild = items.length === 1 ? items[0] : undefined;
+                const videoHref =
+                  React.isValidElement<{ href?: string }>(onlyChild) &&
+                  getLocalVideoExtension(onlyChild.props.href)
+                    ? onlyChild.props.href
+                    : undefined;
+
+                return videoHref ? <>{children}</> : <p>{children}</p>;
+              },
               img({ src, alt }) {
-                const resolved = resolveMarkdownImageUrl(
+                const resolved = resolveMarkdownAssetUrl(
                   src,
                   markdownQuery.data!.vaultId,
                   markdownQuery.data!.fileDir,
                 );
                 return (
-                  <img src={resolved} alt={alt ?? ""} className="my-5 max-w-full rounded-lg" />
+                  <img
+                    src={resolved}
+                    alt={alt ?? ""}
+                    className="my-5 block max-h-[640px] w-full rounded-lg bg-zinc-50 object-contain"
+                  />
                 );
+              },
+              a({ href, children }) {
+                const extension = getLocalVideoExtension(href);
+                if (href && extension) {
+                  const resolved = resolveMarkdownAssetUrl(
+                    href,
+                    markdownQuery.data!.vaultId,
+                    markdownQuery.data!.fileDir,
+                  );
+                  return (
+                    <div className="my-5 overflow-hidden rounded-lg border border-zinc-200 bg-black shadow-sm">
+                      <LocalVideoPlayer
+                        src={resolved}
+                        title={typeof children === "string" ? children : "Post video"}
+                        mimeType={getVideoMimeType(extension)}
+                      />
+                    </div>
+                  );
+                }
+
+                return <a href={href}>{children}</a>;
               },
             }}
           >
@@ -2302,6 +2367,17 @@ function getVideoMimeType(extension: string | undefined) {
   return mimeByExtension[normalized] ?? `video/${normalized}`;
 }
 
+function getLocalVideoExtension(href: string | undefined) {
+  if (!href || /^(?:https?:|mailto:)/i.test(href)) {
+    return undefined;
+  }
+
+  const extension = href.split(/[?#]/)[0]?.split(".").pop()?.toLowerCase();
+  return extension && ["mp4", "m4v", "mov", "webm", "ogv", "mkv", "avi"].includes(extension)
+    ? extension
+    : undefined;
+}
+
 function getAssetMediaRatio(asset: Asset) {
   const width = asset.imageWidth ?? asset.thumbnailWidth;
   const height = asset.imageHeight ?? asset.thumbnailHeight;
@@ -2315,54 +2391,74 @@ function getAssetMediaRatio(asset: Asset) {
   };
 }
 
+const LOCAL_VIDEO_PLAYER_CONTROLS: PlyrOptions["controls"] = [
+  "play-large",
+  "play",
+  "progress",
+  "current-time",
+  "mute",
+  "volume",
+  "settings",
+  "pip",
+  "airplay",
+  "fullscreen",
+];
+
+function LocalVideoPlayer({
+  src,
+  title,
+  mimeType,
+  poster,
+  ratio,
+}: {
+  src: string;
+  title: string;
+  mimeType: string;
+  poster?: string;
+  ratio?: string;
+}) {
+  const source = useMemo<PlyrSource>(
+    () => ({
+      type: "video",
+      title,
+      sources: [{ src, type: mimeType }],
+      ...(poster ? { poster } : {}),
+    }),
+    [mimeType, poster, src, title],
+  );
+  const options = useMemo<PlyrOptions>(
+    () => ({
+      ...(ratio ? { ratio } : {}),
+      controls: LOCAL_VIDEO_PLAYER_CONTROLS,
+    }),
+    [ratio],
+  );
+
+  return <Plyr source={source} options={options} />;
+}
+
 function VideoDetailBody({ asset }: { asset: Asset }) {
   const mediaRatio = useMemo(
     () => getAssetMediaRatio(asset),
     [asset.imageHeight, asset.imageWidth, asset.thumbnailHeight, asset.thumbnailWidth],
   );
-  const source = useMemo<PlyrSource | null>(() => {
-    if (!asset.mediaUrl) {
-      return null;
-    }
-
-    return {
-      type: "video",
-      title: asset.title,
-      sources: [
-        {
-          src: asset.mediaUrl,
-          type: getVideoMimeType(asset.fileExt),
-        },
-      ],
-      ...(asset.thumbnailUrl ? { poster: asset.thumbnailUrl } : {}),
-    };
-  }, [asset.fileExt, asset.mediaUrl, asset.thumbnailUrl, asset.title]);
-  const options = useMemo<PlyrOptions>(
-    () => ({
-      ...(mediaRatio ? { ratio: mediaRatio.plyr } : {}),
-      controls: [
-        "play-large",
-        "play",
-        "progress",
-        "current-time",
-        "mute",
-        "volume",
-        "settings",
-        "pip",
-        "airplay",
-        "fullscreen",
-      ],
-    }),
-    [mediaRatio],
-  );
-
   return (
     <div className="max-w-[780px]">
       <div
         className="overflow-hidden rounded-[13px] border border-zinc-200 bg-black shadow-sm"
         style={mediaRatio ? { aspectRatio: mediaRatio.css } : undefined}
       >
-        {source ? <Plyr source={source} options={options} /> : <VisualBlock asset={asset} />}
+        {asset.mediaUrl ? (
+          <LocalVideoPlayer
+            src={asset.mediaUrl}
+            title={asset.title}
+            mimeType={getVideoMimeType(asset.fileExt)}
+            poster={asset.thumbnailUrl}
+            ratio={mediaRatio?.plyr}
+          />
+        ) : (
+          <VisualBlock asset={asset} />
+        )}
       </div>
     </div>
   );
@@ -2498,7 +2594,8 @@ function AssetDetail({
   const PreferredOpenIcon = preferredOpenTarget.icon;
 
   // text/file assets → open specific file in editor; media/link → open vault root
-  const shouldOpenFileInEditor = asset.kind === "markdown" || asset.kind === "file";
+  const shouldOpenFileInEditor =
+    asset.kind === "markdown" || asset.kind === "post" || asset.kind === "file";
   const canOpenInDefaultMediaApp = asset.kind === "image" || asset.kind === "video";
   const DefaultMediaOpenIcon = asset.kind === "image" ? ImageIcon : Play;
 
@@ -2674,7 +2771,9 @@ function AssetDetail({
 
       {/* ── Body ── */}
       <ScrollArea className="min-h-0 flex-1" viewportClassName="px-10 py-7">
-        {asset.kind === "markdown" && <MarkdownDetailBody asset={asset} />}
+        {(asset.kind === "markdown" || asset.kind === "post") && (
+          <MarkdownDetailBody asset={asset} />
+        )}
         {asset.kind === "image" && <ImageDetailBody asset={asset} />}
         {asset.kind === "video" && <VideoDetailBody asset={asset} />}
         {(asset.kind === "web" || asset.kind === "link") && (

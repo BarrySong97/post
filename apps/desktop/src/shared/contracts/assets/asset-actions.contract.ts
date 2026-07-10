@@ -13,6 +13,7 @@ export const editorTargetValues = ["vscode", "cursor", "zed"] as const;
 export const vaultLocationTargetValues = [...editorTargetValues, "finder"] as const;
 
 export const assetByIdInputSchema = idInputSchema;
+export const deleteAssetInputSchema = idInputSchema;
 export const assetMarkdownContentInputSchema = idInputSchema;
 export const openFileInputSchema = idInputSchema;
 export const copyAssetPathInputSchema = idInputSchema;

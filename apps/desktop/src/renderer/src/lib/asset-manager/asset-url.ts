@@ -18,7 +18,7 @@ export function buildVaultFileUrl(vaultId: string, relativePath: string) {
   return `post-file://vault/${encodeURIComponent(vaultId)}/${encoded}`;
 }
 
-export function resolveMarkdownImageUrl(
+export function resolveMarkdownAssetUrl(
   src: string | undefined,
   vaultId: string,
   fileDir: string,

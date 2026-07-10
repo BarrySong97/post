@@ -1,6 +1,25 @@
 {
   "sourceRoots": ["apps", "packages", "crates", "scripts"],
   "ignoreFiles": ["apps/desktop/src/renderer/src/routeTree.gen.ts", "apps/website/next-env.d.ts"],
+  "ignoreDirs": [
+    "node_modules",
+    ".git",
+    "dist",
+    "dist_chrome",
+    "build",
+    ".next",
+    "out",
+    "coverage",
+    ".turbo",
+    ".cache",
+    "vendor",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".idea",
+    ".vscode",
+    "templates"
+  ],
   "nonModuleDirs": [
     "scripts",
     "test",

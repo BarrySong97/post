@@ -12,7 +12,14 @@ import { optionalVaultInputSchema } from "../common/id.contract";
 export const ASSET_LIST_DEFAULT_LIMIT = 80;
 export const ASSET_LIST_MAX_LIMIT = 160;
 
-export const assetListTypeFilterValues = ["markdown", "image", "video", "link", "file"] as const;
+export const assetListTypeFilterValues = [
+  "markdown",
+  "post",
+  "image",
+  "video",
+  "link",
+  "file",
+] as const;
 export const assetListTimeFilterValues = ["any", "today", "week", "m30"] as const;
 export const assetListSourceTypeValues = ["vault", "external_file", "url"] as const;
 export const assetListTagMatchValues = ["and", "or"] as const;

@@ -1,0 +1,8 @@
+{
+  "env": {
+    "__DEV__": "true"
+  },
+  "watch": ["src", "manifest.json", "vite.config.chrome.ts"],
+  "ext": "ts,json",
+  "exec": "vite build --config vite.config.chrome.ts --mode development"
+}

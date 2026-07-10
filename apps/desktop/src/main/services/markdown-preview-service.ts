@@ -24,7 +24,7 @@ export async function readMarkdownContent(assetId: string) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
   }
 
-  if (row.asset.kind !== "markdown") {
+  if (row.asset.kind !== "markdown" && row.asset.kind !== "post") {
     throw new TRPCError({ code: "BAD_REQUEST", message: "Asset is not a Markdown file" });
   }
 
@@ -64,14 +64,15 @@ export async function readMarkdownContent(assetId: string) {
 function resolveObsidianEmbeds(content: string, vaultId: string, fileDir: string): string {
   const imageExts = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "avif", "bmp"]);
   return content.replace(/!\[\[([^\]]+)\]\]/g, (match, inner: string) => {
-    const name = inner.trim();
-    const ext = name.split(".").pop()?.toLowerCase() ?? "";
+    const name = inner.trim().split("|")[0]?.split("#")[0]?.trim() ?? "";
+    const fileName = path.posix.basename(name);
+    const ext = fileName.split(".").pop()?.toLowerCase() ?? "";
     if (!imageExts.has(ext)) return match;
 
     const file = getDatabase()
       .select({ relativePath: schema.assetFiles.relativePath })
       .from(schema.assetFiles)
-      .where(and(eq(schema.assetFiles.vaultId, vaultId), eq(schema.assetFiles.fileName, name)))
+      .where(and(eq(schema.assetFiles.vaultId, vaultId), eq(schema.assetFiles.fileName, fileName)))
       .get();
 
     if (!file) return match;
@@ -88,7 +89,7 @@ function resolveObsidianEmbeds(content: string, vaultId: string, fileDir: string
     }
     const ups = dirParts.length - commonLen;
     const rel = [...Array(ups).fill(".."), ...fileParts.slice(commonLen)].join("/");
-    return `![${name}](${rel})`;
+    return `![${fileName}](${rel})`;
   });
 }
 

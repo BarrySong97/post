@@ -7,7 +7,14 @@
 
 import { getStringArray, uniqueStrings } from "../utils";
 
-export const assetListTypeFilterValues = ["markdown", "image", "video", "link", "file"] as const;
+export const assetListTypeFilterValues = [
+  "markdown",
+  "post",
+  "image",
+  "video",
+  "link",
+  "file",
+] as const;
 export const assetListTimeFilterValues = ["any", "today", "week", "m30"] as const;
 export const assetListSourceTypeValues = ["vault", "external_file", "url"] as const;
 export const assetListTagMatchValues = ["and", "or"] as const;

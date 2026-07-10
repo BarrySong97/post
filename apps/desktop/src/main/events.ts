@@ -40,7 +40,7 @@ export type AppEvent =
   | {
       type: "ledger.changed";
       emittedAt: number;
-      source: "post-cli";
+      source: "post-cli" | "post-extension";
       dbPath: string;
       changed: string[];
       operationCount: number;
