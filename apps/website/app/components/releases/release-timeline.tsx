@@ -20,10 +20,24 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.3",
+    date: "2026-07-11",
+    head: "Hidden files are no longer imported as assets, with a one-time cleanup of previously imported ones.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Desktop",
+        items: [
+          "Hidden files and folders (names starting with a dot, such as .git, .obsidian and .DS_Store) are no longer imported into your asset library.",
+          "Updating automatically removes asset records that earlier versions imported from these hidden paths; the underlying files in your vault are left untouched.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.0",
     date: "2026-07-04",
     head: "Initial Mac release path for Post desktop updates and public downloads.",
-    badge: "latest",
     groups: [
       {
         title: "Desktop",
