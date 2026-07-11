@@ -37,14 +37,14 @@ export type SaveExtensionPostInput = {
   pageTitle?: string;
   capturedAt?: number;
   visibleSnapshot?: TwitterPostVisibleSnapshot;
-  tagId: string;
+  tagId?: string;
   vaultId?: string;
 };
 
 export type SaveExtensionPostResult = {
   assetId: string;
   fileId: string;
-  tagId: string;
+  tagId: string | null;
   vaultId: string;
   relativePath: string;
   title: string;
@@ -60,7 +60,12 @@ type ImportedMedia = {
   sourceUrl: string;
 };
 
-function getTagOrThrow(tagId: string, vaultId: string): TagRecord {
+// Resolve an optional tag: null when none was chosen (post lands untagged in Inbox);
+// throws only when a tag was requested but does not exist in the vault.
+function resolveTag(tagId: string | undefined, vaultId: string): TagRecord | null {
+  if (!tagId) {
+    return null;
+  }
   const tag = getDatabase()
     .select()
     .from(schema.tags)
@@ -367,7 +372,7 @@ export async function saveExtensionPost(
   if (!vault) {
     throw new Error("No active vault selected.");
   }
-  const tag = getTagOrThrow(input.tagId, vault.id);
+  const tag = resolveTag(input.tagId, vault.id);
   const task = backgroundTaskManager.createTask({
     type: "import",
     title: "Importing X post",
@@ -496,10 +501,12 @@ export async function saveExtensionPost(
           .run();
       }
 
-      tx.insert(schema.assetTags)
-        .values({ assetId, tagId: tag.id, createdAt: now })
-        .onConflictDoNothing()
-        .run();
+      if (tag) {
+        tx.insert(schema.assetTags)
+          .values({ assetId, tagId: tag.id, createdAt: now })
+          .onConflictDoNothing()
+          .run();
+      }
 
       tx.insert(schema.markdownCache)
         .values({
@@ -627,7 +634,7 @@ export async function saveExtensionPost(
     return {
       assetId,
       fileId,
-      tagId: tag.id,
+      tagId: tag?.id ?? null,
       vaultId: vault.id,
       relativePath,
       title,

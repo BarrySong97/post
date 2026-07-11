@@ -13,6 +13,33 @@ import type {
   AssetTimeFilter,
 } from "@/store/asset-manager-atoms";
 
+export function extractDomain(rawUrl: string | null | undefined): string | undefined {
+  if (!rawUrl) {
+    return undefined;
+  }
+
+  try {
+    return new URL(rawUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return undefined;
+  }
+}
+
+// Hoisted like ASSET_TIME_FORMATTER: reused once per post asset per hydrate batch.
+const POST_DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
+  month: "short",
+  day: "numeric",
+});
+
+function formatPostDate(value: unknown): string | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  const date = value instanceof Date ? value : new Date(value as string | number);
+  return Number.isNaN(date.getTime()) ? undefined : POST_DATE_FORMATTER.format(date);
+}
+
 export function getTagHue(name: string): number {
   let hash = 0;
   for (let index = 0; index < name.length; index += 1) {
@@ -95,13 +122,17 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
   const mediaUrl =
     kind === "image" || kind === "video" ? buildAssetFileUrl(asset.id, asset.fileName) : undefined;
   const usesOriginalAsThumbnail = kind === "image" && extension.toLowerCase() === "svg";
+  // Web assets carry their OG cover image on the shared imageCache thumbnail.
+  const hasCachedThumbnail =
+    (kind === "image" || kind === "video" || kind === "web") &&
+    asset.image?.status === "ready" &&
+    Boolean(asset.image.thumbnailPath);
   const thumbnailUrl = usesOriginalAsThumbnail
     ? mediaUrl
-    : (kind === "image" || kind === "video") &&
-        asset.image?.status === "ready" &&
-        asset.image.thumbnailPath
+    : hasCachedThumbnail
       ? buildAssetThumbnailUrl(asset.id, asset.fileName)
       : undefined;
+  const ogImage = kind === "web" && hasCachedThumbnail;
   const metaPrefix = {
     markdown: "Markdown",
     post: "X Post",
@@ -142,6 +173,19 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     related: asset.relatedIds,
     fileExt: kind === "file" || kind === "image" || kind === "video" ? extension : undefined,
     imageCount: kind === "image" ? 1 : undefined,
+    ogImage,
+    // >150/255 reads as a light bottom strip; leave undefined when luma is uncaptured.
+    coverIsLight:
+      asset.image?.thumbnailLuma === null || asset.image?.thumbnailLuma === undefined
+        ? undefined
+        : asset.image.thumbnailLuma > 150,
+    platform: asset.post?.platform,
+    authorName: asset.post?.authorName ?? undefined,
+    authorHandle: asset.post?.authorHandle ?? undefined,
+    publishedTime: formatPostDate(asset.post?.publishedAt),
+    url: asset.post?.canonicalUrl ?? asset.web?.url ?? undefined,
+    domain:
+      extractDomain(asset.post?.canonicalUrl) ?? asset.web?.domain ?? extractDomain(asset.web?.url),
   };
 }
 

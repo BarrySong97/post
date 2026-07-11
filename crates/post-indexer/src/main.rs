@@ -185,6 +185,7 @@ struct ThumbnailTarget {
     cached_source_size_bytes: Option<u64>,
     cached_source_mtime_ms: Option<i64>,
     cached_source_quick_fingerprint: Option<String>,
+    cached_thumbnail_luma: Option<i64>,
 }
 
 struct GeneratedThumbnail {
@@ -194,6 +195,7 @@ struct GeneratedThumbnail {
     thumbnail_width: u32,
     thumbnail_height: u32,
     thumbnail_size_bytes: u64,
+    bottom_luma: u8,
 }
 
 struct MarkdownLink {
@@ -1450,7 +1452,8 @@ SELECT
   REPLACE(REPLACE(REPLACE(COALESCE(ic.error_message, ''), char(9), ' '), char(10), ' '), char(13), ' '),
   COALESCE(ic.source_size_bytes, -1),
   COALESCE(ic.source_mtime_ms, -1),
-  COALESCE(ic.source_quick_fingerprint, '')
+  COALESCE(ic.source_quick_fingerprint, ''),
+  COALESCE(ic.thumbnail_luma, -1)
 FROM asset_files af
 INNER JOIN assets a ON a.id = af.asset_id
 LEFT JOIN image_cache ic ON ic.asset_id = af.asset_id
@@ -1467,7 +1470,7 @@ ORDER BY af.mtime_ms DESC
 
     for line in output.lines().filter(|line| !line.trim().is_empty()) {
         let columns: Vec<_> = line.split('\t').collect();
-        if columns.len() != 14 {
+        if columns.len() != 15 {
             return Err(format!(
                 "unexpected sqlite row while loading thumbnail targets: {line}"
             ));
@@ -1488,6 +1491,7 @@ ORDER BY af.mtime_ms DESC
             cached_source_size_bytes: parse_optional_u64(columns[11])?,
             cached_source_mtime_ms: parse_optional_i64(columns[12])?,
             cached_source_quick_fingerprint: none_if_empty(columns[13]),
+            cached_thumbnail_luma: parse_optional_i64(columns[14])?,
         });
     }
 
@@ -1511,6 +1515,9 @@ fn thumbnail_cache_matches(target: &ThumbnailTarget) -> bool {
         && target.cached_source_size_bytes == Some(target.size_bytes)
         && target.cached_source_mtime_ms == Some(target.mtime_ms)
         && target.cached_source_quick_fingerprint.as_deref() == Some(&target.quick_fingerprint)
+        // Regenerate ready thumbnails cached before thumbnail_luma existed, so the
+        // overlay-text luma backfills once without touching unchanged sources otherwise.
+        && target.cached_thumbnail_luma.is_some()
 }
 
 fn thumbnail_source_matches(target: &ThumbnailTarget) -> bool {
@@ -1606,6 +1613,7 @@ fn persist_thumbnail_from_image(
     );
     let rgb = thumbnail.to_rgb8();
     let (thumbnail_width, thumbnail_height) = rgb.dimensions();
+    let bottom_luma = average_bottom_luma(&rgb);
 
     let vault_dir = ensure_thumbnail_vault_dir(thumbnail_root, &config.vault_id)?;
     let thumbnail_path = vault_dir.join(format!(
@@ -1649,7 +1657,43 @@ fn persist_thumbnail_from_image(
         thumbnail_width,
         thumbnail_height,
         thumbnail_size_bytes,
+        bottom_luma,
     })
+}
+
+/// Average perceptual luma (0-255) of the thumbnail's bottom ~30%, where the card's
+/// overlay text sits. Rec. 601 weights on a subsampled grid keep this cheap.
+fn average_bottom_luma(rgb: &image::RgbImage) -> u8 {
+    let (width, height) = rgb.dimensions();
+    if width == 0 || height == 0 {
+        return 128;
+    }
+
+    let start_y = height - (height * 3 / 10).max(1);
+    let step_x = (width / 64).max(1);
+    let step_y = ((height - start_y) / 24).max(1);
+
+    let mut total: u64 = 0;
+    let mut samples: u64 = 0;
+    let mut y = start_y;
+    while y < height {
+        let mut x = 0;
+        while x < width {
+            let pixel = rgb.get_pixel(x, y).0;
+            // Rec. 601 luma, integer weights summing to 256.
+            let luma = (77 * pixel[0] as u32 + 150 * pixel[1] as u32 + 29 * pixel[2] as u32) >> 8;
+            total += luma as u64;
+            samples += 1;
+            x += step_x;
+        }
+        y += step_y;
+    }
+
+    if samples == 0 {
+        return 128;
+    }
+
+    (total / samples) as u8
 }
 
 fn ensure_thumbnail_vault_dir(thumbnail_root: &Path, vault_id: &str) -> Result<PathBuf, String> {
@@ -2738,10 +2782,10 @@ fn push_image_cache_ready_sql(
         "\
 INSERT INTO image_cache (
   asset_id, vault_id, file_id, width, height, thumbnail_path, thumbnail_width,
-  thumbnail_height, thumbnail_size_bytes, thumbnail_format, source_size_bytes,
+  thumbnail_height, thumbnail_size_bytes, thumbnail_format, thumbnail_luma, source_size_bytes,
   source_mtime_ms, source_quick_fingerprint, status, error_message, generated_at, updated_at
 ) VALUES (
-  {}, {}, {}, {}, {}, {}, {}, {}, {}, 'jpeg', {}, {}, {}, 'ready', NULL, {now}, {now}
+  {}, {}, {}, {}, {}, {}, {}, {}, {}, 'jpeg', {}, {}, {}, {}, 'ready', NULL, {now}, {now}
 )
 ON CONFLICT(asset_id) DO UPDATE SET
   vault_id = excluded.vault_id,
@@ -2753,6 +2797,7 @@ ON CONFLICT(asset_id) DO UPDATE SET
   thumbnail_height = excluded.thumbnail_height,
   thumbnail_size_bytes = excluded.thumbnail_size_bytes,
   thumbnail_format = excluded.thumbnail_format,
+  thumbnail_luma = excluded.thumbnail_luma,
   source_size_bytes = excluded.source_size_bytes,
   source_mtime_ms = excluded.source_mtime_ms,
   source_quick_fingerprint = excluded.source_quick_fingerprint,
@@ -2769,6 +2814,7 @@ ON CONFLICT(asset_id) DO UPDATE SET
         generated.thumbnail_width,
         generated.thumbnail_height,
         generated.thumbnail_size_bytes,
+        generated.bottom_luma,
         target.size_bytes,
         target.mtime_ms,
         sql_text(&target.quick_fingerprint),
@@ -3714,6 +3760,24 @@ fn json_array(values: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn average_bottom_luma_reflects_bottom_brightness() {
+        let white = image::RgbImage::from_pixel(32, 32, image::Rgb([255, 255, 255]));
+        assert!(average_bottom_luma(&white) > 240);
+
+        let black = image::RgbImage::from_pixel(32, 32, image::Rgb([0, 0, 0]));
+        assert!(average_bottom_luma(&black) < 15);
+
+        // Dark top, bright bottom: the sampled bottom strip should read as light.
+        let mut split = image::RgbImage::from_pixel(32, 32, image::Rgb([0, 0, 0]));
+        for y in 24..32 {
+            for x in 0..32 {
+                split.put_pixel(x, y, image::Rgb([255, 255, 255]));
+            }
+        }
+        assert!(average_bottom_luma(&split) > 200);
+    }
 
     #[test]
     fn parses_wiki_links_and_embeds() {

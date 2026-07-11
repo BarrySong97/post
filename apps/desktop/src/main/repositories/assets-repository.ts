@@ -119,6 +119,8 @@ type AssetJoinedRow = {
   vault: typeof schema.vaults.$inferSelect;
   markdown: typeof schema.markdownCache.$inferSelect | null;
   image: typeof schema.imageCache.$inferSelect | null;
+  post: typeof schema.postCache.$inferSelect | null;
+  web: typeof schema.webCache.$inferSelect | null;
 };
 
 export function getAssetRows(vaultId?: string, assetId?: string) {
@@ -136,12 +138,16 @@ export function getAssetRows(vaultId?: string, assetId?: string) {
       vault: schema.vaults,
       markdown: schema.markdownCache,
       image: schema.imageCache,
+      post: schema.postCache,
+      web: schema.webCache,
     })
     .from(schema.assets)
     .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
     .innerJoin(schema.vaults, eq(schema.vaults.id, schema.assets.vaultId))
     .leftJoin(schema.markdownCache, eq(schema.markdownCache.assetId, schema.assets.id))
     .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
+    .leftJoin(schema.postCache, eq(schema.postCache.assetId, schema.assets.id))
+    .leftJoin(schema.webCache, eq(schema.webCache.assetId, schema.assets.id))
     .where(and(...filters))
     .orderBy(desc(schema.assets.updatedAt))
     .all();
@@ -216,6 +222,24 @@ export function attachRelations(rows: AssetJoinedRow[]) {
     vaultName: row.vault.name,
     markdown: row.markdown,
     image: row.image,
+    // Only the source-attribution fields the grid card needs. The heavy JSON columns
+    // (mediaJson, quotedPostJson, pollJson) stay out of the hydrate payload.
+    post: row.post
+      ? {
+          platform: row.post.platform,
+          authorName: row.post.authorName,
+          authorHandle: row.post.authorHandle,
+          canonicalUrl: row.post.canonicalUrl,
+          publishedAt: row.post.publishedAt,
+        }
+      : null,
+    web: row.web
+      ? {
+          url: row.web.url,
+          domain: row.web.domain,
+          siteName: row.web.siteName,
+        }
+      : null,
     tags: tagsByAsset.get(row.asset.id) ?? [],
     relatedIds: Array.from(relatedByAsset.get(row.asset.id) ?? []),
   }));
@@ -236,12 +260,16 @@ export function getAssetRowsByIds(assetIds: readonly string[]) {
       vault: schema.vaults,
       markdown: schema.markdownCache,
       image: schema.imageCache,
+      post: schema.postCache,
+      web: schema.webCache,
     })
     .from(schema.assets)
     .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
     .innerJoin(schema.vaults, eq(schema.vaults.id, schema.assets.vaultId))
     .leftJoin(schema.markdownCache, eq(schema.markdownCache.assetId, schema.assets.id))
     .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
+    .leftJoin(schema.postCache, eq(schema.postCache.assetId, schema.assets.id))
+    .leftJoin(schema.webCache, eq(schema.webCache.assetId, schema.assets.id))
     .where(
       and(
         inArray(schema.assets.id, uniqueAssetIds),
@@ -436,6 +464,8 @@ export function getAssetPage(input: AssetListPageInput) {
       vault: schema.vaults,
       markdown: schema.markdownCache,
       image: schema.imageCache,
+      post: schema.postCache,
+      web: schema.webCache,
       sortValue,
     })
     .from(schema.assets)
@@ -443,6 +473,8 @@ export function getAssetPage(input: AssetListPageInput) {
     .innerJoin(schema.vaults, eq(schema.vaults.id, schema.assets.vaultId))
     .leftJoin(schema.markdownCache, eq(schema.markdownCache.assetId, schema.assets.id))
     .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
+    .leftJoin(schema.postCache, eq(schema.postCache.assetId, schema.assets.id))
+    .leftJoin(schema.webCache, eq(schema.webCache.assetId, schema.assets.id))
     .where(and(...whereConditions))
     .orderBy(
       isDescending ? desc(sortValue) : asc(sortValue),

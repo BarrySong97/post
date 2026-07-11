@@ -32,7 +32,7 @@ export type SaveExtensionVideoInput = {
   pageTitle?: string;
   tweetId?: string;
   tweetUrl?: string;
-  tagId: string;
+  tagId?: string;
   vaultId?: string;
   destinationDir?: string;
   fileStem?: string;
@@ -42,7 +42,7 @@ export type SaveExtensionVideoInput = {
 export type SaveExtensionVideoResult = {
   assetId: string;
   fileId: string;
-  tagId: string;
+  tagId: string | null;
   vaultId: string;
   relativePath: string;
   title: string;
@@ -397,7 +397,13 @@ async function chooseRelativePath(
   }
 }
 
-function getTagOrThrow(tagId: string, vaultId: string): TagRecord {
+// Resolve an optional tag: null when none was chosen (asset lands untagged in Inbox);
+// throws only when a tag was requested but does not exist in the vault.
+function resolveTag(tagId: string | undefined, vaultId: string): TagRecord | null {
+  if (!tagId) {
+    return null;
+  }
+
   const tag = getDatabase()
     .select()
     .from(schema.tags)
@@ -450,7 +456,7 @@ export async function saveExtensionVideo(
   backgroundTaskManager.startTask(task.id);
 
   try {
-    const tag = getTagOrThrow(input.tagId, vault.id);
+    const tag = resolveTag(input.tagId, vault.id);
     const video = await fetchVideo(input, (progress) => {
       backgroundTaskManager.updateTask(task.id, {
         progress: {
@@ -467,11 +473,13 @@ export async function saveExtensionVideo(
     const existing = findExistingVideoByHash(vault.id, contentHash);
 
     if (existing) {
-      getDatabase()
-        .insert(schema.assetTags)
-        .values({ assetId: existing.asset.id, tagId: tag.id, createdAt: now })
-        .onConflictDoNothing()
-        .run();
+      if (tag) {
+        getDatabase()
+          .insert(schema.assetTags)
+          .values({ assetId: existing.asset.id, tagId: tag.id, createdAt: now })
+          .onConflictDoNothing()
+          .run();
+      }
 
       getDatabase()
         .update(schema.assets)
@@ -484,7 +492,7 @@ export async function saveExtensionVideo(
       return {
         assetId: existing.asset.id,
         fileId: existing.file.id,
-        tagId: tag.id,
+        tagId: tag?.id ?? null,
         vaultId: vault.id,
         relativePath: existing.file.relativePath,
         title: existing.asset.title,
@@ -559,7 +567,9 @@ export async function saveExtensionVideo(
         .onConflictDoNothing()
         .run();
 
-      tx.insert(schema.assetTags).values({ assetId, tagId: tag.id, createdAt: now }).run();
+      if (tag) {
+        tx.insert(schema.assetTags).values({ assetId, tagId: tag.id, createdAt: now }).run();
+      }
     });
 
     backgroundTaskManager.updateTask(task.id, {
@@ -576,7 +586,7 @@ export async function saveExtensionVideo(
     return {
       assetId,
       fileId,
-      tagId: tag.id,
+      tagId: tag?.id ?? null,
       vaultId: vault.id,
       relativePath,
       title,

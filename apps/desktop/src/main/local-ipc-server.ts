@@ -82,7 +82,7 @@ type ExtensionImageSaveAck = {
     id: string;
     title: string;
     relativePath: string;
-    tagId: string;
+    tagId: string | null;
   };
 };
 
@@ -94,7 +94,7 @@ type ExtensionVideoSaveAck = {
     id: string;
     title: string;
     relativePath: string;
-    tagId: string;
+    tagId: string | null;
   };
 };
 
@@ -106,7 +106,7 @@ type ExtensionPostSaveAck = {
     id: string;
     title: string;
     relativePath: string;
-    tagId: string;
+    tagId: string | null;
     status: "created" | "updated";
     childAssetIds: string[];
     warnings: string[];

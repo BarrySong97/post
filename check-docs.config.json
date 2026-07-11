@@ -6,6 +6,7 @@
     ".git",
     "dist",
     "dist_chrome",
+    "dist_chrome_prod",
     "build",
     ".next",
     "out",
