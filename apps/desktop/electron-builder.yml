@@ -26,7 +26,7 @@ publish:
   provider: github
   owner: BarrySong97
   repo: post
-  releaseType: draft
+  releaseType: release
 mac:
   icon: resources/icons/Post.icns
   target:
