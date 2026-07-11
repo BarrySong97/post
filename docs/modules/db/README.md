@@ -25,7 +25,7 @@ X Post captures use normal `assets`, `asset_files`, `asset_tags`, `asset_links`,
 
 ## Notes
 
-- Run `pnpm db:generate` after schema changes.
+- Run `pnpm db:generate` after schema changes. For data-only cleanups with no schema change (e.g. `0010_prune_hidden_assets`, a one-time delete of assets ingested from hidden `.`-prefixed paths), use `pnpm exec drizzle-kit generate --custom` and rely on `assets` cascade to clear child rows.
 - Commit generated SQL and Drizzle metadata together.
 - Keep WAL and foreign keys enabled on every connection.
 - Treat string union arrays such as `assetKinds` and `assetStatuses` as public contracts for renderer code and indexer behavior.

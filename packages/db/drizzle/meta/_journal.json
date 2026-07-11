@@ -71,6 +71,13 @@
       "when": 1783737350634,
       "tag": "0009_modern_starbolt",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1783767616757,
+      "tag": "0010_prune_hidden_assets",
+      "breakpoints": true
     }
   ]
 }

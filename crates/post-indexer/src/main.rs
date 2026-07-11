@@ -3523,8 +3523,12 @@ fn truncate_chars(text: &str, max: usize) -> String {
 
 fn should_skip(file_name: &OsStr) -> bool {
     match file_name.to_str() {
-        Some(".git" | "node_modules" | ".DS_Store") => true,
-        Some(value) => value.starts_with(".post-import-"),
+        // Skip every hidden entry (dotfile or dot-directory) so vault-adjacent
+        // tooling folders like .git, .turbo, .obsidian and stray dotfiles never
+        // enter the asset index. Skipping a directory also skips its whole subtree.
+        // node_modules is not hidden but must stay excluded.
+        Some("node_modules") => true,
+        Some(value) => value.starts_with('.'),
         None => false,
     }
 }
@@ -3777,6 +3781,26 @@ mod tests {
             }
         }
         assert!(average_bottom_luma(&split) > 200);
+    }
+
+    #[test]
+    fn skips_hidden_entries_and_node_modules() {
+        // Hidden dotfiles and dot-directories are excluded wholesale.
+        assert!(should_skip(OsStr::new(".git")));
+        assert!(should_skip(OsStr::new(".DS_Store")));
+        assert!(should_skip(OsStr::new(".turbo")));
+        assert!(should_skip(OsStr::new(".gitignore")));
+        assert!(should_skip(OsStr::new(".post-import-123")));
+        // node_modules is not hidden but stays excluded.
+        assert!(should_skip(OsStr::new("node_modules")));
+        // Ordinary files and folders (including ones with a dotted extension) pass.
+        assert!(!should_skip(OsStr::new("photo.png")));
+        assert!(!should_skip(OsStr::new("notes")));
+        assert!(!should_skip(OsStr::new("archive.tar.gz")));
+        // A hidden component anywhere in a relative path is skipped.
+        assert!(should_skip_relative_path("a/.obsidian/workspace.json"));
+        assert!(should_skip_relative_path(".config/app.md"));
+        assert!(!should_skip_relative_path("docs/guide.md"));
     }
 
     #[test]
