@@ -1,0 +1,1 @@
+ALTER TABLE `image_cache` ADD `thumbnail_luma` integer;

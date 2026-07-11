@@ -199,6 +199,10 @@ export const imageCache = sqliteTable(
     thumbnailHeight: integer("thumbnail_height"),
     thumbnailSizeBytes: integer("thumbnail_size_bytes"),
     thumbnailFormat: text("thumbnail_format"),
+    // Average luma (0-255) of the thumbnail's bottom strip, used to flip the card's
+    // overlay text between dark-on-light and light-on-dark. Null for pre-existing
+    // thumbnails until they regenerate.
+    thumbnailLuma: integer("thumbnail_luma"),
     sourceSizeBytes: integer("source_size_bytes"),
     sourceMtimeMs: integer("source_mtime_ms", { mode: "timestamp_ms" }),
     sourceQuickFingerprint: text("source_quick_fingerprint"),
@@ -371,6 +375,27 @@ export const postCache = sqliteTable(
     index("post_cache_vault_captured_at_idx").on(table.vaultId, table.capturedAt),
     index("post_cache_author_handle_idx").on(table.authorHandle),
   ],
+);
+
+// Normalized fields for bookmarked web pages (kind === "web"). The OG cover image rides
+// on the shared imageCache thumbnail; this table holds the page URL and display domain.
+export const webCache = sqliteTable(
+  "web_cache",
+  {
+    assetId: text("asset_id")
+      .primaryKey()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    vaultId: text("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    domain: text("domain"),
+    siteName: text("site_name"),
+    description: text("description"),
+    capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("web_cache_vault_id_idx").on(table.vaultId)],
 );
 
 export const syncRuns = sqliteTable(

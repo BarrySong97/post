@@ -44,6 +44,15 @@ export type Asset = {
   fileExt?: string;
   domain?: string;
   imageCount?: number;
+  // Whether the cover's bottom strip is light, so overlay text flips to dark-on-light.
+  // Undefined when the thumbnail predates luma capture (renderer falls back to light text).
+  coverIsLight?: boolean;
+  // Source attribution for "quote"-style assets (X posts, and later book/AI excerpts).
+  // Populated from postCache; absent for local and file assets.
+  platform?: string;
+  authorName?: string;
+  authorHandle?: string;
+  publishedTime?: string;
 };
 
 export type IndexedAsset = RouterOutputs["assets"]["hydrate"]["items"][number];

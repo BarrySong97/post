@@ -37,6 +37,7 @@ pnpm indexer:build
 - Keep CLI argument names and event shapes stable for Electron callers.
 - Keep parser and indexer version constants meaningful when behavior changes.
 - Thumbnail output must remain under the configured thumbnail root.
+- Thumbnail generation also records `image_cache.thumbnail_luma`, the average Rec. 601 luma of the thumbnail's bottom strip (`average_bottom_luma`), which the renderer uses to flip card overlay text between dark and light. Ready thumbnails cached before this column existed are treated as stale by `thumbnail_cache_matches` so the value backfills once.
 - Thumbnail target loading normalizes cached error text before parsing sqlite CLI output so previous ffmpeg failures cannot corrupt tab-delimited rows.
 - Thumbnail retry logic uses the explicit `ffmpeg executable unavailable` error marker. A missing candidate path mixed with a real ffmpeg media error must not make a corrupt or non-video source retryable.
 - Path handling must preserve vault-relative paths.

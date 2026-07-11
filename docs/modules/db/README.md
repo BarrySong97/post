@@ -29,4 +29,6 @@ X Post captures use normal `assets`, `asset_files`, `asset_tags`, `asset_links`,
 - Commit generated SQL and Drizzle metadata together.
 - Keep WAL and foreign keys enabled on every connection.
 - Treat string union arrays such as `assetKinds` and `assetStatuses` as public contracts for renderer code and indexer behavior.
+- `image_cache.thumbnail_luma` (nullable) holds the average luma of the thumbnail's bottom strip, written by the Rust indexer and read by the renderer for adaptive card overlay text; null means the thumbnail predates the column and will backfill on regeneration.
+- `web_cache` holds normalized fields for bookmarked web pages (`kind === "web"`): page url, display domain, site name, description. The OG cover image itself reuses the shared `image_cache` thumbnail rather than a dedicated column.
 - TypeScript source files in this package have AI file headers. Update them when schema or connection responsibilities move.

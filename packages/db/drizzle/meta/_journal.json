@@ -57,6 +57,20 @@
       "when": 1783677781381,
       "tag": "0007_open_azazel",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1783735087024,
+      "tag": "0008_wakeful_shape",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1783737350634,
+      "tag": "0009_modern_starbolt",
+      "breakpoints": true
     }
   ]
 }
