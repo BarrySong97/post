@@ -531,15 +531,55 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
   const heightCls = { short: "h-32", medium: "h-44", tall: "h-72" }[asset.height ?? "medium"];
   const isVideo = asset.kind === "video";
   const hasMediaThumbnail =
-    (asset.kind === "image" || asset.kind === "video") && asset.thumbnailUrl;
+    (asset.kind === "image" || asset.kind === "video" || asset.kind === "web") &&
+    asset.thumbnailUrl;
   const imageAspectRatio =
     hasMediaThumbnail && asset.imageWidth && asset.imageHeight
       ? `${asset.imageWidth} / ${asset.imageHeight}`
       : undefined;
 
+  const reduceMotion = useReducedMotion();
+  const canPreview = isVideo && Boolean(asset.mediaUrl) && !reduceMotion;
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const hoveringRef = useRef(false);
+  const [previewing, setPreviewing] = useState(false);
+
+  const startPreview = useCallback(() => {
+    const video = videoRef.current;
+    if (!canPreview || !video) {
+      return;
+    }
+
+    hoveringRef.current = true;
+    video.muted = true;
+    // play() rejects if the tab is backgrounded or autoplay is blocked; the thumbnail
+    // simply stays visible in that case, so swallow the rejection.
+    void video.play().catch(() => undefined);
+  }, [canPreview]);
+
+  const stopPreview = useCallback(() => {
+    hoveringRef.current = false;
+    const video = videoRef.current;
+    setPreviewing(false);
+    if (video) {
+      video.pause();
+      video.currentTime = 0;
+    }
+  }, []);
+
+  // Reveal the video only once it actually has frames, so preload="none"'s loading gap
+  // shows the thumbnail rather than a black flash. Guard against a pointer that already left.
+  const handlePlaying = useCallback(() => {
+    if (hoveringRef.current) {
+      setPreviewing(true);
+    }
+  }, []);
+
   return (
     <div
       className={`relative ${imageAspectRatio ? "" : heightCls} overflow-hidden`}
+      onMouseEnter={canPreview ? startPreview : undefined}
+      onMouseLeave={canPreview ? stopPreview : undefined}
       style={{
         ...(imageAspectRatio ? { aspectRatio: imageAspectRatio } : {}),
         // Neutral gray loading placeholder shown behind lazy-loaded thumbnails (no accent hue).
@@ -560,9 +600,30 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
         />
       ) : null}
 
+      {canPreview ? (
+        <video
+          ref={videoRef}
+          src={asset.mediaUrl}
+          muted
+          loop
+          playsInline
+          preload="none"
+          tabIndex={-1}
+          aria-hidden
+          onPlaying={handlePlaying}
+          className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${
+            previewing ? "opacity-100" : "opacity-0"
+          }`}
+        />
+      ) : null}
+
       {isVideo ? (
         <>
-          <span className="absolute left-1/2 top-1/2 grid h-11 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[#1c1916]/45 text-white shadow-sm backdrop-blur-sm">
+          <span
+            className={`absolute left-1/2 top-1/2 grid h-11 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[#1c1916]/45 text-white shadow-sm backdrop-blur-sm transition-opacity duration-200 ${
+              previewing ? "opacity-0" : "opacity-100"
+            }`}
+          >
             <Play size={17} fill="currentColor" />
           </span>
           {asset.duration ? (
@@ -572,6 +633,54 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
           ) : null}
         </>
       ) : null}
+
+      <AssetCardMediaOverlay asset={asset} />
+    </div>
+  );
+}
+
+// Always-on info layer embedded in a cover's bottom edge: primary tag (left) and, when
+// present, source (right). Pressed into the media so it never adds card height. Renders
+// nothing when there is nothing to say (untagged local media stays a clean image).
+function AssetCardMediaOverlay({ asset }: { asset: Asset }) {
+  const hasTag = asset.tagIds.length > 0;
+  const source = asset.domain;
+
+  if (!hasTag && !source) {
+    return null;
+  }
+
+  // Subtitle-style text with no container: flip dark-on-light for light covers, and
+  // light-on-dark otherwise (including unknown luma). Only the dark variant carries a
+  // glyph-hugging shadow — dark text on a light cover is print-grade contrast already,
+  // and a white glow reads as a halo on near-white images.
+  const isLight = asset.coverIsLight === true;
+  const textColor = isLight ? "text-[#3a3833]" : "text-white";
+  const textShadow = isLight
+    ? "none"
+    : "0 1px 3px rgba(20,17,14,0.65), 0 0 1px rgba(20,17,14,0.55)";
+  const dotLightness = isLight ? 0.58 : 0.8;
+
+  return (
+    <div
+      className={`pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 px-3 pb-2.5 pt-2 text-[11px] font-medium ${textColor}`}
+      style={{ textShadow }}
+    >
+      {hasTag ? (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span
+            className="h-[7px] w-[7px] shrink-0 rounded-full"
+            style={{
+              background: `oklch(${dotLightness} 0.15 ${getTagHue(asset.tag)})`,
+              boxShadow: isLight ? "none" : "0 1px 2px rgba(20,17,14,0.4)",
+            }}
+          />
+          <span className="min-w-0 truncate">{asset.tag}</span>
+        </span>
+      ) : (
+        <span />
+      )}
+      {source ? <span className="min-w-0 shrink-0 truncate opacity-90">{source}</span> : null}
     </div>
   );
 }
@@ -651,7 +760,12 @@ function AssetCardTagRow({ asset }: { asset: Asset }) {
   }
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+    <div
+      className={`mt-3 flex flex-wrap items-center gap-x-2 gap-y-1.5 ${
+        // Reserve room for the platform glyph anchored at the post card's bottom-right.
+        asset.kind === "post" ? "pr-5" : ""
+      }`}
+    >
       {hasTag ? <AssetCardPrimaryTagChip asset={asset} /> : null}
       {isPrivate ? (
         <Chip
@@ -661,6 +775,58 @@ function AssetCardTagRow({ asset }: { asset: Asset }) {
           <ShieldCheck size={11} />
           私密
         </Chip>
+      ) : null}
+    </div>
+  );
+}
+
+function PostBrandGlyph({ platform, size = 13 }: { platform?: string; size?: number }) {
+  if (platform === "x" || platform === "twitter") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+      </svg>
+    );
+  }
+
+  return <MessageSquareQuote size={size} aria-hidden />;
+}
+
+// Small round author avatar. Real profile photos are not captured yet, so this renders
+// an initial on an author-derived color. The platform marker lives at the card corner.
+function AssetCardAvatar({ asset }: { asset: Asset }) {
+  const seed = asset.authorHandle ?? asset.authorName ?? asset.platform ?? "post";
+  const initial =
+    (asset.authorName ?? asset.authorHandle ?? "")
+      .replace(/^@/, "")
+      .trim()
+      .charAt(0)
+      .toUpperCase() || "·";
+
+  return (
+    <span
+      className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-[10px] font-semibold text-white"
+      style={{ background: `oklch(0.62 0.15 ${getTagHue(seed)})` }}
+    >
+      {initial}
+    </span>
+  );
+}
+
+// Attribution header for "quote"-style assets: avatar + author name on the left, published
+// date pushed to the far right. The source is part of the content, so it renders inline.
+function AssetCardAttribution({ asset }: { asset: Asset }) {
+  const name =
+    asset.authorName ??
+    asset.authorHandle ??
+    (asset.platform === "x" || asset.platform === "twitter" ? "X Post" : (asset.domain ?? "帖子"));
+
+  return (
+    <div className="flex items-center gap-2 text-[12px] text-[#6c6a64]">
+      <AssetCardAvatar asset={asset} />
+      <span className="min-w-0 flex-1 truncate font-semibold text-[#1c1b19]">{name}</span>
+      {asset.publishedTime ? (
+        <time className="shrink-0 whitespace-nowrap">{asset.publishedTime}</time>
       ) : null}
     </div>
   );
@@ -720,15 +886,23 @@ const AssetCard = React.memo(function AssetCard({
           <AssetCardMedia asset={asset} />
         ) : (
           <div className="px-4 py-3.5">
-            <h2 className="line-clamp-2 text-[14px] font-semibold leading-[1.4] text-[#1c1b19]">
-              {asset.title}
-            </h2>
+            {asset.kind === "post" ? (
+              <AssetCardAttribution asset={asset} />
+            ) : (
+              <h2 className="line-clamp-2 text-[14px] font-semibold leading-[1.4] text-[#1c1b19]">
+                {asset.title}
+              </h2>
+            )}
 
             {asset.kind === "file" ? <AssetFilePreview asset={asset} /> : null}
             {showUrlRow ? <AssetUrlPreview asset={asset} /> : null}
 
             {asset.body ? (
-              <p className="mt-2 line-clamp-4 whitespace-pre-line text-[13px] leading-[1.6] text-[#6c6a64]">
+              <p
+                className={`line-clamp-4 whitespace-pre-line text-[13px] leading-[1.6] ${
+                  asset.kind === "post" ? "mt-2.5 text-[#1c1b19]" : "mt-2 text-[#6c6a64]"
+                }`}
+              >
                 {asset.body}
               </p>
             ) : null}
@@ -737,6 +911,11 @@ const AssetCard = React.memo(function AssetCard({
           </div>
         )}
       </button>
+      {asset.kind === "post" ? (
+        <span className="pointer-events-none absolute bottom-3 right-3.5 text-[#8a8478]">
+          <PostBrandGlyph platform={asset.platform} size={13} />
+        </span>
+      ) : null}
     </article>
   );
 });
