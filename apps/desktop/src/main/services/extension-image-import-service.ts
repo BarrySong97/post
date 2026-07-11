@@ -32,7 +32,7 @@ export type SaveExtensionImageInput = {
   srcUrl: string;
   pageUrl?: string;
   pageTitle?: string;
-  tagId: string;
+  tagId?: string;
   vaultId?: string;
   destinationDir?: string;
   fileStem?: string;
@@ -41,7 +41,7 @@ export type SaveExtensionImageInput = {
 export type SaveExtensionImageResult = {
   assetId: string;
   fileId: string;
-  tagId: string;
+  tagId: string | null;
   vaultId: string;
   relativePath: string;
   title: string;
@@ -158,7 +158,13 @@ async function chooseRelativePath(
   }
 }
 
-function getTagOrThrow(tagId: string, vaultId: string): TagRecord {
+// Resolve an optional tag: null when none was chosen (asset lands untagged in Inbox);
+// throws only when a tag was requested but does not exist in the vault.
+function resolveTag(tagId: string | undefined, vaultId: string): TagRecord | null {
+  if (!tagId) {
+    return null;
+  }
+
   const tag = getDatabase()
     .select()
     .from(schema.tags)
@@ -198,7 +204,7 @@ export async function saveExtensionImage(
     throw new Error("No active vault selected.");
   }
 
-  const tag = getTagOrThrow(input.tagId, vault.id);
+  const tag = resolveTag(input.tagId, vault.id);
   const image = await fetchImage(input);
   const now = new Date();
   const title = titleFromInput(input, image.url);
@@ -206,11 +212,13 @@ export async function saveExtensionImage(
   const existing = findExistingImageByHash(vault.id, contentHash);
 
   if (existing) {
-    getDatabase()
-      .insert(schema.assetTags)
-      .values({ assetId: existing.asset.id, tagId: tag.id, createdAt: now })
-      .onConflictDoNothing()
-      .run();
+    if (tag) {
+      getDatabase()
+        .insert(schema.assetTags)
+        .values({ assetId: existing.asset.id, tagId: tag.id, createdAt: now })
+        .onConflictDoNothing()
+        .run();
+    }
 
     getDatabase()
       .update(schema.assets)
@@ -221,7 +229,7 @@ export async function saveExtensionImage(
     return {
       assetId: existing.asset.id,
       fileId: existing.file.id,
-      tagId: tag.id,
+      tagId: tag?.id ?? null,
       vaultId: vault.id,
       relativePath: existing.file.relativePath,
       title: existing.asset.title,
@@ -295,7 +303,9 @@ export async function saveExtensionImage(
       .onConflictDoNothing()
       .run();
 
-    tx.insert(schema.assetTags).values({ assetId, tagId: tag.id, createdAt: now }).run();
+    if (tag) {
+      tx.insert(schema.assetTags).values({ assetId, tagId: tag.id, createdAt: now }).run();
+    }
   });
 
   void runThumbnailTask(vault, { assetIds: [assetId], limit: 1 }).catch((error) => {
@@ -305,7 +315,7 @@ export async function saveExtensionImage(
   return {
     assetId,
     fileId,
-    tagId: tag.id,
+    tagId: tag?.id ?? null,
     vaultId: vault.id,
     relativePath,
     title,

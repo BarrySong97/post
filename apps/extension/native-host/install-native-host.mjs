@@ -4,6 +4,8 @@
  * @role    Development helper that binds one unpacked extension ID to the local native host script.
  * @deps    Node fs/os/path/url built-ins.
  * @gotcha  Browsers require exact extension origins; rerun this when the unpacked extension ID changes.
+ *          Pass a comma-separated list to allow several extensions (e.g. the dev and prod builds)
+ *          to share the one native host.
  */
 
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
@@ -82,12 +84,19 @@ function getBrowserDirectory(browser) {
   }
 }
 
-const extensionId = readFlag("--extension-id");
+const extensionIdArg = readFlag("--extension-id");
 const browser = readFlag("--browser") ?? "chrome";
 const manifestDir = readFlag("--manifest-dir");
 
-if (!extensionId || !/^[a-p]{32}$/.test(extensionId)) {
-  console.error("Usage: pnpm -F extension native-host:install -- --extension-id <32-char-id>");
+const extensionIds = (extensionIdArg ?? "")
+  .split(",")
+  .map((id) => id.trim())
+  .filter(Boolean);
+
+if (extensionIds.length === 0 || extensionIds.some((id) => !/^[a-p]{32}$/.test(id))) {
+  console.error(
+    "Usage: pnpm -F extension native-host:install -- --extension-id <32-char-id>[,<id2>,...]",
+  );
   process.exit(1);
 }
 
@@ -110,7 +119,7 @@ const manifest = {
   description: HOST_DESCRIPTION,
   path: wrapperPath,
   type: "stdio",
-  allowed_origins: [`chrome-extension://${extensionId}/`],
+  allowed_origins: extensionIds.map((id) => `chrome-extension://${id}/`),
 };
 
 const manifestPath = path.join(targetDir, `${HOST_NAME}.json`);

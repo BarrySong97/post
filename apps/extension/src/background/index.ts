@@ -5,16 +5,68 @@
  * @gotcha  Twitter/X videos often expose blob: URLs; only direct MP4 candidates can be imported.
  */
 
+// Build-time channel injected by vite `define` (see vite.config.chrome.ts). Stamped onto every
+// native message as `appEnv`, which the native host maps to post-<appEnv>.sqlite — so the dev
+// and prod extension builds target their own databases and never cross over.
+declare const __APP_ENV__: "dev" | "prod";
+const APP_ENV: "dev" | "prod" = typeof __APP_ENV__ === "undefined" ? "dev" : __APP_ENV__;
+
 const IMAGE_PARENT_MENU_ID = "post.collect-image";
 const IMAGE_TAG_MENU_PREFIX = `${IMAGE_PARENT_MENU_ID}.tag.`;
 const VIDEO_PARENT_MENU_ID = "post.collect-video";
 const VIDEO_TAG_MENU_PREFIX = `${VIDEO_PARENT_MENU_ID}.tag.`;
 const POST_PARENT_MENU_ID = "post.collect-post";
 const POST_TAG_MENU_PREFIX = `${POST_PARENT_MENU_ID}.tag.`;
+const IMAGE_SAVE_UNTAGGED_ID = `${IMAGE_PARENT_MENU_ID}.untagged`;
+const VIDEO_SAVE_UNTAGGED_ID = `${VIDEO_PARENT_MENU_ID}.untagged`;
+const POST_SAVE_UNTAGGED_ID = `${POST_PARENT_MENU_ID}.untagged`;
+const UNTAGGED_MENU_TITLE = "直接保存（进 Inbox）";
+const RECENT_TAGS_STORAGE_KEY = "post.recentTagIds";
+const MAX_RECENT_TAGS = 6;
 const POST_NATIVE_HOST = "com.post.desktop";
 const MAX_CONTEXT_MENU_TAGS = 20;
 const SAVE_DEDUP_WINDOW_MS = 5000;
 const BACKGROUND_VIDEO_CANDIDATE_LIMIT = 30;
+
+type MenuTag = { id: string; name: string; color: string | null; sortOrder: number };
+
+async function getRecentTagIds(): Promise<string[]> {
+  try {
+    const stored = await chrome.storage.local.get(RECENT_TAGS_STORAGE_KEY);
+    const value = stored[RECENT_TAGS_STORAGE_KEY];
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+async function recordRecentTag(tagId: string): Promise<void> {
+  try {
+    const current = await getRecentTagIds();
+    const next = [tagId, ...current.filter((id) => id !== tagId)].slice(0, MAX_RECENT_TAGS);
+    await chrome.storage.local.set({ [RECENT_TAGS_STORAGE_KEY]: next });
+  } catch {
+    // Best-effort ordering; a storage failure just means no recency boost this time.
+  }
+}
+
+// Recently-used tags first (in recency order), then the remaining tags in vault order.
+// Split so the caller can draw a separator between the two groups.
+function partitionTagsByRecency(
+  tags: MenuTag[],
+  recentIds: string[],
+): {
+  recent: MenuTag[];
+  rest: MenuTag[];
+} {
+  const byId = new Map(tags.map((tag) => [tag.id, tag]));
+  const recent = recentIds
+    .map((id) => byId.get(id))
+    .filter((tag): tag is MenuTag => tag !== undefined);
+  const recentSet = new Set(recent.map((tag) => tag.id));
+  const rest = tags.filter((tag) => !recentSet.has(tag.id));
+  return { recent, rest };
+}
 
 type ContextMenuContexts = [
   `${chrome.contextMenus.ContextType}`,
@@ -54,7 +106,7 @@ type ExtensionImageSaveResponse =
         id: string;
         title: string;
         relativePath: string;
-        tagId: string;
+        tagId: string | null;
       };
     }
   | {
@@ -71,7 +123,7 @@ type ExtensionPostSaveResponse =
         id: string;
         title: string;
         relativePath: string;
-        tagId: string;
+        tagId: string | null;
         status: "created" | "updated";
         childAssetIds: string[];
         warnings: string[];
@@ -138,7 +190,7 @@ async function getDesktopContext(): Promise<ExtensionContextResponse> {
   try {
     const response = await sendNativeMessage<ExtensionContextResponse>({
       type: "post.context.get",
-      appEnv: "dev",
+      appEnv: APP_ENV,
     });
     console.log("[Post extension] native context response", response);
     return response;
@@ -209,8 +261,81 @@ function queueContextMenuRegistration() {
   return contextMenuRegistration;
 }
 
+const X_URL_PATTERNS = ["https://x.com/*", "https://twitter.com/*"];
+
+// Build one parent's submenu: "直接保存" first, then a separator, then tags ordered
+// recent-first (with a separator between recent and the rest). Works with zero tags —
+// direct-save is always available, so an empty vault no longer disables the menu.
+function buildSaveSubmenu(opts: {
+  parentId: string;
+  tagPrefix: string;
+  untaggedId: string;
+  contexts: ContextMenuContexts;
+  documentUrlPatterns?: string[];
+  tags: MenuTag[];
+  recentIds: string[];
+}) {
+  const patterns = opts.documentUrlPatterns
+    ? { documentUrlPatterns: opts.documentUrlPatterns }
+    : {};
+
+  chrome.contextMenus.create({
+    id: opts.untaggedId,
+    parentId: opts.parentId,
+    title: UNTAGGED_MENU_TITLE,
+    contexts: opts.contexts,
+    ...patterns,
+  });
+
+  const { recent, rest } = partitionTagsByRecency(opts.tags, opts.recentIds);
+  const ordered = [...recent, ...rest].slice(0, MAX_CONTEXT_MENU_TAGS);
+  if (ordered.length === 0) {
+    return;
+  }
+
+  chrome.contextMenus.create({
+    id: `${opts.parentId}.sep-top`,
+    parentId: opts.parentId,
+    type: "separator",
+    contexts: opts.contexts,
+    ...patterns,
+  });
+
+  const recentShown = ordered.filter((tag) => recent.some((item) => item.id === tag.id)).length;
+  ordered.forEach((tag, index) => {
+    if (index === recentShown && recentShown > 0 && recentShown < ordered.length) {
+      chrome.contextMenus.create({
+        id: `${opts.parentId}.sep-recent`,
+        parentId: opts.parentId,
+        type: "separator",
+        contexts: opts.contexts,
+        ...patterns,
+      });
+    }
+    chrome.contextMenus.create({
+      id: `${opts.tagPrefix}${tag.id}`,
+      parentId: opts.parentId,
+      title: tag.name,
+      contexts: opts.contexts,
+      ...patterns,
+    });
+  });
+
+  if (opts.tags.length > MAX_CONTEXT_MENU_TAGS) {
+    chrome.contextMenus.create({
+      id: `${opts.parentId}.overflow`,
+      parentId: opts.parentId,
+      title: `已显示 ${MAX_CONTEXT_MENU_TAGS} / ${opts.tags.length} 个 tag`,
+      contexts: opts.contexts,
+      enabled: false,
+      ...patterns,
+    });
+  }
+}
+
 async function registerContextMenus() {
   const context = await getDesktopContext();
+  const recentIds = await getRecentTagIds();
   await removeAllContextMenus();
 
   chrome.contextMenus.create({
@@ -223,7 +348,7 @@ async function registerContextMenus() {
     id: VIDEO_PARENT_MENU_ID,
     title: "Add video to Post",
     contexts: VIDEO_CONTEXTS,
-    documentUrlPatterns: ["https://x.com/*", "https://twitter.com/*"],
+    documentUrlPatterns: X_URL_PATTERNS,
     visible: false,
   });
 
@@ -233,7 +358,7 @@ async function registerContextMenus() {
     id: POST_PARENT_MENU_ID,
     title: "Add post to Post",
     contexts: POST_CONTEXTS,
-    documentUrlPatterns: ["https://x.com/*", "https://twitter.com/*"],
+    documentUrlPatterns: X_URL_PATTERNS,
   });
 
   if (!context.ok) {
@@ -255,55 +380,33 @@ async function registerContextMenus() {
     return;
   }
 
-  if (context.context.tags.length === 0) {
-    createDisabledChild(IMAGE_PARENT_MENU_ID, "No tags in active vault", IMAGE_CONTEXTS);
-    createDisabledChild(VIDEO_PARENT_MENU_ID, "No tags in active vault", VIDEO_CONTEXTS);
-    createDisabledChild(POST_PARENT_MENU_ID, "No tags in active vault", POST_CONTEXTS);
-    return;
-  }
-
-  for (const tag of context.context.tags.slice(0, MAX_CONTEXT_MENU_TAGS)) {
-    chrome.contextMenus.create({
-      id: `${IMAGE_TAG_MENU_PREFIX}${tag.id}`,
-      parentId: IMAGE_PARENT_MENU_ID,
-      title: tag.name,
-      contexts: IMAGE_CONTEXTS,
-    });
-
-    chrome.contextMenus.create({
-      id: `${VIDEO_TAG_MENU_PREFIX}${tag.id}`,
-      parentId: VIDEO_PARENT_MENU_ID,
-      title: tag.name,
-      contexts: VIDEO_CONTEXTS,
-      documentUrlPatterns: ["https://x.com/*", "https://twitter.com/*"],
-    });
-
-    chrome.contextMenus.create({
-      id: `${POST_TAG_MENU_PREFIX}${tag.id}`,
-      parentId: POST_PARENT_MENU_ID,
-      title: tag.name,
-      contexts: POST_CONTEXTS,
-      documentUrlPatterns: ["https://x.com/*", "https://twitter.com/*"],
-    });
-  }
-
-  if (context.context.tags.length > MAX_CONTEXT_MENU_TAGS) {
-    createDisabledChild(
-      IMAGE_PARENT_MENU_ID,
-      `Showing first ${MAX_CONTEXT_MENU_TAGS} of ${context.context.tags.length} tags`,
-      IMAGE_CONTEXTS,
-    );
-    createDisabledChild(
-      VIDEO_PARENT_MENU_ID,
-      `Showing first ${MAX_CONTEXT_MENU_TAGS} of ${context.context.tags.length} tags`,
-      VIDEO_CONTEXTS,
-    );
-    createDisabledChild(
-      POST_PARENT_MENU_ID,
-      `Showing first ${MAX_CONTEXT_MENU_TAGS} of ${context.context.tags.length} tags`,
-      POST_CONTEXTS,
-    );
-  }
+  const tags = context.context.tags;
+  buildSaveSubmenu({
+    parentId: IMAGE_PARENT_MENU_ID,
+    tagPrefix: IMAGE_TAG_MENU_PREFIX,
+    untaggedId: IMAGE_SAVE_UNTAGGED_ID,
+    contexts: IMAGE_CONTEXTS,
+    tags,
+    recentIds,
+  });
+  buildSaveSubmenu({
+    parentId: VIDEO_PARENT_MENU_ID,
+    tagPrefix: VIDEO_TAG_MENU_PREFIX,
+    untaggedId: VIDEO_SAVE_UNTAGGED_ID,
+    contexts: VIDEO_CONTEXTS,
+    documentUrlPatterns: X_URL_PATTERNS,
+    tags,
+    recentIds,
+  });
+  buildSaveSubmenu({
+    parentId: POST_PARENT_MENU_ID,
+    tagPrefix: POST_TAG_MENU_PREFIX,
+    untaggedId: POST_SAVE_UNTAGGED_ID,
+    contexts: POST_CONTEXTS,
+    documentUrlPatterns: X_URL_PATTERNS,
+    tags,
+    recentIds,
+  });
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -364,36 +467,43 @@ chrome.webRequest.onBeforeRequest.addListener(
   { urls: ["https://video.twimg.com/*"] },
 );
 
+// After a save that used a tag, promote it in the recency list and rebuild the menu so
+// the tag surfaces first next time. Untagged (direct-to-Inbox) saves change no ordering.
+function afterTaggedSave(tagId: string | undefined) {
+  if (tagId) {
+    void recordRecentTag(tagId).then(() => queueContextMenuRegistration());
+  }
+}
+
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  const menuItemId = String(info.menuItemId);
-  if (menuItemId.startsWith(IMAGE_TAG_MENU_PREFIX)) {
-    saveImageFromContextMenu(menuItemId, info, tab);
-    return;
-  }
-
-  if (menuItemId.startsWith(VIDEO_TAG_MENU_PREFIX)) {
-    void saveVideoFromContextMenu(menuItemId, info, tab);
-    return;
-  }
-
-  if (menuItemId.startsWith(POST_TAG_MENU_PREFIX)) {
-    void savePostFromContextMenu(menuItemId, tab);
+  const id = String(info.menuItemId);
+  if (id === IMAGE_SAVE_UNTAGGED_ID) {
+    saveImageFromContextMenu(undefined, info, tab);
+  } else if (id.startsWith(IMAGE_TAG_MENU_PREFIX)) {
+    saveImageFromContextMenu(id.slice(IMAGE_TAG_MENU_PREFIX.length), info, tab);
+  } else if (id === VIDEO_SAVE_UNTAGGED_ID) {
+    void saveVideoFromContextMenu(undefined, info, tab);
+  } else if (id.startsWith(VIDEO_TAG_MENU_PREFIX)) {
+    void saveVideoFromContextMenu(id.slice(VIDEO_TAG_MENU_PREFIX.length), info, tab);
+  } else if (id === POST_SAVE_UNTAGGED_ID) {
+    void savePostFromContextMenu(undefined, tab);
+  } else if (id.startsWith(POST_TAG_MENU_PREFIX)) {
+    void savePostFromContextMenu(id.slice(POST_TAG_MENU_PREFIX.length), tab);
   }
 });
 
 function saveImageFromContextMenu(
-  menuItemId: string,
+  tagId: string | undefined,
   info: chrome.contextMenus.OnClickData,
   tab?: chrome.tabs.Tab,
 ) {
-  const tagId = menuItemId.slice(IMAGE_TAG_MENU_PREFIX.length);
   const srcUrl = info.srcUrl;
   if (!srcUrl) {
     console.warn("[Post extension] image context menu click had no srcUrl", info);
     return;
   }
 
-  const dedupKey = `${tagId}:${srcUrl}`;
+  const dedupKey = `${tagId ?? "inbox"}:${srcUrl}`;
   const now = Date.now();
   const pendingSince = pendingSaves.get(dedupKey);
   if (pendingSince && now - pendingSince < SAVE_DEDUP_WINDOW_MS) {
@@ -404,7 +514,7 @@ function saveImageFromContextMenu(
   pendingSaves.set(dedupKey, now);
   sendNativeMessage<ExtensionImageSaveResponse>({
     type: "post.image.save",
-    appEnv: "dev",
+    appEnv: APP_ENV,
     srcUrl,
     pageUrl: info.pageUrl ?? tab?.url,
     pageTitle: tab?.title,
@@ -413,6 +523,7 @@ function saveImageFromContextMenu(
     .then((response) => {
       if (response.ok) {
         console.log("[Post extension] image saved", response.asset);
+        afterTaggedSave(tagId);
       } else {
         console.warn("[Post extension] image save failed", response.message);
       }
@@ -474,11 +585,10 @@ function isTwitterVideoCandidate(rawUrl: string) {
 }
 
 async function saveVideoFromContextMenu(
-  menuItemId: string,
+  tagId: string | undefined,
   info: chrome.contextMenus.OnClickData,
   tab?: chrome.tabs.Tab,
 ) {
-  const tagId = menuItemId.slice(VIDEO_TAG_MENU_PREFIX.length);
   const context = tab?.id
     ? await getTwitterVideoContext(tab.id)
     : { ok: false as const, context: null };
@@ -492,7 +602,7 @@ async function saveVideoFromContextMenu(
         : [];
   const pageUrl = context.ok ? context.context.pageUrl : (info.pageUrl ?? tab?.url);
   const pageTitle = context.ok ? context.context.title : tab?.title;
-  const dedupKey = `${tagId}:${pageUrl ?? ""}:${candidateUrls.join("|")}`;
+  const dedupKey = `${tagId ?? "inbox"}:${pageUrl ?? ""}:${candidateUrls.join("|")}`;
   const now = Date.now();
   const pendingSince = pendingSaves.get(dedupKey);
   if (pendingSince && now - pendingSince < SAVE_DEDUP_WINDOW_MS) {
@@ -503,7 +613,7 @@ async function saveVideoFromContextMenu(
   pendingSaves.set(dedupKey, now);
   sendNativeMessage<ExtensionVideoSaveResponse>({
     type: "post.video.save",
-    appEnv: "dev",
+    appEnv: APP_ENV,
     srcUrl,
     candidateUrls,
     pageUrl,
@@ -515,6 +625,7 @@ async function saveVideoFromContextMenu(
     .then((response) => {
       if (response.ok) {
         console.log("[Post extension] video saved", response.asset);
+        afterTaggedSave(tagId);
       } else {
         console.warn("[Post extension] video save failed", response.message);
       }
@@ -527,8 +638,7 @@ async function saveVideoFromContextMenu(
     });
 }
 
-async function savePostFromContextMenu(menuItemId: string, tab?: chrome.tabs.Tab) {
-  const tagId = menuItemId.slice(POST_TAG_MENU_PREFIX.length);
+async function savePostFromContextMenu(tagId: string | undefined, tab?: chrome.tabs.Tab) {
   if (!tab?.id) {
     console.warn("[Post extension] post context menu click had no tab id");
     return;
@@ -541,7 +651,7 @@ async function savePostFromContextMenu(menuItemId: string, tab?: chrome.tabs.Tab
   }
 
   const context = response.context;
-  const dedupKey = `post:${tagId}:${context.postId}`;
+  const dedupKey = `post:${tagId ?? "inbox"}:${context.postId}`;
   const now = Date.now();
   const pendingSince = pendingSaves.get(dedupKey);
   if (pendingSince && now - pendingSince < SAVE_DEDUP_WINDOW_MS) {
@@ -556,13 +666,14 @@ async function savePostFromContextMenu(menuItemId: string, tab?: chrome.tabs.Tab
   try {
     const result = await sendNativeMessage<ExtensionPostSaveResponse>({
       type: "post.post.save",
-      appEnv: "dev",
+      appEnv: APP_ENV,
       ...context,
       pageTitle: tab.title,
       tagId,
     });
     if (result.ok) {
       console.log("[Post extension] post saved", result.asset);
+      afterTaggedSave(tagId);
     } else {
       console.warn("[Post extension] post save failed", result.message);
     }

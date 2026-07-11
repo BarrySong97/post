@@ -74,7 +74,7 @@ export const extensionImageSaveMessageSchema = z.object({
   srcUrl: z.string().url(),
   pageUrl: z.string().url().optional(),
   pageTitle: z.string().optional(),
-  tagId: z.string().min(1),
+  tagId: z.string().min(1).optional(),
   vaultId: z.string().min(1).optional(),
 });
 
@@ -87,7 +87,7 @@ export const extensionVideoSaveMessageSchema = z.object({
   pageTitle: z.string().optional(),
   tweetId: z.string().optional(),
   tweetUrl: z.string().url().optional(),
-  tagId: z.string().min(1),
+  tagId: z.string().min(1).optional(),
   vaultId: z.string().min(1).optional(),
 });
 
@@ -111,7 +111,7 @@ export const extensionPostSaveMessageSchema = z.object({
   pageTitle: z.string().optional(),
   capturedAt: z.number().optional(),
   visibleSnapshot: twitterPostVisibleSnapshotSchema.optional(),
-  tagId: z.string().min(1),
+  tagId: z.string().min(1).optional(),
   vaultId: z.string().min(1).optional(),
 });
 
