@@ -64,5 +64,6 @@ runtime and installs its own `better-sqlite3` build.
 - The CLI never deletes, moves, renames, or rewrites original vault files.
 - The CLI does not expose arbitrary writable SQL.
 - `ledger-info --json` should remain a stable machine-readable capability and database snapshot for AI callers.
+- Agent-facing skill (skills.sh): [skills/post/SKILL.md](../../../skills/post/SKILL.md). Install with `npx skills add BarrySong97/post -s post`. The skill documents CLI usage, data model, extension capture, and the vault `.post/` convention for non-asset keep files. This module doc remains the developer source of truth.
 - npm publish uses the caller's existing npm auth, such as user-level
   `~/.npmrc` or `NODE_AUTH_TOKEN`; never commit npm tokens to the repo.

@@ -34,7 +34,7 @@ pnpm indexer:build
 
 ## Notes
 
-- The scan/watch/reconcile walk skips hidden entries via `should_skip`: any name starting with `.` (dotfile or dot-directory, so its whole subtree is skipped) plus `node_modules`. Hidden paths therefore never become assets. Existing rows imported by older builds are cleaned up once by the `packages/db` prune migration.
+- The scan/watch/reconcile walk skips hidden entries via `should_skip`: any name starting with `.` (dotfile or dot-directory, so its whole subtree is skipped) plus `node_modules`. Hidden paths therefore never become assets. Existing rows imported by older builds are cleaned up once by the `packages/db` prune migration. Agent automation uses this: non-asset keep files belong under the vault’s `.post/` directory (see [skills/post](../../../skills/post/SKILL.md)).
 - Keep CLI argument names and event shapes stable for Electron callers.
 - Keep parser and indexer version constants meaningful when behavior changes.
 - Thumbnail output must remain under the configured thumbnail root.
