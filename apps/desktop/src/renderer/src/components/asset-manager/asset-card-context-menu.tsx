@@ -13,7 +13,7 @@ import { Trash2 } from "lucide-react";
 import { useConfirmModal } from "@/components/common/confirm-modal";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import type { Asset } from "@/lib/asset-manager/types";
-import { toast } from "@/lib/toast";
+import { scheduleAfterToastPaint, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 
 const MENU_WIDTH = 168;
@@ -83,8 +83,10 @@ export function AssetCardContextMenu({
       variant: "danger",
       onConfirm: async () => {
         const result = await deleteAsset.mutateAsync({ id: state.asset.id });
-        await invalidateVaultState();
         toast.success(result.movedToTrash ? "资产已移到废纸篓" : "资产已删除");
+        scheduleAfterToastPaint(() => {
+          void invalidateVaultState();
+        });
       },
     });
   };

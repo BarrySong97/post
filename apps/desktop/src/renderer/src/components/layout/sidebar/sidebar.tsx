@@ -44,8 +44,7 @@ import type { AssetSummary, SidebarTag, SidebarView } from "@/lib/asset-manager/
 import { useConfirmModal } from "@/components/common/confirm-modal";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { isMacWindow } from "@/lib/platform";
-import { toast } from "@/lib/toast";
-import { heroToast } from "@/lib/hero-toast";
+import { scheduleAfterToastPaint, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 
 type SidebarSectionId = "views" | "tags";
@@ -638,8 +637,10 @@ export function Sidebar({
       variant: "danger",
       onConfirm: async () => {
         await deleteSavedView.mutateAsync({ id: view.id });
-        await invalidateVaultState();
         toast.success("View 已删除");
+        scheduleAfterToastPaint(() => {
+          void invalidateVaultState();
+        });
       },
     });
   };
@@ -657,10 +658,10 @@ export function Sidebar({
       variant: "danger",
       onConfirm: async () => {
         await deleteTag.mutateAsync({ id: tag.id });
-        await invalidateVaultState();
-        // Try HeroUI's notification system here (rest of the app still uses the custom toast).
-        // timeout: 0 disables the default 4s auto-dismiss so we can see it stay.
-        heroToast.success("Tag 已删除", { timeout: 0 });
+        toast.success("Tag 已删除");
+        scheduleAfterToastPaint(() => {
+          void invalidateVaultState();
+        });
       },
     });
   };

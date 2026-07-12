@@ -1,8 +1,9 @@
 /**
  * @purpose Provide renderer toast utilities shared across pages and components.
  * @role    Small renderer helper module outside page-specific ownership.
- * @deps    Renderer runtime, tRPC/client/provider code, platform or toast libraries as appropriate.
+ * @deps    Renderer runtime only (no HeroUI ToastQueue — Electron + view transitions were unstable).
  * @gotcha  Keep helpers browser-safe unless they intentionally call preload-exposed APIs.
+ *          Prefer `scheduleAfterToastPaint` for vault invalidation so toast can paint first.
  */
 
 import type { ReactNode } from "react";
@@ -87,6 +88,24 @@ function addToast(title: ReactNode, options?: ToastOptions) {
   }
 
   return id;
+}
+
+/**
+ * Run heavy UI work (e.g. broad React Query invalidation) after the next paint.
+ * Double-rAF waits for the browser to flush the toast commit so enter animation
+ * is less likely to fight vault board re-renders on the same frame.
+ */
+export function scheduleAfterToastPaint(work: () => void) {
+  if (typeof requestAnimationFrame !== "function") {
+    work();
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      work();
+    });
+  });
 }
 
 export function subscribeToasts(listener: () => void) {

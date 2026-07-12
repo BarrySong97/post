@@ -31,7 +31,7 @@ import { TagFormModal } from "@/components/asset-manager/asset-management-modals
 import { getTagHue } from "@/lib/asset-manager/asset-model";
 import type { SidebarTag, SidebarView } from "@/lib/asset-manager/types";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
-import { toast } from "@/lib/toast";
+import { scheduleAfterToastPaint, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 
 type TagModalState = { kind: "create" } | { kind: "edit"; tag: SidebarTag };
@@ -357,8 +357,10 @@ export function TagsManagementPage() {
       variant: "danger",
       onConfirm: async () => {
         await deleteTag.mutateAsync({ id: tag.id });
-        await invalidateVaultState();
         toast.success("Tag 已删除");
+        scheduleAfterToastPaint(() => {
+          void invalidateVaultState();
+        });
       },
     });
   };

@@ -3,22 +3,26 @@
  * @role    App-level React component composed by routes, shell, or shared workflows.
  * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
  * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ *          GlobalToasts/UpdateToast mount after {children}; toast cards use window-no-drag so clicks
+ *          work. Their fixed shells must be window-drag (not default/no-drag) or Chromium app-region
+ *          punches a dead zone through the top-center chrome even when empty/pointer-events-none.
+ *          Toast enter/exit avoids motion `layout` so paint stays cheap next to vault invalidation.
  */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Button, Popover, Toast } from "@heroui/react";
+import { Button, Popover } from "@heroui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { CheckCircle2, Info, Settings2, TriangleAlert, X, XCircle } from "lucide-react";
 import { getToastSnapshot, subscribeToasts, toast, type ToastItem } from "@/lib/toast";
-import { heroToastQueue } from "@/lib/hero-toast";
 
 import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
 import { applyFilterCommand } from "@/lib/asset-manager/apply-filter-command";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { useHistoryNavigationShortcuts } from "@/hooks/use-history-navigation-shortcuts";
 import { ConfirmModalProvider } from "@/components/common/confirm-modal";
+import { UpdateToast } from "@/components/layout/update-toast";
 import { AutoUpdateProvider } from "@/providers/auto-update-provider";
 
 type TaskSnapshot = RouterOutputs["tasks"]["snapshot"];
@@ -55,14 +59,17 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <ConfirmModalProvider>
-      <GlobalToasts />
-      {/* HeroUI toast region wired to our custom queue (no view-transition wrapUpdate). */}
-      <Toast.Provider queue={heroToastQueue} placement="bottom end" />
       <AutoUpdateProvider />
       <div className="flex h-screen min-h-0 flex-col overflow-hidden text-zinc-950">
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
         <GlobalStatusLine />
       </div>
+      {/* DOM-after AppLayout so toast no-drag wins clicks over chrome drag.
+          The fixed shell is itself window-drag: an unmarked (default no-drag) shell would
+          punch a dead zone through the top-center drag strip even when empty and
+          pointer-events-none — Chromium resolves app-region by DOM order, not z-index. */}
+      <GlobalToasts />
+      <UpdateToast />
     </ConfirmModalProvider>
   );
 }
@@ -71,7 +78,7 @@ function GlobalToasts() {
   const toasts = useSyncExternalStore(subscribeToasts, getToastSnapshot, getToastSnapshot);
 
   return (
-    <div className="pointer-events-none fixed left-1/2 top-4 z-[200] flex w-[min(92vw,420px)] -translate-x-1/2 flex-col items-center gap-2">
+    <div className="window-drag pointer-events-none fixed left-1/2 top-4 z-[200] flex w-[min(92vw,420px)] -translate-x-1/2 flex-col items-center gap-2">
       <AnimatePresence initial={false}>
         {toasts.map((item) => (
           <GlobalToast key={item.id} item={item} />
@@ -87,12 +94,11 @@ function GlobalToast({ item }: { item: ToastItem }) {
   return (
     <motion.div
       role="status"
-      layout
-      initial={{ opacity: 0, y: -10, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -8, scale: 0.98 }}
-      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-      className="pointer-events-auto flex min-h-11 w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-[13px] text-zinc-800 shadow-[0_14px_34px_rgba(20,18,16,0.14),0_2px_7px_rgba(20,18,16,0.07)]"
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -6 }}
+      transition={{ duration: 0.14, ease: "easeOut" }}
+      className="window-no-drag pointer-events-auto flex min-h-11 w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-[13px] text-zinc-800 shadow-md will-change-transform"
     >
       <Icon aria-hidden="true" className={getToastIconClassName(item.variant)} size={15} />
       <div className="min-w-0 flex-1">
@@ -106,7 +112,7 @@ function GlobalToast({ item }: { item: ToastItem }) {
       {item.actionLabel ? (
         <button
           type="button"
-          className="h-7 shrink-0 rounded-md bg-zinc-950 px-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
+          className="window-no-drag h-7 shrink-0 rounded-md bg-zinc-950 px-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
           onClick={item.onAction}
         >
           {item.actionLabel}
@@ -115,7 +121,7 @@ function GlobalToast({ item }: { item: ToastItem }) {
       <button
         type="button"
         aria-label="关闭通知"
-        className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
+        className="window-no-drag grid h-6 w-6 shrink-0 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
         onClick={() => toast.close(item.id)}
       >
         <X aria-hidden="true" size={13} />

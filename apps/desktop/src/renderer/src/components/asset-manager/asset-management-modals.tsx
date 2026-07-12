@@ -38,7 +38,7 @@ import {
 import { ChevronDown, Hash, Loader2 } from "lucide-react";
 
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
-import { toast } from "@/lib/toast";
+import { scheduleAfterToastPaint, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 import { getDefaultAssetFilters, type AssetFilterState } from "@/store/asset-manager-atoms";
 import type { SidebarTag, SidebarView } from "@/lib/asset-manager/types";
@@ -183,8 +183,10 @@ export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormMod
       toast.success("标签已创建");
     }
 
-    await invalidateVaultState();
     onOpenChange(false);
+    scheduleAfterToastPaint(() => {
+      void invalidateVaultState();
+    });
   });
 
   return (
@@ -420,8 +422,10 @@ export function ViewFormModal({
       toast.success("View 已创建");
     }
 
-    await invalidateVaultState();
     onOpenChange(false);
+    scheduleAfterToastPaint(() => {
+      void invalidateVaultState();
+    });
   });
 
   return (

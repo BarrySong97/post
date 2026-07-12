@@ -31,7 +31,7 @@ import { ViewFormModal } from "@/components/asset-manager/asset-management-modal
 import { ViewIconRenderer } from "@/components/asset-manager/view-icon-picker";
 import type { SidebarView } from "@/lib/asset-manager/types";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
-import { toast } from "@/lib/toast";
+import { scheduleAfterToastPaint, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 
 type ViewModalState = { kind: "create" } | { kind: "edit"; view: SidebarView };
@@ -300,8 +300,10 @@ export function ViewsManagementPage() {
       variant: "danger",
       onConfirm: async () => {
         await deleteSavedView.mutateAsync({ id: view.id });
-        await invalidateVaultState();
         toast.success("View 已删除");
+        scheduleAfterToastPaint(() => {
+          void invalidateVaultState();
+        });
       },
     });
   };
