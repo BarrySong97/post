@@ -20,10 +20,25 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.5",
+    date: "2026-07-12",
+    head: "Chinese and English UI language switching, plus asset detail that opens without leaving the board.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Desktop",
+        items: [
+          "Settings → Language can follow the system or lock to 中文 / English; chrome labels, filters, toasts, and dialogs switch with it.",
+          "Opening an asset keeps the masonry board mounted underneath; Back closes the overlay and restores scroll.",
+          "Deep links to /assets/:id soft-redirect into the same overlay on the home route.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.4",
     date: "2026-07-12",
     head: "Smoother success toasts, more reliable top-chrome window dragging, and less accidental text selection while moving the window.",
-    badge: "latest",
     groups: [
       {
         title: "Desktop",
