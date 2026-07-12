@@ -20,10 +20,31 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.6",
+    date: "2026-07-12",
+    head: "Chrome extension zip on every GitHub Release, plus an agent skill for post-cli vault automation.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Extension",
+        items: [
+          "Each Mac release also publishes Post-<version>-chrome-extension.zip for Load unpacked / store packaging.",
+          "The zip includes INSTALL.md with Desktop companion and native-host registration steps.",
+        ],
+      },
+      {
+        title: "Agents",
+        items: [
+          "skills/post teaches agents how to drive post-cli, the data model, and the vault .post/ folder for non-asset keep files.",
+          "Install with: npx skills add BarrySong97/post -s post",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.5",
     date: "2026-07-12",
     head: "Chinese and English UI language switching, plus asset detail that opens without leaving the board.",
-    badge: "latest",
     groups: [
       {
         title: "Desktop",
