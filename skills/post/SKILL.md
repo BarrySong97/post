@@ -44,10 +44,15 @@ npx @barrysongdev4real/post-cli tag list --json
 
 In this monorepo: `pnpm post-cli …`.
 
-Install this skill (skills.sh):
+Install this skill:
 
 ```bash
+# skills.sh / Cursor / Claude Code
 npx skills add BarrySong97/post -s post
+
+# Codex skill-installer (path is repo-relative; skill lives under skills/)
+python3 "$CODEX_HOME/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
+  --repo BarrySong97/post --path skills/post
 ```
 
 ## Capability map

@@ -54,7 +54,7 @@ node scripts/check-docs.mjs
 
 - Modules: [desktop](docs/modules/desktop/README.md), [db](docs/modules/db/README.md), [ui](docs/modules/ui/README.md), [config](docs/modules/config/README.md), [post-indexer](docs/modules/post-indexer/README.md), [cli](docs/modules/cli/README.md)
 - Desktop subtopics: [asset management](docs/modules/desktop/assets.md)
-- Agent skill (skills.sh): [skills/post](skills/post/SKILL.md) — `npx skills add BarrySong97/post -s post`
+- Agent skill: [skills/post](skills/post/SKILL.md) — `npx skills add BarrySong97/post -s post` (skills.sh); Codex: `--repo BarrySong97/post --path skills/post`
 - Cross-module topics: [Electron tRPC IPC](docs/topics/electron-trpc-ipc.md), [vault indexing flow](docs/topics/vault-indexing-flow.md), [renderer i18n](docs/topics/i18n.md)
 - Project guides: [run](docs/run.md), [conventions](docs/conventions.md), [testing](docs/testing.md), [design](design.md), [layered architecture](docs/reference/frontend-backend-layered-architecture.md)
 - Harness records: [specs](docs/specs/README.md), [plans](docs/plans/README.md), [decisions](docs/decisions/README.md)

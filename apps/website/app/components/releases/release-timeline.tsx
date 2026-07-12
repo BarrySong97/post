@@ -36,7 +36,7 @@ export const RELEASES: ReleaseNote[] = [
         title: "Agents",
         items: [
           "skills/post teaches agents how to drive post-cli, the data model, and the vault .post/ folder for non-asset keep files.",
-          "Install with: npx skills add BarrySong97/post -s post",
+          "Install with: npx skills add BarrySong97/post -s post (Codex: --path skills/post)",
         ],
       },
     ],
