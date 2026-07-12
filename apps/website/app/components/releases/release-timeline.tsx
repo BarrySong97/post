@@ -20,10 +20,25 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.7",
+    date: "2026-07-12",
+    head: "Asset detail shows every bound tag and lets you bind, unbind, or create tags inline.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Desktop",
+        items: [
+          "Asset detail lists all tags on an asset, not only the primary one used on masonry cards.",
+          "Use + to open an inline searchable ComboBox: pick an existing vault tag, or type a name and press Enter to create and bind.",
+          "Remove a tag from the asset with the pill control; the vault tag definition stays intact.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.6",
     date: "2026-07-12",
     head: "Chrome extension zip on every GitHub Release, plus an agent skill for post-cli vault automation.",
-    badge: "latest",
     groups: [
       {
         title: "Extension",
