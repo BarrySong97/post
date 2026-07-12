@@ -12,6 +12,7 @@ import { useAtomValue } from "jotai";
 import { useRouterState } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "motion/react";
 import { Info, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { TOAST_ENTER_MS } from "@/lib/toast";
 import { updateStatusAtom } from "@/store/update-atoms";
@@ -21,7 +22,10 @@ function formatVersion(version: string | undefined): string {
   return version ? ` ${version}` : "";
 }
 
-function updateToastCopy(status: UpdateStatusEvent): {
+function updateToastCopy(
+  status: UpdateStatusEvent,
+  t: (key: string, opts?: Record<string, string | number>) => string,
+): {
   title: string;
   description: string;
   actionLabel?: string;
@@ -29,19 +33,19 @@ function updateToastCopy(status: UpdateStatusEvent): {
   switch (status.state) {
     case "available":
       return {
-        title: `发现新版本${formatVersion(status.version)}`,
-        description: "点击更新以下载，下载完成后会自动重启安装",
-        actionLabel: "更新",
+        title: t("update.availableTitle", { version: formatVersion(status.version) }),
+        description: t("update.availableDesc"),
+        actionLabel: t("update.action"),
       };
     case "downloading":
       return {
-        title: `正在下载更新 ${status.percent ?? 0}%`,
-        description: "下载完成后会自动重启安装",
+        title: t("update.downloadingTitle", { percent: status.percent ?? 0 }),
+        description: t("update.downloadingDesc"),
       };
     case "downloaded":
       return {
-        title: `更新已下载${formatVersion(status.version)}`,
-        description: "正在重启以完成安装",
+        title: t("update.downloadedTitle", { version: formatVersion(status.version) }),
+        description: t("update.downloadedDesc"),
       };
     default:
       return { title: "", description: "" };
@@ -59,6 +63,7 @@ function isUpdateToastState(status: UpdateStatusEvent | null): status is UpdateS
 }
 
 export function UpdateToast() {
+  const { t } = useTranslation();
   const status = useAtomValue(updateStatusAtom);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
@@ -68,7 +73,7 @@ export function UpdateToast() {
   const active = isUpdateToastState(status);
   const dismissed = dismissedKey === versionKey;
   const visible = !onSettings && active && !dismissed;
-  const copy = active ? updateToastCopy(status) : null;
+  const copy = active ? updateToastCopy(status, t) : null;
 
   return (
     // Shell is window-drag so an empty fixed layer does not punch a no-drag hole over chrome.
@@ -102,7 +107,7 @@ export function UpdateToast() {
             ) : null}
             <button
               type="button"
-              aria-label="关闭通知"
+              aria-label={t("common.closeNotification")}
               className="window-no-drag grid h-6 w-6 shrink-0 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
               onClick={() => setDismissedKey(versionKey)}
             >

@@ -23,6 +23,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { PageChrome } from "@/components/layout/app-layout";
 import { useConfirmModal } from "@/components/common/confirm-modal";
@@ -104,6 +105,7 @@ function SortableTagRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   const { ref, handleRef, isDragging, isDropTarget } = useSortable({
     id: tag.id,
     index,
@@ -127,7 +129,7 @@ function SortableTagRow({
         ref={handleRef}
         type="button"
         data-drag-handle
-        aria-label={`拖动 ${tag.name}`}
+        aria-label={t("common.drag", { name: tag.name })}
         className="grid h-7 w-7 cursor-grab place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 active:cursor-grabbing active:bg-blue-50 active:text-blue-600"
       >
         <GripVertical size={15} />
@@ -138,15 +140,25 @@ function SortableTagRow({
       <div className="min-w-0">
         <div className="truncate text-[13.5px] font-semibold text-zinc-900">{tag.name}</div>
         <div className="mt-0.5 truncate text-[11.5px] text-zinc-400">
-          {tag.color ? "自定义颜色" : "自动颜色"}
+          {tag.color ? t("tags.customColorLabel") : t("tags.autoColor")}
         </div>
       </div>
-      <div className="justify-self-end text-[12px] font-medium text-zinc-500">{tag.count} 项</div>
+      <div className="justify-self-end text-[12px] font-medium text-zinc-500">
+        {t("tags.countItems", { count: tag.count })}
+      </div>
       <div className="flex justify-end gap-1">
-        <IconButton label={`${tag.name} 往前移一格`} disabled={isFirst} onPress={onMoveUp}>
+        <IconButton
+          label={t("sidebar.moveItemUp", { name: tag.name })}
+          disabled={isFirst}
+          onPress={onMoveUp}
+        >
           <ArrowUp size={13} />
         </IconButton>
-        <IconButton label={`${tag.name} 往后移一格`} disabled={isLast} onPress={onMoveDown}>
+        <IconButton
+          label={t("sidebar.moveItemDown", { name: tag.name })}
+          disabled={isLast}
+          onPress={onMoveDown}
+        >
           <ArrowDown size={13} />
         </IconButton>
         <TagRowMoreMenu
@@ -209,12 +221,14 @@ function TagRowMoreMenu({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <Dropdown>
       <Dropdown.Trigger
         data-no-drag
         className={ROW_MORE_TRIGGER_CLASS_NAME}
-        aria-label={`${tagName} 更多操作`}
+        aria-label={t("sidebar.itemMore", { name: tagName })}
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
       >
@@ -226,7 +240,7 @@ function TagRowMoreMenu({
         placement="bottom end"
       >
         <Dropdown.Menu
-          aria-label={`${tagName} 操作`}
+          aria-label={t("sidebar.itemActions", { name: tagName })}
           className="min-w-32 p-0 outline-none"
           disabledKeys={isFirst ? ["move-first"] : []}
           onAction={(key) => {
@@ -239,29 +253,29 @@ function TagRowMoreMenu({
           <Dropdown.Item
             key="move-first"
             id="move-first"
-            textValue="移到最前"
+            textValue={t("common.moveToFront")}
             className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[disabled]:opacity-45 data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100"
           >
             <ArrowUpToLine size={13} className="text-zinc-500" />
-            <span>移到最前</span>
+            <span>{t("common.moveToFront")}</span>
           </Dropdown.Item>
           <Dropdown.Item
             key="edit"
             id="edit"
-            textValue="编辑"
+            textValue={t("common.edit")}
             className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100"
           >
             <Pencil size={13} className="text-zinc-500" />
-            <span>编辑</span>
+            <span>{t("common.edit")}</span>
           </Dropdown.Item>
           <Dropdown.Item
             key="delete"
             id="delete"
-            textValue="删除"
+            textValue={t("common.delete")}
             className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-red-600 outline-none transition-colors data-[focused]:bg-red-50 data-[hovered]:bg-red-50"
           >
             <Trash2 size={13} />
-            <span>删除</span>
+            <span>{t("common.delete")}</span>
           </Dropdown.Item>
         </Dropdown.Menu>
       </Dropdown.Popover>
@@ -270,20 +284,20 @@ function TagRowMoreMenu({
 }
 
 function TagDeleteDescription({ tag, impact }: { tag: SidebarTag; impact: TagDeleteImpact }) {
+  const { t } = useTranslation();
+
   return (
     <div className="space-y-2">
-      <p>
-        将删除 Tag「{tag.name}」，并从 {tag.count} 个资产上移除这个 Tag 关联。
-      </p>
+      <p>{t("sidebar.deleteTagBody", { name: tag.name, count: tag.count })}</p>
       {impact.updatedViews.length > 0 ? (
         <p>
-          这些 Views 会移除该 Tag 筛选后保留：
+          {t("sidebar.viewsKeepAfterTag")}
           {impact.updatedViews.map((view) => `「${view.name}」`).join("、")}
         </p>
       ) : null}
       {impact.deletedViews.length > 0 ? (
         <p>
-          这些 Views 只包含该 Tag 筛选，会一起删除：
+          {t("sidebar.viewsDeleteWithTag")}
           {impact.deletedViews.map((view) => `「${view.name}」`).join("、")}
         </p>
       ) : null}
@@ -292,6 +306,7 @@ function TagDeleteDescription({ tag, impact }: { tag: SidebarTag; impact: TagDel
 }
 
 export function TagsManagementPage() {
+  const { t } = useTranslation();
   const sidebarQuery = useQuery({
     ...trpc.assets.sidebarMeta.queryOptions(),
     refetchOnWindowFocus: false,
@@ -351,10 +366,10 @@ export function TagsManagementPage() {
 
     void (async () => {
       const confirmed = await confirm({
-        title: `删除 Tag「${tag.name}」？`,
+        title: t("tags.deleteTitle", { name: tag.name }),
         description: <TagDeleteDescription tag={tag} impact={impact} />,
-        confirmLabel: "删除",
-        cancelLabel: "取消",
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
         variant: "danger",
         onConfirm: async () => {
           await deleteTag.mutateAsync({ id: tag.id });
@@ -365,7 +380,7 @@ export function TagsManagementPage() {
       }
       await invalidateVaultState();
       showToastAfterRefresh(() => {
-        toast.success("Tag 已删除");
+        toast.success(t("tags.deleted"));
       });
     })();
   };
@@ -375,7 +390,7 @@ export function TagsManagementPage() {
       <PageChrome>
         <div className="window-no-drag flex items-center gap-2">
           <Hash size={15} className="text-zinc-500" />
-          <h1 className="text-[13px] font-semibold text-zinc-900">Tags 管理</h1>
+          <h1 className="text-[13px] font-semibold text-zinc-900">{t("tags.title")}</h1>
           <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-500">
             {tags.length}
           </span>
@@ -388,7 +403,7 @@ export function TagsManagementPage() {
             onPress={() => setModalState({ kind: "create" })}
           >
             <Plus size={13} />
-            新建 Tag
+            {t("tags.new")}
           </Button>
         </div>
       </PageChrome>
@@ -397,10 +412,10 @@ export function TagsManagementPage() {
         <div className="mx-auto max-w-[860px] overflow-visible bg-white">
           <div className="grid grid-cols-[28px_34px_minmax(0,1fr)_76px_104px] items-center gap-3 border-b border-zinc-100 bg-zinc-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
             <span />
-            <span>颜色</span>
-            <span>名称</span>
-            <span className="justify-self-end">资产</span>
-            <span className="justify-self-end">操作</span>
+            <span>{t("tags.colColor")}</span>
+            <span>{t("tags.colName")}</span>
+            <span className="justify-self-end">{t("tags.colAssets")}</span>
+            <span className="justify-self-end">{t("tags.colActions")}</span>
           </div>
           {orderedTags.length > 0 ? (
             <DragDropProvider
@@ -446,7 +461,7 @@ export function TagsManagementPage() {
             </DragDropProvider>
           ) : (
             <div className="grid h-48 place-items-center text-[13px] text-zinc-400">
-              {sidebarQuery.isLoading ? "正在读取 Tags" : "还没有 Tag"}
+              {sidebarQuery.isLoading ? t("tags.loading") : t("tags.empty")}
             </div>
           )}
         </div>

@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Network } from "lucide-react";
 import ForceGraph2D, {
@@ -13,9 +14,8 @@ import ForceGraph2D, {
   type LinkObject,
   type ForceGraphMethods,
 } from "react-force-graph-2d";
-import { useNavigate } from "@tanstack/react-router";
-
 import { trpc } from "@/lib/trpc";
+import { openAssetDetail } from "@/lib/asset-manager/open-asset-detail";
 import { PageChrome } from "@/components/layout/app-layout";
 
 type GraphNode = { id: string; title: string; kind: string; status: string };
@@ -39,8 +39,7 @@ const LINK_COLORS: Record<string, string> = {
 };
 
 export function KnowledgeGraphPage() {
-  const navigate = useNavigate();
-
+  const { t } = useTranslation();
   const { data: graphData, isLoading } = useQuery({
     ...trpc.assets.graphData.queryOptions(),
     staleTime: 30_000,
@@ -67,13 +66,10 @@ export function KnowledgeGraphPage() {
     links: (graphData?.edges ?? []).map((e) => ({ ...e })) as LinkObject[],
   };
 
-  const handleNodeClick = useCallback(
-    (node: NodeObject) => {
-      const id = (node as unknown as GraphNode).id;
-      if (id) void navigate({ to: "/assets/$assetId", params: { assetId: id } });
-    },
-    [navigate],
-  );
+  const handleNodeClick = useCallback((node: NodeObject) => {
+    const id = (node as unknown as GraphNode).id;
+    if (id) openAssetDetail(id);
+  }, []);
 
   const nodeColor = useCallback(
     (node: NodeObject) => NODE_COLORS[(node as unknown as GraphNode).kind] ?? "#94a3b8",
@@ -94,24 +90,27 @@ export function KnowledgeGraphPage() {
   const nodeCount = graphData?.nodes.length ?? 0;
   const edgeCount = graphData?.edges.length ?? 0;
 
-  const statsLabel = nodeCount > 0 ? `${nodeCount} 个节点 · ${edgeCount} 条链接` : null;
+  const statsLabel =
+    nodeCount > 0 ? t("graph.stats", { nodes: nodeCount, edges: edgeCount }) : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-zinc-50">
       <PageChrome>
-        <h1 className="text-[13.5px] font-semibold tracking-normal text-zinc-950">知识图谱</h1>
+        <h1 className="text-[13.5px] font-semibold tracking-normal text-zinc-950">
+          {t("graph.title")}
+        </h1>
         {statsLabel && <span className="text-xs text-zinc-400">{statsLabel}</span>}
       </PageChrome>
       <div ref={canvasRef} className="relative min-h-0 flex-1 w-full bg-zinc-50">
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center text-sm text-zinc-400">
-            加载中…
+            {t("graph.loading")}
           </div>
         )}
         {!isLoading && nodeCount === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-zinc-400">
             <Network size={32} className="text-zinc-300" />
-            <span>当前资产库暂无链接数据</span>
+            <span>{t("graph.empty")}</span>
           </div>
         )}
         {!isLoading && nodeCount > 0 && (

@@ -3,14 +3,17 @@
  * @role    App-level React component composed by routes, shell, or shared workflows.
  * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
  * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ *          Language preference is stored under post.locale via changeAppLanguage.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAtomValue } from "jotai";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Settings } from "lucide-react";
 import { Button, Input, ListBox, Select } from "@heroui/react";
+import { useTranslation } from "react-i18next";
 
+import { changeAppLanguage, getStoredLocalePreference, type AppLocale } from "@/i18n";
 import { readSidebarWidthPct, SIDEBAR_MIN_WIDTH_PX } from "@/lib/asset-manager/storage";
 import { isMacWindow } from "@/lib/platform";
 import { updateStatusAtom } from "@/store/update-atoms";
@@ -18,46 +21,42 @@ import type { UpdateStatusEvent } from "@shared/contracts/update/update.contract
 
 type SettingsSection = "general";
 
-const NAV = [
-  {
-    group: "偏好",
-    items: [{ id: "general" as const, label: "通用", Icon: Settings }],
-  },
-];
-
-function updateStatusNote(status: UpdateStatusEvent | null): string {
+function updateStatusNote(
+  status: UpdateStatusEvent | null,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
   switch (status?.state) {
     case "checking":
-      return "检查中...";
+      return t("settings.updateChecking");
     case "available":
-      return `发现新版本 ${status.version ?? ""}`.trim();
+      return t("settings.updateAvailable", { version: status.version ?? "" }).trim();
     case "downloading":
-      return `下载中 ${status.percent ?? 0}%`;
+      return t("settings.updateDownloading", { percent: status.percent ?? 0 });
     case "downloaded":
-      return "已下载，正在重启...";
+      return t("settings.updateDownloaded");
     case "not-available":
-      return "已是最新版本";
+      return t("settings.updateLatest");
     case "error":
-      return "检查失败";
+      return t("settings.updateError");
     default:
-      return "启动时会自动检查更新";
+      return t("settings.updateIdle");
   }
 }
 
-function updateActionLabel(status: UpdateStatusEvent | null): string {
+function updateActionLabel(status: UpdateStatusEvent | null, t: (key: string) => string): string {
   if (status?.state === "available") {
-    return "下载更新";
+    return t("settings.downloadUpdate");
   }
   if (status?.state === "checking") {
-    return "检查中";
+    return t("settings.checking");
   }
   if (status?.state === "downloading") {
-    return "下载中";
+    return t("settings.downloading");
   }
   if (status?.state === "downloaded") {
-    return "重启中";
+    return t("settings.restarting");
   }
-  return "检查更新";
+  return t("settings.checkUpdate");
 }
 
 function isUpdateActionDisabled(status: UpdateStatusEvent | null): boolean {
@@ -69,11 +68,22 @@ function isUpdateActionDisabled(status: UpdateStatusEvent | null): boolean {
 }
 
 export function SettingsPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [active, setActive] = useState<SettingsSection>("general");
   const [query, setQuery] = useState("");
   const chromePadding = isMacWindow() ? "pl-[100px]" : "pl-3";
   const sidebarWidth = `${readSidebarWidthPct()}vw`;
+
+  const nav = useMemo(
+    () => [
+      {
+        group: t("settings.preferences"),
+        items: [{ id: "general" as const, label: t("settings.general"), Icon: Settings }],
+      },
+    ],
+    [t],
+  );
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -90,7 +100,7 @@ export function SettingsPage() {
               isIconOnly
               variant="ghost"
               size="sm"
-              aria-label="返回应用"
+              aria-label={t("nav.backToApp")}
               className="window-no-drag h-8 w-8 text-zinc-500 hover:bg-black/5"
               onPress={() => void navigate({ to: "/" })}
             >
@@ -102,7 +112,7 @@ export function SettingsPage() {
         {/* Search */}
         <div className="shrink-0 px-3 pb-2">
           <Input.Root
-            placeholder="搜索设置…"
+            placeholder={t("common.searchSettings")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="h-7 rounded-lg bg-black/[0.045] px-2 text-[12px] text-zinc-700 placeholder:text-zinc-400 outline-none border-none ring-0 w-full"
@@ -111,7 +121,7 @@ export function SettingsPage() {
 
         {/* Nav */}
         <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4 pt-1">
-          {NAV.map((section) => (
+          {nav.map((section) => (
             <div key={section.group} className="mb-1">
               <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                 {section.group}
@@ -193,20 +203,30 @@ function SettingRow({
   );
 }
 
-// A simple Select using the correct HeroUI v3 compound API
 function SettingSelect({
-  defaultKey,
+  selectedKey,
+  onSelectionChange,
   children,
   className = "w-36",
   isDisabled,
 }: {
-  defaultKey: string;
+  selectedKey: string;
+  onSelectionChange: (key: string) => void;
   children: React.ReactNode;
   className?: string;
   isDisabled?: boolean;
 }) {
   return (
-    <Select.Root defaultSelectedKey={defaultKey} isDisabled={isDisabled} className={className}>
+    <Select.Root
+      selectedKey={selectedKey}
+      onSelectionChange={(key) => {
+        if (key != null) {
+          onSelectionChange(String(key));
+        }
+      }}
+      isDisabled={isDisabled}
+      className={className}
+    >
       <Select.Trigger className="flex h-8 items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 text-[12.5px] text-zinc-700 hover:bg-zinc-50 data-[disabled]:opacity-50">
         <Select.Value />
         <Select.Indicator />
@@ -223,8 +243,12 @@ function SettingSelect({
 // ── Sections ──────────────────────────────────────────────────────────────
 
 function GeneralSection() {
+  const { t } = useTranslation();
   const updateStatus = useAtomValue(updateStatusAtom);
-  const updateButtonLabel = updateActionLabel(updateStatus);
+  const [localePreference, setLocalePreference] = useState<AppLocale>(() =>
+    getStoredLocalePreference(),
+  );
+  const updateButtonLabel = updateActionLabel(updateStatus, t);
   const updateButtonDisabled = isUpdateActionDisabled(updateStatus);
   const handleUpdateAction = () => {
     if (updateButtonDisabled) {
@@ -239,38 +263,48 @@ function GeneralSection() {
 
   return (
     <>
-      <SectionTitle>通用</SectionTitle>
+      <SectionTitle>{t("settings.general")}</SectionTitle>
 
       <SettingGroup>
-        <SettingRow title="语言" desc="界面显示语言">
-          <SettingSelect defaultKey="auto">
+        <SettingRow title={t("settings.language")} desc={t("settings.languageDesc")}>
+          <SettingSelect
+            selectedKey={localePreference}
+            onSelectionChange={(key) => {
+              const next = key as AppLocale;
+              setLocalePreference(next);
+              void changeAppLanguage(next);
+            }}
+          >
             <ListBox.Item
               id="auto"
+              textValue={t("settings.followSystem")}
               className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
             >
-              跟随系统
+              {t("settings.followSystem")}
             </ListBox.Item>
             <ListBox.Item
-              id="zh"
+              id="zh-CN"
+              textValue={t("settings.chinese")}
               className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
             >
-              中文
+              {t("settings.chinese")}
             </ListBox.Item>
             <ListBox.Item
               id="en"
+              textValue={t("settings.english")}
               className="cursor-pointer px-3 py-1.5 text-[12.5px] text-zinc-700 hover:bg-zinc-50"
             >
-              English
+              {t("settings.english")}
             </ListBox.Item>
           </SettingSelect>
         </SettingRow>
       </SettingGroup>
 
       <SettingGroup>
-        <SettingRow title="当前版本" desc="Post 桌面应用">
+        <SettingRow title={t("settings.currentVersion")} desc={t("settings.currentVersionDesc")}>
           <span className="font-mono text-[12.5px] text-zinc-500">v{__APP_VERSION__}</span>
         </SettingRow>
-        <SettingRow title="软件更新" desc={updateStatusNote(updateStatus)}>
+        <SettingRow title={t("settings.softwareUpdate")} desc={updateStatusNote(updateStatus, t)}>
           <Button
             size="sm"
             className="h-8 rounded-lg px-3 text-[12.5px]"

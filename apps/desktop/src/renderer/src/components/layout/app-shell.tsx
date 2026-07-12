@@ -15,6 +15,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Button, Popover } from "@heroui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { CheckCircle2, Info, Settings2, TriangleAlert, X, XCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import {
   getToastSnapshot,
   subscribeToasts,
@@ -25,6 +26,7 @@ import {
 
 import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
 import { applyFilterCommand } from "@/lib/asset-manager/apply-filter-command";
+import { openAssetDetail } from "@/lib/asset-manager/open-asset-detail";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { useHistoryNavigationShortcuts } from "@/hooks/use-history-navigation-shortcuts";
 import { ConfirmModalProvider } from "@/components/common/confirm-modal";
@@ -50,13 +52,10 @@ const COMPLETED_VISIBLE_MS = 8000;
 const EVENT_TASK_RETENTION_MS = 30 * 60 * 1000;
 const THUMBNAIL_REFRESH_BATCH_SIZE = 8;
 const TASK_EVENT_INVALIDATION_DELAY_MS = 250;
-const PF_TYPE: Record<FooterTaskType, { label: string }> = {
-  indexing: { label: "索引" },
-  reconcile: { label: "校验" },
-  sync: { label: "同步" },
-  thumbnails: { label: "缩略图" },
-  import: { label: "导入" },
-};
+
+function taskTypeLabel(type: FooterTaskType, t: (key: string) => string): string {
+  return t(`shell.taskType.${type}`);
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   // Mounted at the root shell (not AppLayout) so back/forward works on every route —
@@ -95,6 +94,7 @@ function GlobalToasts() {
 }
 
 function GlobalToast({ item }: { item: ToastItem }) {
+  const { t } = useTranslation();
   const Icon = getToastIcon(item.variant);
 
   return (
@@ -126,7 +126,7 @@ function GlobalToast({ item }: { item: ToastItem }) {
       ) : null}
       <button
         type="button"
-        aria-label="关闭通知"
+        aria-label={t("common.closeNotification")}
         className="window-no-drag grid h-6 w-6 shrink-0 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
         onClick={() => toast.close(item.id)}
       >
@@ -163,6 +163,7 @@ function getToastIconClassName(variant: ToastItem["variant"]) {
 }
 
 function GlobalStatusLine() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -261,7 +262,7 @@ function GlobalStatusLine() {
         }
 
         if (event.type === "asset-detail.open") {
-          void navigate({ to: "/assets/$assetId", params: { assetId: event.assetId } });
+          openAssetDetail(event.assetId);
         }
       },
       onError: (error) => {
@@ -420,12 +421,12 @@ function GlobalStatusLine() {
       <span className="pf-pill-glyph">
         <span className="pf-dot pf-dot--stale" />
       </span>
-      <span className="pf-pill-label">近期完成</span>
+      <span className="pf-pill-label">{t("shell.recentDone")}</span>
       <span className="pf-caret">▲</span>
     </span>
   ) : (
     <span className="pf-idle">
-      <PFCheck s={12} /> 已是最新
+      <PFCheck s={12} /> {t("shell.upToDate")}
     </span>
   );
 
@@ -442,7 +443,7 @@ function GlobalStatusLine() {
           isIconOnly
           variant="ghost"
           size="sm"
-          aria-label="设置"
+          aria-label={t("shell.settings")}
           className="h-6 w-6 min-w-6 rounded-md text-zinc-400"
           onPress={() => void navigate({ to: "/settings" })}
         >
@@ -458,7 +459,7 @@ function GlobalStatusLine() {
           <Popover.Trigger className="pf-folder-trigger">
             <span
               className={`pf-folder ${vaultName ? "" : "pf-folder--empty"}`}
-              title={vaultName ? (vaultPath ?? vaultName) : "未关联资产库"}
+              title={vaultName ? (vaultPath ?? vaultName) : t("shell.noVault")}
             >
               <span className="pf-folder-ico">
                 <PFFolderIco />
@@ -469,7 +470,7 @@ function GlobalStatusLine() {
           <Popover.Content className="pf-menu-content" offset={7} placement="top start">
             <Popover.Dialog className="pf-menu-dialog">
               <div className="pf-folder-menu">
-                <div className="pf-menu-head">资产库</div>
+                <div className="pf-menu-head">{t("shell.vaults")}</div>
                 <div className="pf-menu-list">
                   {(vaultsQuery.data ?? []).map((vault) => (
                     <button
@@ -493,7 +494,7 @@ function GlobalStatusLine() {
                     </button>
                   ))}
                   {vaultsQuery.data?.length === 0 ? (
-                    <div className="pf-menu-empty">还没有资产库</div>
+                    <div className="pf-menu-empty">{t("shell.noVaultsYet")}</div>
                   ) : null}
                 </div>
                 <div className="pf-menu-actions">
@@ -503,7 +504,7 @@ function GlobalStatusLine() {
                     disabled={selectFolder.isPending}
                     onClick={chooseFolder}
                   >
-                    {selectFolder.isPending ? "索引中" : "选择其他文件夹"}
+                    {selectFolder.isPending ? t("shell.indexing") : t("shell.chooseOtherFolder")}
                   </button>
                 </div>
               </div>
@@ -519,10 +520,10 @@ function GlobalStatusLine() {
             className={`pf-sync ${syncRunning ? "is-running" : ""}`}
             disabled={!canSync}
             onClick={syncVault}
-            title={syncRunning ? "正在同步" : "点击重新同步"}
+            title={syncRunning ? t("shell.syncRunningTitle") : t("shell.syncClickTitle")}
           >
             <span className={syncRunning ? "pf-spin pf-spin--sync" : "pf-dot pf-dot--good"} />
-            <span>{syncRunning ? "同步中" : "已同步完成"}</span>
+            <span>{syncRunning ? t("shell.syncing") : t("shell.syncDone")}</span>
           </button>
         ) : null}
         {hasPop ? (
@@ -590,15 +591,16 @@ function PFPill({
   others: number;
   open: boolean;
 }) {
-  const activeTypeLabel = active ? PF_TYPE[active.type].label : "任务";
+  const { t } = useTranslation();
+  const activeTypeLabel = active ? taskTypeLabel(active.type, t) : t("shell.task");
   const label =
     kind === "run"
-      ? `正在${activeTypeLabel}`
+      ? t("shell.taskRunning", { label: activeTypeLabel })
       : kind === "queue"
-        ? `${count ?? 0} 项排队`
+        ? t("shell.taskQueued", { count: count ?? 0 })
         : kind === "bad"
-          ? `${count ?? 0} 项失败`
-          : `${activeTypeLabel}已完成`;
+          ? t("shell.taskFailed", { count: count ?? 0 })
+          : t("shell.taskCompleted", { label: activeTypeLabel });
   const countStr = kind === "run" && active ? getTaskProgressLabel(active) : null;
   const glyph =
     kind === "run" ? (
@@ -633,18 +635,19 @@ function PFPopover({
   completed: FooterTask[];
   onDismiss: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const groups = [
-    { key: "running", title: "进行中", items: running },
-    { key: "queued", title: "排队中", items: queued },
-    { key: "failed", title: "失败", items: failed },
-    { key: "completed", title: "近期完成", items: completed },
+    { key: "running", title: t("shell.running"), items: running },
+    { key: "queued", title: t("shell.queued"), items: queued },
+    { key: "failed", title: t("shell.failed"), items: failed },
+    { key: "completed", title: t("shell.recentDone"), items: completed },
   ].filter((group) => group.items.length > 0);
   const total = running.length + queued.length + failed.length + completed.length;
 
   return (
     <div className="pf-pop" onClick={(event) => event.stopPropagation()}>
       <div className="pf-pop-head">
-        <span className="pf-pop-title">后台任务</span>
+        <span className="pf-pop-title">{t("shell.backgroundTasks")}</span>
         <span className="pf-pop-n">{total}</span>
       </div>
       <div className="pf-pop-body">
@@ -656,7 +659,7 @@ function PFPopover({
               <span className="pf-grp-n">{group.items.length}</span>
             </div>
             {group.items.map((task) => (
-              <PFRow key={task.id} t={task} group={group.key} onDismiss={onDismiss} />
+              <PFRow key={task.id} task={task} group={group.key} onDismiss={onDismiss} />
             ))}
           </div>
         ))}
@@ -666,43 +669,50 @@ function PFPopover({
 }
 
 function PFRow({
-  t,
+  task,
   group,
   onDismiss,
 }: {
-  t: FooterTask;
+  task: FooterTask;
   group: string;
   onDismiss: (id: string) => void;
 }) {
-  const progress = t.total > 0 ? Math.round((t.done / t.total) * 100) : 0;
+  const { t } = useTranslation();
+  const progress = task.total > 0 ? Math.round((task.done / task.total) * 100) : 0;
 
   return (
     <div className={`pf-trow pf-trow--${group}`}>
       <span className="pf-tico">
-        <PFTaskIco t={t.type} />
+        <PFTaskIco type={task.type} />
       </span>
       <div className="pf-tmain">
-        <div className="pf-tlabel">{PF_TYPE[t.type].label}</div>
+        <div className="pf-tlabel">{taskTypeLabel(task.type, t)}</div>
         {group === "running" ? (
           <div className="pf-tbar">
             <i style={{ width: `${progress}%` }} />
           </div>
         ) : (
           <div className={`pf-tsub ${group === "failed" ? "pf-tsub--bad" : ""}`}>
-            {group === "queued" ? "排队中" : group === "failed" ? (t.reason ?? "失败") : "已完成"}
+            {group === "queued"
+              ? t("shell.queued")
+              : group === "failed"
+                ? (task.reason ?? t("shell.failed"))
+                : t("shell.completed")}
           </div>
         )}
       </div>
       <div className={`pf-tright ${group === "completed" ? "pf-tright--good" : ""}`}>
-        {group === "running" ? <span>{getTaskProgressLabel(t)}</span> : null}
-        {group === "queued" ? <span style={{ color: "var(--faint,#b6b6b2)" }}>等待</span> : null}
+        {group === "running" ? <span>{getTaskProgressLabel(task)}</span> : null}
+        {group === "queued" ? (
+          <span style={{ color: "var(--faint,#b6b6b2)" }}>{t("shell.waiting")}</span>
+        ) : null}
         {group === "completed" ? <PFCheck s={13} /> : null}
         {group === "failed" ? (
           <button
             type="button"
             className="pf-tdismiss"
-            title="忽略"
-            onClick={() => onDismiss(t.id)}
+            title={t("shell.dismiss")}
+            onClick={() => onDismiss(task.id)}
           >
             ✕
           </button>
@@ -728,7 +738,7 @@ function getTaskProgressLabel(task: FooterTask) {
   return null;
 }
 
-function PFTaskIco({ t, size = 13 }: { t: FooterTaskType; size?: number }) {
+function PFTaskIco({ type, size = 13 }: { type: FooterTaskType; size?: number }) {
   const iconProps = {
     width: size,
     height: size,
@@ -740,7 +750,7 @@ function PFTaskIco({ t, size = 13 }: { t: FooterTaskType; size?: number }) {
     strokeLinejoin: "round" as const,
   };
 
-  if (t === "indexing") {
+  if (type === "indexing") {
     return (
       <svg {...iconProps}>
         <line x1="3" y1="4" x2="11" y2="4" />
@@ -751,7 +761,7 @@ function PFTaskIco({ t, size = 13 }: { t: FooterTaskType; size?: number }) {
     );
   }
 
-  if (t === "reconcile") {
+  if (type === "reconcile") {
     return (
       <svg {...iconProps}>
         <path d="M3.3 6.4a4.6 4.6 0 0 1 8-1.6" />

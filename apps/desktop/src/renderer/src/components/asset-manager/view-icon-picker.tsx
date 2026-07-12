@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "@heroui/react";
 import { FolderKanban, RotateCcw, Search, X } from "lucide-react";
 import { DynamicIcon, iconNames, type IconName } from "lucide-react/dynamic";
+import { useTranslation } from "react-i18next";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -131,6 +132,7 @@ type ViewIconPickerProps = {
 };
 
 export function ViewIconPicker({ value, onChange, isDisabled = false }: ViewIconPickerProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [scrollTop, setScrollTop] = useState(0);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -184,7 +186,7 @@ export function ViewIconPicker({ value, onChange, isDisabled = false }: ViewIcon
           <Input.Root
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索 Lucide icon"
+            placeholder={t("views.searchIcon")}
             className="h-8 w-full rounded-lg border border-zinc-200 bg-white pl-8 pr-2 text-[12px] outline-none"
             disabled={isDisabled}
           />
@@ -193,7 +195,7 @@ export function ViewIconPicker({ value, onChange, isDisabled = false }: ViewIcon
           type="button"
           className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-lg text-zinc-400 transition-colors hover:bg-white hover:text-zinc-700 disabled:pointer-events-none disabled:opacity-35"
           disabled={isDisabled || value === DEFAULT_VIEW_ICON}
-          aria-label="恢复默认 Icon"
+          aria-label={t("views.resetIcon")}
           onClick={() => onChange(DEFAULT_VIEW_ICON)}
         >
           <RotateCcw size={13} />
@@ -202,7 +204,7 @@ export function ViewIconPicker({ value, onChange, isDisabled = false }: ViewIcon
           type="button"
           className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-lg text-zinc-400 transition-colors hover:bg-white hover:text-zinc-700 disabled:pointer-events-none disabled:opacity-35"
           disabled={isDisabled || value === "#"}
-          aria-label="清除 Icon"
+          aria-label={t("views.clearIcon")}
           onClick={() => onChange("#")}
         >
           <X size={13} />
@@ -233,7 +235,7 @@ export function ViewIconPicker({ value, onChange, isDisabled = false }: ViewIcon
                               ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
                               : "border-zinc-100 hover:border-zinc-200 hover:bg-zinc-50 hover:text-zinc-800"
                           }`}
-                          aria-label={`选择 ${name}`}
+                          aria-label={t("views.selectIcon", { name })}
                           title={name}
                           onClick={() => onChange(toViewIconValue(name))}
                         >
@@ -247,7 +249,7 @@ export function ViewIconPicker({ value, onChange, isDisabled = false }: ViewIcon
             </div>
           ) : (
             <div className="grid h-28 place-items-center text-[12px] text-zinc-400">
-              没有匹配的 Icon
+              {t("views.noIconMatch")}
             </div>
           )}
         </ScrollArea>

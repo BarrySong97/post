@@ -16,6 +16,7 @@ import {
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   AccordionBody,
   AccordionItem,
@@ -55,8 +56,8 @@ import {
   ViewIconRenderer,
 } from "@/components/asset-manager/view-icon-picker";
 import {
-  tagFormSchema,
-  viewFormSchema,
+  createTagFormSchema,
+  createViewFormSchema,
   type TagFormValues,
   type ViewFormValues,
 } from "@/lib/asset-manager/form-schemas";
@@ -141,6 +142,8 @@ type TagFormModalProps = {
 };
 
 export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormModalProps) {
+  const { t } = useTranslation();
+  const tagFormSchema = useMemo(() => createTagFormSchema(t), [t]);
   const invalidateVaultState = useInvalidateVaultState();
   const isEdit = mode.kind === "edit";
 
@@ -180,14 +183,14 @@ export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormMod
       onOpenChange(false);
       await invalidateVaultState();
       showToastAfterRefresh(() => {
-        toast.success("标签已更新");
+        toast.success(t("tags.updated"));
       });
     } else {
       await createTag.mutateAsync({ vaultId, name: values.name, color: values.color });
       onOpenChange(false);
       await invalidateVaultState();
       showToastAfterRefresh(() => {
-        toast.success("标签已创建");
+        toast.success(t("tags.created"));
       });
     }
   });
@@ -206,7 +209,7 @@ export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormMod
                   <Hash size={16} />
                 </Modal.Icon>
                 <Modal.Heading className="text-[15px] font-semibold text-zinc-950">
-                  {isEdit ? "编辑 Tag" : "新建 Tag"}
+                  {isEdit ? t("tags.editTitle") : t("tags.createTitle")}
                 </Modal.Heading>
               </Modal.Header>
               <Modal.Body className="space-y-4 px-2 py-0">
@@ -224,10 +227,10 @@ export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormMod
                       className="block w-full"
                     >
                       <Label className="mb-1.5 block text-[12px] font-semibold text-zinc-500">
-                        名称
+                        {t("common.name")}
                       </Label>
                       <Input.Root
-                        placeholder="例如：灵感"
+                        placeholder={t("tags.namePlaceholder")}
                         autoFocus
                         className={`h-9 w-full rounded-lg border bg-white px-3 text-[13px] outline-none ${
                           fieldState.invalid ? "border-red-400" : "border-zinc-200"
@@ -243,7 +246,9 @@ export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormMod
                 />
 
                 <div>
-                  <div className="mb-2 text-[12px] font-semibold text-zinc-500">颜色</div>
+                  <div className="mb-2 text-[12px] font-semibold text-zinc-500">
+                    {t("tags.color")}
+                  </div>
                   <Controller
                     control={control}
                     name="color"
@@ -259,7 +264,7 @@ export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormMod
                             <ColorPicker.Trigger className="flex h-8 cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2 text-[11px] font-medium text-zinc-600 outline-none transition-colors hover:bg-zinc-50 data-[focus-visible]:ring-2 data-[focus-visible]:ring-zinc-500/25">
                               <ColorSwatch size="sm" shape="circle" />
                               <Label className="cursor-pointer text-[11px] font-medium text-zinc-600">
-                                自定义
+                                {t("tags.customColor")}
                               </Label>
                             </ColorPicker.Trigger>
                             <ColorPicker.Popover
@@ -282,7 +287,7 @@ export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormMod
                             </ColorPicker.Popover>
                           </ColorPicker>
                           <ColorSwatchPicker
-                            aria-label="快速选择 Tag 颜色"
+                            aria-label={t("tags.quickColor")}
                             layout="grid"
                             size="sm"
                             variant="square"
@@ -316,7 +321,7 @@ export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormMod
                   isDisabled={isPending}
                   onPress={() => onOpenChange(false)}
                 >
-                  取消
+                  {t("common.cancel")}
                 </Button>
                 <Button
                   type="submit"
@@ -326,7 +331,7 @@ export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormMod
                   isDisabled={isPending || !canSubmit}
                 >
                   {isPending ? <Loader2 size={13} className="animate-spin" /> : null}
-                  {isEdit ? "保存" : "创建"}
+                  {isEdit ? t("common.save") : t("common.create")}
                 </Button>
               </Modal.Footer>
             </Form>
@@ -358,6 +363,8 @@ export function ViewFormModal({
   sourceOptions,
   onOpenChange,
 }: ViewFormModalProps) {
+  const { t } = useTranslation();
+  const viewFormSchema = useMemo(() => createViewFormSchema(t), [t]);
   const [iconOpen, setIconOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(true);
   const invalidateVaultState = useInvalidateVaultState();
@@ -380,8 +387,8 @@ export function ViewFormModal({
   });
 
   const effectiveSourceOptions = useMemo(
-    () => (sourceOptions.length > 0 ? sourceOptions : ["资产库"]),
-    [sourceOptions],
+    () => (sourceOptions.length > 0 ? sourceOptions : [t("assets.sourceVault")]),
+    [sourceOptions, t],
   );
 
   useEffect(() => {
@@ -422,14 +429,14 @@ export function ViewFormModal({
       onOpenChange(false);
       await invalidateVaultState();
       showToastAfterRefresh(() => {
-        toast.success("View 已更新");
+        toast.success(t("views.updated"));
       });
     } else {
       await createSavedView.mutateAsync({ vaultId, ...payload });
       onOpenChange(false);
       await invalidateVaultState();
       showToastAfterRefresh(() => {
-        toast.success("View 已创建");
+        toast.success(t("views.created"));
       });
     }
   });
@@ -445,7 +452,7 @@ export function ViewFormModal({
                   <ViewIconRenderer value={watchedIcon} size={16} />
                 </Modal.Icon>
                 <Modal.Heading className="text-[15px] font-semibold text-zinc-950">
-                  {isEdit ? "编辑 View" : "新建 View"}
+                  {isEdit ? t("views.editTitle") : t("views.createTitle")}
                 </Modal.Heading>
               </Modal.Header>
               <Modal.Body className="space-y-5 px-2 pb-0 pt-2">
@@ -463,10 +470,10 @@ export function ViewFormModal({
                       className="block w-full"
                     >
                       <Label className="mb-1.5 block text-[12px] font-semibold text-zinc-500">
-                        名称
+                        {t("common.name")}
                       </Label>
                       <Input.Root
-                        placeholder="例如：图片素材"
+                        placeholder={t("views.namePlaceholder")}
                         autoFocus
                         className={`h-9 w-full rounded-lg border bg-white px-3 text-[13px] outline-none ${
                           fieldState.invalid ? "border-red-400" : "border-zinc-200"
@@ -519,7 +526,7 @@ export function ViewFormModal({
                     return (
                       <CollapsibleSection
                         id="view-filters"
-                        title="筛选条件"
+                        title={t("views.filtersTitle")}
                         isOpen={filterOpen}
                         onOpenChange={setFilterOpen}
                       >
@@ -544,7 +551,7 @@ export function ViewFormModal({
                   isDisabled={isPending}
                   onPress={() => onOpenChange(false)}
                 >
-                  取消
+                  {t("common.cancel")}
                 </Button>
                 <Button
                   type="submit"
@@ -554,7 +561,7 @@ export function ViewFormModal({
                   isDisabled={isPending || !canSubmit}
                 >
                   {isPending ? <Loader2 size={13} className="animate-spin" /> : null}
-                  {isEdit ? "保存" : "创建"}
+                  {isEdit ? t("common.save") : t("common.create")}
                 </Button>
               </Modal.Footer>
             </Form>

@@ -10,6 +10,7 @@
  */
 
 import { useLayoutEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { ArrowLeft, ArrowRight, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { Button } from "@heroui/react";
 
@@ -77,6 +78,7 @@ export function WindowChromeNav({
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
 }) {
+  const { t } = useTranslation();
   const { canGoBack, canGoForward, goBack, goForward } = useHistoryNavigation();
   const ToggleIcon = sidebarCollapsed ? PanelLeftOpen : PanelLeftClose;
   const safeZonePadding = isMacWindow() ? "pl-[100px]" : "pl-3";
@@ -91,7 +93,7 @@ export function WindowChromeNav({
       <div className="window-no-drag pointer-events-auto -ml-1 inline-flex items-center gap-1">
         <Button
           isIconOnly
-          aria-label={sidebarCollapsed ? "展开左侧栏" : "收起左侧栏"}
+          aria-label={sidebarCollapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar")}
           data-no-drag
           size="sm"
           variant="ghost"
@@ -102,7 +104,7 @@ export function WindowChromeNav({
         </Button>
         <Button
           isIconOnly
-          aria-label="后退"
+          aria-label={t("nav.back")}
           data-no-drag
           size="sm"
           variant="ghost"
@@ -114,7 +116,7 @@ export function WindowChromeNav({
         </Button>
         <Button
           isIconOnly
-          aria-label="前进"
+          aria-label={t("nav.forward")}
           data-no-drag
           size="sm"
           variant="ghost"

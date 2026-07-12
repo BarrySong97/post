@@ -6,6 +6,7 @@
  */
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { Button, Modal, useOverlayState } from "@heroui/react";
 import { Loader2, TriangleAlert } from "lucide-react";
 
@@ -32,6 +33,7 @@ type ConfirmModalContextValue = {
 const ConfirmModalContext = createContext<ConfirmModalContextValue | null>(null);
 
 export function ConfirmModalProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const [request, setRequest] = useState<ConfirmModalRequest | null>(null);
   const [busyAction, setBusyAction] = useState<"confirm" | "cancel" | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -56,9 +58,9 @@ export function ConfirmModalProvider({ children }: { children: ReactNode }) {
       closeRequest(false);
     } catch (error) {
       setBusyAction(null);
-      setErrorMessage(error instanceof Error ? error.message : "取消操作失败");
+      setErrorMessage(error instanceof Error ? error.message : t("common.cancelFailed"));
     }
-  }, [busyAction, closeRequest, request]);
+  }, [busyAction, closeRequest, request, t]);
 
   const modalState = useOverlayState({
     isOpen: Boolean(request),
@@ -89,9 +91,9 @@ export function ConfirmModalProvider({ children }: { children: ReactNode }) {
       closeRequest(true);
     } catch (error) {
       setBusyAction(null);
-      setErrorMessage(error instanceof Error ? error.message : "确认操作失败");
+      setErrorMessage(error instanceof Error ? error.message : t("common.confirmFailed"));
     }
-  }, [busyAction, closeRequest, request]);
+  }, [busyAction, closeRequest, request, t]);
 
   const value = useMemo<ConfirmModalContextValue>(() => ({ confirm }), [confirm]);
   const variant = request?.variant ?? "default";
@@ -138,7 +140,7 @@ export function ConfirmModalProvider({ children }: { children: ReactNode }) {
                   onPress={() => void handleCancel()}
                 >
                   {busyAction === "cancel" ? <Loader2 size={13} className="animate-spin" /> : null}
-                  {request?.cancelLabel ?? "取消"}
+                  {request?.cancelLabel ?? t("common.cancel")}
                 </Button>
                 <Button
                   size="sm"
@@ -148,7 +150,7 @@ export function ConfirmModalProvider({ children }: { children: ReactNode }) {
                   onPress={() => void handleConfirm()}
                 >
                   {busyAction === "confirm" ? <Loader2 size={13} className="animate-spin" /> : null}
-                  {request?.confirmLabel ?? "确认"}
+                  {request?.confirmLabel ?? t("common.confirm")}
                 </Button>
               </Modal.Footer>
             </Modal.Dialog>

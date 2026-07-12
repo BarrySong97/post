@@ -12,6 +12,7 @@ import type {
   AssetSortOrder,
   AssetTimeFilter,
 } from "@/store/asset-manager-atoms";
+import i18n from "@/i18n";
 
 export function extractDomain(rawUrl: string | null | undefined): string | undefined {
   if (!rawUrl) {
@@ -100,7 +101,7 @@ function formatAssetTime(value: unknown) {
   const date = value instanceof Date ? value : new Date(value as string | number);
 
   if (Number.isNaN(date.getTime())) {
-    return "刚刚";
+    return i18n.t("assets.justNow");
   }
 
   return ASSET_TIME_FORMATTER.format(date);
@@ -116,7 +117,8 @@ function getAssetTimestampMs(value: unknown, fallbackMs = Date.now()) {
 }
 
 export function mapIndexedAsset(asset: IndexedAsset): Asset {
-  const tag = asset.tags[0]?.name ?? "待整理";
+  // Sentinel display placeholder for untagged assets (not a real user tag).
+  const tag = asset.tags[0]?.name ?? i18n.t("assets.untagged");
   const kind = mapIndexedAssetKind(asset.kind, asset.extension);
   const extension = asset.extension ?? asset.fileName.split(".").pop() ?? "file";
   const mediaUrl =
@@ -136,10 +138,10 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
   const metaPrefix = {
     markdown: "Markdown",
     post: "X Post",
-    image: "图片",
-    video: "视频",
-    link: "链接",
-    web: "网页",
+    image: i18n.t("assets.kind.image"),
+    video: i18n.t("assets.kind.video"),
+    link: i18n.t("assets.kind.link"),
+    web: i18n.t("assets.kind.web"),
     file: extension.toUpperCase(),
   } satisfies Record<AssetKind, string>;
 
@@ -200,20 +202,23 @@ export function getActiveFilterCount(filters: AssetFilterState) {
   );
 }
 
+/** Stable source key used in filter state (not a localized label). */
 export function getAssetSourceLabel(asset: Asset) {
   if (asset.sourceType === "vault") {
-    return "资产库";
+    return "vault";
   }
 
   if (asset.sourceType === "external_file") {
-    return "本地文件";
+    return "external_file";
   }
 
-  return "链接";
+  return "url";
 }
 
 function getAssetTagNames(asset: Asset) {
-  return asset.tag === "待整理" ? [] : [asset.tag];
+  const untagged = i18n.t("assets.untagged");
+  // Also treat legacy Chinese placeholder as untagged for filter matching.
+  return asset.tag === untagged || asset.tag === "待整理" ? [] : [asset.tag];
 }
 
 function isAssetInTimeRange(asset: Asset, time: AssetTimeFilter) {

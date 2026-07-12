@@ -9,23 +9,27 @@
 import { useEffect, useRef } from "react";
 import { useSetAtom } from "jotai";
 import { useRouterState } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
 
 import { toast } from "@/lib/toast";
 import { updateStatusAtom } from "@/store/update-atoms";
 
 export function AutoUpdateProvider() {
+  const { t } = useTranslation();
   const setUpdateStatus = useSetAtom(updateStatusAtom);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const pathnameRef = useRef(pathname);
+  const tRef = useRef(t);
   pathnameRef.current = pathname;
+  tRef.current = t;
 
   useEffect(() => {
     return window.api.updater.onStatus((event) => {
       setUpdateStatus(event);
 
       if (event.state === "error" && pathnameRef.current !== "/settings") {
-        toast.danger("更新失败", {
-          description: event.message ?? "请稍后重试",
+        toast.danger(tRef.current("update.failed"), {
+          description: event.message ?? tRef.current("common.retryLater"),
         });
       }
     });

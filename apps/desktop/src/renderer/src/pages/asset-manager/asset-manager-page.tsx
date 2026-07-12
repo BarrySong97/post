@@ -2,7 +2,8 @@
  * @purpose Render the asset manager surface for the desktop renderer.
  * @role    App-level React component composed by routes, shell, or shared workflows.
  * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
- * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
+ * @gotcha  Soft detail uses home search `asset=<id>` and keeps the board mounted under the overlay
+ *          so Back preserves scroll without URL `i`/`o` restore. Keep layouts dense per design.md.
  */
 
 import React, {
@@ -42,7 +43,7 @@ import type {
 import { isMacWindow } from "@/lib/platform";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useSearch } from "@tanstack/react-router";
 import { Plyr, type PlyrOptions, type PlyrSource } from "plyr-react";
 import "plyr-react/plyr.css";
 import ReactMarkdown from "react-markdown";
@@ -90,6 +91,8 @@ import {
   TagGroup,
 } from "@heroui/react";
 import { toast } from "@/lib/toast";
+import { useTranslation } from "react-i18next";
+import { openAssetDetail } from "@/lib/asset-manager/open-asset-detail";
 
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -100,10 +103,10 @@ import { trpc, trpcClient, type RouterInputs } from "@/lib/trpc";
 import { load as yamlLoad } from "js-yaml";
 import {
   AssetFilterPanel,
-  SORT_OPTION_LABELS,
-  STATUS_FILTER_LABELS,
-  TIME_FILTER_LABELS,
-  TYPE_FILTER_LABELS,
+  getSortOptionLabel,
+  getStatusFilterLabel,
+  getTimeFilterLabel,
+  getTypeFilterLabel,
   assetFiltersToSavedViewFilters,
   savedViewFiltersToAssetFilters,
   sourceLabelsToTypes,
@@ -391,6 +394,7 @@ function TagPill({ name }: { name: string }) {
 }
 
 function VisualBlock({ asset }: { asset: Asset }) {
+  const { t } = useTranslation();
   const heightCls = { short: "h-32", medium: "h-44", tall: "h-72" }[asset.height ?? "medium"];
   const grad = `linear-gradient(135deg, oklch(0.96 0.03 ${asset.accent}), oklch(0.91 0.05 ${asset.accent + 28}))`;
   const hatch = `oklch(0.72 0.09 ${asset.accent})`;
@@ -431,8 +435,14 @@ function VisualBlock({ asset }: { asset: Asset }) {
           <div className="flex items-center gap-1.5 rounded-md bg-white/70 px-2.5 py-1 text-[11px] font-medium text-zinc-700 shadow-sm backdrop-blur">
             <ImageIcon size={12} />
             {asset.sourceType === "url"
-              ? `链接图片${asset.domain ? ` · ${asset.domain}` : ""}`
-              : `本地图片${asset.imageCount ? ` · ${asset.imageCount} 张` : ""}`}
+              ? t("assets.linkImage", {
+                  domain: asset.domain ? t("assets.linkImageDomain", { domain: asset.domain }) : "",
+                })
+              : t("assets.localImage", {
+                  count: asset.imageCount
+                    ? t("assets.localImageCount", { count: asset.imageCount })
+                    : "",
+                })}
           </div>
         </div>
       </div>
@@ -472,7 +482,7 @@ function VisualBlock({ asset }: { asset: Asset }) {
           </span>
         ) : (
           <span className="absolute bottom-2 left-2 rounded bg-zinc-900/50 px-1.5 py-0.5 text-[11px] text-white/80 backdrop-blur-sm">
-            本地视频
+            {t("assets.localVideo")}
           </span>
         )}
       </div>
@@ -751,10 +761,11 @@ function AssetCardPrimaryTagChip({ asset, className }: { asset: Asset; className
 }
 
 function AssetCardTagRow({ asset }: { asset: Asset }) {
+  const { t } = useTranslation();
   const hasTag = asset.tagIds.length > 0;
   const isPrivate = asset.privacy === "private";
 
-  // Untagged assets only carry the "待整理" placeholder (no real tag), so show nothing.
+  // Untagged assets only carry the untagged placeholder (no real tag), so show nothing.
   if (!hasTag && !isPrivate) {
     return null;
   }
@@ -773,7 +784,7 @@ function AssetCardTagRow({ asset }: { asset: Asset }) {
           className="h-auto min-h-0 gap-1 bg-transparent px-0 py-0 text-[10.5px] font-semibold text-amber-700"
         >
           <ShieldCheck size={11} />
-          私密
+          {t("assets.private")}
         </Chip>
       ) : null}
     </div>
@@ -816,10 +827,13 @@ function AssetCardAvatar({ asset }: { asset: Asset }) {
 // Attribution header for "quote"-style assets: avatar + author name on the left, published
 // date pushed to the far right. The source is part of the content, so it renders inline.
 function AssetCardAttribution({ asset }: { asset: Asset }) {
+  const { t } = useTranslation();
   const name =
     asset.authorName ??
     asset.authorHandle ??
-    (asset.platform === "x" || asset.platform === "twitter" ? "X Post" : (asset.domain ?? "帖子"));
+    (asset.platform === "x" || asset.platform === "twitter"
+      ? "X Post"
+      : (asset.domain ?? t("assets.postFallback")));
 
   return (
     <div className="flex items-center gap-2 text-[12px] text-[#6c6a64]">
@@ -843,7 +857,7 @@ const AssetCard = React.memo(function AssetCard({
   onToggleSelected?: (assetId: string) => void;
   onOpenContextMenu?: (state: AssetCardContextMenuState) => void;
 }) {
-  const navigate = useNavigate();
+  const { t } = useTranslation();
   const hasCover =
     asset.kind === "image" || asset.kind === "video" || (asset.kind === "web" && asset.ogImage);
   const showUrlRow = asset.kind === "link" || (asset.kind === "web" && !asset.ogImage);
@@ -861,7 +875,7 @@ const AssetCard = React.memo(function AssetCard({
       {selectable ? (
         <button
           type="button"
-          aria-label={selected ? "取消选择图片" : "选择图片加入图集"}
+          aria-label={selected ? t("assets.deselectImage") : t("assets.selectImage")}
           className={`absolute right-2.5 top-2.5 z-10 grid h-6 w-6 place-items-center rounded-lg border shadow-sm backdrop-blur transition-colors ${
             selected
               ? "border-zinc-900 bg-zinc-900 text-white"
@@ -879,7 +893,7 @@ const AssetCard = React.memo(function AssetCard({
         type="button"
         className="block w-full text-left outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/20"
         onClick={() => {
-          void navigate({ to: "/assets/$assetId", params: { assetId: asset.id } });
+          openAssetDetail(asset.id);
         }}
       >
         {hasCover ? (
@@ -999,6 +1013,7 @@ function AssetBoardHeader({
   onToggleTerminal,
   dragEnabled = true,
 }: AssetBoardHeaderProps) {
+  const { t } = useTranslation();
   const headerRef = useToolbarClearance();
   const filterActive = filterOpen || activeFilterCount > 0;
   const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
@@ -1035,7 +1050,7 @@ function AssetBoardHeader({
       className={`${dragClassName} relative z-[75] flex h-10 shrink-0 items-center gap-2.5 border-b border-zinc-100 bg-white px-6`}
     >
       <h1 className="mr-auto text-[13.5px] font-semibold tracking-normal text-zinc-950">
-        全部资产
+        {t("assets.allAssets")}
       </h1>
       <div className="window-no-drag relative z-[80] flex items-center gap-2.5 pointer-events-auto">
         <Button
@@ -1051,7 +1066,7 @@ function AssetBoardHeader({
           onPress={onToggleFilter}
         >
           <Filter className={HEADER_ICON_CLASS_NAME} />
-          筛选
+          {t("assets.filter")}
           {activeFilterCount > 0 ? (
             <span className="ml-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-blue-600 px-1 text-[9px] font-bold leading-none text-white">
               {activeFilterCount}
@@ -1068,7 +1083,7 @@ function AssetBoardHeader({
             <button
               type="button"
               className="window-no-drag inline-grid h-6 w-7 place-items-center border-r border-zinc-200 transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-45"
-              aria-label={`用 ${preferredOpenTarget.label} 打开资产库`}
+              aria-label={t("assets.openVaultWith", { label: preferredOpenTarget.label })}
               disabled={openVaultLocation.isPending}
               onClick={() => openVaultWithTarget(preferredOpenTarget.id, false)}
             >
@@ -1080,7 +1095,7 @@ function AssetBoardHeader({
             <Dropdown isOpen={openWithMenuOpen} onOpenChange={setOpenWithMenuOpen}>
               <Dropdown.Trigger
                 className="window-no-drag inline-grid h-6 w-6 place-items-center outline-none transition-colors hover:bg-zinc-50"
-                aria-label="选择打开方式"
+                aria-label={t("assets.chooseOpenMethod")}
               >
                 <ChevronDown
                   className={`${HEADER_ICON_CLASS_NAME} transition-transform duration-200 ${
@@ -1094,7 +1109,7 @@ function AssetBoardHeader({
                 placement="bottom end"
               >
                 <Dropdown.Menu
-                  aria-label="打开资产库"
+                  aria-label={t("assets.openVault")}
                   className="min-w-36 p-0 outline-none"
                   disabledKeys={
                     openVaultLocation.isPending ? OPEN_VAULT_TARGETS.map((target) => target.id) : []
@@ -1138,7 +1153,7 @@ function AssetBoardHeader({
         ) : (
           <span
             className={`${smallButtonClassName} inline-flex cursor-default items-center border border-zinc-200 bg-white text-zinc-300`}
-            title="还没有选择资产库"
+            title={t("assets.noVaultSelected")}
           >
             <FolderOpen className={HEADER_ICON_CLASS_NAME} />
             <ChevronDown className={HEADER_ICON_CLASS_NAME} />
@@ -1149,7 +1164,9 @@ function AssetBoardHeader({
             size="sm"
             variant={terminalOpen ? "secondary" : "ghost"}
             isDisabled={!terminalAvailable}
-            aria-label={terminalAvailable ? "打开终端侧栏" : "当前平台暂不支持终端侧栏"}
+            aria-label={
+              terminalAvailable ? t("assets.openTerminal") : t("assets.terminalUnsupported")
+            }
             className={`window-no-drag h-6 min-h-0 rounded-lg border px-2 text-[11px] ${
               terminalOpen
                 ? "border-zinc-300 bg-zinc-100 text-zinc-900"
@@ -1173,11 +1190,14 @@ type ActiveFilterChip = {
   hue?: number;
 };
 
-function getActiveFilterChips(filters: AssetFilterState): ActiveFilterChip[] {
+function getActiveFilterChips(
+  filters: AssetFilterState,
+  t: (key: string) => string,
+): ActiveFilterChip[] {
   return [
     ...filters.types.map((type) => ({
       key: `type-${type}`,
-      label: TYPE_FILTER_LABELS[type],
+      label: getTypeFilterLabel(type, t),
       group: "type" as const,
       value: type,
     })),
@@ -1198,7 +1218,7 @@ function getActiveFilterChips(filters: AssetFilterState): ActiveFilterChip[] {
       ? [
           {
             key: "time",
-            label: TIME_FILTER_LABELS[filters.time],
+            label: getTimeFilterLabel(filters.time, t),
             group: "time" as const,
           },
         ]
@@ -1207,7 +1227,7 @@ function getActiveFilterChips(filters: AssetFilterState): ActiveFilterChip[] {
       ? [
           {
             key: "status",
-            label: STATUS_FILTER_LABELS[filters.status],
+            label: getStatusFilterLabel(filters.status, t),
             group: "status" as const,
           },
         ]
@@ -1216,7 +1236,7 @@ function getActiveFilterChips(filters: AssetFilterState): ActiveFilterChip[] {
       ? [
           {
             key: "sort",
-            label: SORT_OPTION_LABELS[filters.sort],
+            label: getSortOptionLabel(filters.sort, t),
             group: "sort" as const,
           },
         ]
@@ -1243,7 +1263,8 @@ function AssetActiveFilterSummary({
   activeViewName?: string;
   activeViewIcon?: string | null;
 }) {
-  const chips = getActiveFilterChips(filters);
+  const { t } = useTranslation();
+  const chips = getActiveFilterChips(filters, t);
 
   if (chips.length === 0) {
     return null;
@@ -1298,7 +1319,7 @@ function AssetActiveFilterSummary({
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-zinc-100 px-6 py-2">
       <span className="mr-1 text-[11.5px] font-semibold text-zinc-500">
-        已筛选 · {resultCount} / {totalCount} 项
+        {t("assets.filteredSummary", { result: resultCount, total: totalCount })}
       </span>
       {chips.length > ACTIVE_FILTER_COLLAPSE_THRESHOLD ? (
         <span className="inline-flex h-5 items-center gap-1.5 rounded-full bg-[#f3f2ef] px-2.5 text-[11px] font-medium text-zinc-700">
@@ -1312,11 +1333,16 @@ function AssetActiveFilterSummary({
               {activeViewName}
             </>
           ) : (
-            `${chips.length} 个条件`
+            t("assets.conditionsCount", { count: chips.length })
           )}
         </span>
       ) : (
-        <TagGroup aria-label="已筛选条件" size="sm" onRemove={removeChips} className="gap-0">
+        <TagGroup
+          aria-label={t("assets.filteredConditions")}
+          size="sm"
+          onRemove={removeChips}
+          className="gap-0"
+        >
           <TagGroup.List className="flex flex-wrap gap-1.5">
             {chips.map((chip) => (
               <Tag
@@ -1342,7 +1368,7 @@ function AssetActiveFilterSummary({
         className="h-5 min-h-0 px-1 text-[11px] text-zinc-400 hover:text-zinc-700"
         onPress={onClearFilters}
       >
-        清除
+        {t("assets.clear")}
       </Button>
     </div>
   );
@@ -1486,15 +1512,12 @@ function AssetMasonryGrid({
   onHydrateAssets: (assetIds: readonly string[]) => void;
   queryResetKey: string;
 }) {
+  const { t } = useTranslation();
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const [columnCount, setColumnCount] = useState(1);
   const [contextMenu, setContextMenu] = useState<AssetCardContextMenuState | null>(null);
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
-  const navigate = useNavigate();
   const virtualizerRef = useRef<MasonryVirtualizerHandle | null>(null);
-  const search = useSearch({ strict: false }) as { i?: number; o?: number };
-  const restoreIndexRef = useRef(search.i ?? -1);
-  const restoreOffsetRef = useRef(search.o ?? 0);
   const firstResetRef = useRef(true);
   // Reflow animation. In-band (same column count): pulse `reflowing` so the vertical repack
   // transitions on the wrapper's translateY. Column-count change: a manual FLIP slides each on-screen
@@ -1615,8 +1638,7 @@ function AssetMasonryGrid({
     return () => clearTimeout(clear);
   }, [columnCount]);
 
-  // Reset scroll to the top when the active query (filters/sidebar) changes — but skip the
-  // initial mount so a scroll offset restored from the URL isn't clobbered.
+  // Reset scroll to the top when the active query (filters/sidebar) changes — skip initial mount.
   useEffect(() => {
     if (firstResetRef.current) {
       firstResetRef.current = false;
@@ -1634,115 +1656,6 @@ function AssetMasonryGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryResetKey]);
 
-  // Restore the saved top item on mount, e.g. when returning from a detail. A pixel offset is
-  // NOT a stable anchor in a dynamically-measured list (a fresh virtualizer re-estimates every
-  // card, so the same pixel maps to different content and drifts as cards hydrate/measure).
-  // Anchor to the item index (+ the offset scrolled into it) and let the virtualizer place it.
-  // Re-apply across frames while sizes settle, stopping once stable or the user takes over.
-  useEffect(() => {
-    const targetIndex = restoreIndexRef.current;
-    if (targetIndex < 0) {
-      return;
-    }
-    const targetOffset = restoreOffsetRef.current;
-    const el = scrollViewportRef.current;
-    let frame = 0;
-    let attempts = 0;
-    let stableFrames = 0;
-    let lastTop = -1;
-    let interrupted = false;
-    const stop = () => {
-      interrupted = true;
-    };
-    el?.addEventListener("wheel", stop, { passive: true });
-    el?.addEventListener("pointerdown", stop);
-    el?.addEventListener("keydown", stop);
-    const tick = () => {
-      if (interrupted) {
-        return;
-      }
-      const virtualizer = virtualizerRef.current;
-      const node = scrollViewportRef.current;
-      if (virtualizer && node) {
-        virtualizer.scrollToIndex(targetIndex, { align: "start" });
-        if (targetOffset > 0) {
-          node.scrollTop += targetOffset;
-        }
-        if (Math.abs(node.scrollTop - lastTop) <= 1) {
-          stableFrames += 1;
-        } else {
-          stableFrames = 0;
-          lastTop = node.scrollTop;
-        }
-      }
-      attempts += 1;
-      if (stableFrames < 3 && attempts < 40) {
-        frame = requestAnimationFrame(tick);
-      }
-    };
-    frame = requestAnimationFrame(tick);
-    return () => {
-      interrupted = true;
-      cancelAnimationFrame(frame);
-      el?.removeEventListener("wheel", stop);
-      el?.removeEventListener("pointerdown", stop);
-      el?.removeEventListener("keydown", stop);
-    };
-  }, []);
-
-  // Persist the top item index (+ the offset scrolled into it) to the URL (replace) so
-  // back-navigation restores the scroll position. Debounced while scrolling + an immediate
-  // write on scrollend so the resting position is captured exactly.
-  useEffect(() => {
-    const el = scrollViewportRef.current;
-    if (!el) {
-      return;
-    }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const writeTop = () => {
-      const virtualizer = virtualizerRef.current;
-      if (!virtualizer) {
-        return;
-      }
-      const scrollTop = el.scrollTop;
-      let topIndex = 0;
-      let topStart = 0;
-      let bestStart = Infinity;
-      for (const item of virtualizer.getVirtualItems()) {
-        if (item.end > scrollTop && item.start < bestStart) {
-          bestStart = item.start;
-          topIndex = item.index;
-          topStart = item.start;
-        }
-      }
-      const offset = Math.max(0, Math.round(scrollTop - topStart));
-      void navigate({
-        to: "/",
-        replace: true,
-        search: (prev) => ({
-          ...prev,
-          i: topIndex > 0 ? topIndex : undefined,
-          o: topIndex > 0 && offset > 0 ? offset : undefined,
-        }),
-      });
-    };
-    const onScroll = () => {
-      clearTimeout(timer);
-      timer = setTimeout(writeTop, 200);
-    };
-    const onScrollEnd = () => {
-      clearTimeout(timer);
-      writeTop();
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    el.addEventListener("scrollend", onScrollEnd);
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      el.removeEventListener("scrollend", onScrollEnd);
-      clearTimeout(timer);
-    };
-  }, [navigate]);
-
   return (
     <>
       <ScrollArea
@@ -1755,7 +1668,9 @@ function AssetMasonryGrid({
         thumbClassName="bg-zinc-400/35 hover:bg-zinc-500/45"
       >
         {loading ? (
-          <div className="grid h-56 place-items-center text-sm text-zinc-400">正在读取资产库</div>
+          <div className="grid h-56 place-items-center text-sm text-zinc-400">
+            {t("assets.loadingVault")}
+          </div>
         ) : indexItems.length ? (
           <AssetMasonryColumns
             scrollViewportRef={scrollViewportRef}
@@ -1772,12 +1687,10 @@ function AssetMasonryGrid({
             <div className="text-center">
               <FolderKanban className="mx-auto text-zinc-300" size={36} />
               <h2 className="mt-3 text-sm font-semibold text-zinc-800">
-                {vaultAvailable ? "没有匹配的资产" : "选择一个文件夹开始索引"}
+                {vaultAvailable ? t("assets.noMatch") : t("assets.pickFolder")}
               </h2>
               <p className="mt-1 text-xs text-zinc-500">
-                {vaultAvailable
-                  ? "调整筛选条件后再试一次。"
-                  : "文件留在原地，标签和关系写入 SQLite。"}
+                {vaultAvailable ? t("assets.tryAdjustFilters") : t("assets.filesStay")}
               </p>
             </div>
           </div>
@@ -1980,6 +1893,7 @@ function AssetTerminalPanel({
   dragEnabled?: boolean;
   onHide: () => void;
 }) {
+  const { t } = useTranslation();
   const terminalHostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<XTermTerminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -2146,13 +2060,15 @@ function AssetTerminalPanel({
       >
         <SquareTerminal size={14} className="shrink-0 text-zinc-500" />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-semibold text-zinc-900">Terminal</div>
+          <div className="truncate text-[13px] font-semibold text-zinc-900">
+            {t("assets.terminal")}
+          </div>
         </div>
         <div className="window-no-drag flex items-center gap-1">
           <button
             type="button"
             className="grid h-6 w-6 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700"
-            title="隐藏终端侧栏"
+            title={t("assets.hideTerminal")}
             onClick={onHide}
           >
             <X size={13} />
@@ -2321,6 +2237,7 @@ function FrontmatterFieldValue({ fieldKey, value }: { fieldKey: string; value: u
 }
 
 function FrontmatterPanel({ data }: { data: Record<string, unknown> }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(true);
   const entries = Object.entries(data);
   if (entries.length === 0) return null;
@@ -2343,7 +2260,7 @@ function FrontmatterPanel({ data }: { data: Record<string, unknown> }) {
             size={12}
             className={`shrink-0 text-zinc-400 transition-transform ${expanded ? "" : "-rotate-90"}`}
           />
-          <span className="font-medium text-zinc-600">属性</span>
+          <span className="font-medium text-zinc-600">{t("assets.properties")}</span>
           <span className="ml-0.5 text-zinc-400">{entries.length}</span>
           <div className="flex-1" />
           <span className="text-[12px] text-zinc-300">— YAML frontmatter</span>
@@ -2378,6 +2295,7 @@ function FrontmatterPanel({ data }: { data: Record<string, unknown> }) {
 }
 
 function MarkdownDetailBody({ asset }: { asset: Asset }) {
+  const { t } = useTranslation();
   const markdownQuery = useQuery(trpc.assets.markdownContent.queryOptions({ id: asset.id }));
   const rawContent = markdownQuery.data?.content ?? "";
 
@@ -2415,7 +2333,7 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
   if (markdownQuery.isError) {
     return (
       <div className="max-w-[760px] rounded-[12px] border border-red-100 bg-red-50 px-4 py-3 text-[13px] leading-6 text-red-700">
-        Markdown 预览读取失败：{markdownQuery.error.message}
+        {t("assets.markdownReadFailed", { message: markdownQuery.error.message })}
       </div>
     );
   }
@@ -2423,7 +2341,7 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
   if (!rawContent.trim()) {
     return (
       <div className="max-w-[760px] rounded-[12px] border border-zinc-100 bg-zinc-50 px-4 py-3 text-[13px] text-zinc-500">
-        这个 Markdown 文件是空的。
+        {t("assets.markdownEmpty")}
       </div>
     );
   }
@@ -2494,7 +2412,7 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
         </article>
       ) : hasFrontmatter ? null : (
         <div className="rounded-[12px] border border-zinc-100 bg-zinc-50 px-4 py-3 text-[13px] text-zinc-500">
-          这个 Markdown 文件是空的。
+          {t("assets.markdownEmpty")}
         </div>
       )}
     </div>
@@ -2502,16 +2420,17 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
 }
 
 function ImageDetailBody({ asset }: { asset: Asset }) {
+  const { t } = useTranslation();
   const dims =
     asset.imageWidth && asset.imageHeight
       ? `${asset.imageWidth} × ${asset.imageHeight}`
       : undefined;
   const ext = (asset.fileExt ?? "").toUpperCase() || "IMG";
   const metaList: [string, string][] = [
-    ["来源", asset.source.split(" / ")[0] ?? "—"],
-    ...(dims ? ([["尺寸", dims]] as [string, string][]) : []),
-    ["格式", ext],
-    ["采集", asset.time],
+    [t("assets.fieldSource"), asset.source.split(" / ")[0] ?? "—"],
+    ...(dims ? ([[t("assets.fieldSize"), dims]] as [string, string][]) : []),
+    [t("assets.fieldFormat"), ext],
+    [t("assets.fieldCaptured"), asset.time],
   ];
   return (
     <div className="flex gap-6">
@@ -2644,10 +2563,11 @@ function VideoDetailBody({ asset }: { asset: Asset }) {
 }
 
 function LinkDetailBody({ asset, onOpen }: { asset: Asset; onOpen: () => void }) {
+  const { t } = useTranslation();
   const metaList: [string, string][] = [
-    ...(asset.domain ? ([["域名", asset.domain]] as [string, string][]) : []),
-    ["快照", "整页已缓存"],
-    ["采集", asset.time],
+    ...(asset.domain ? ([[t("assets.fieldDomain"), asset.domain]] as [string, string][]) : []),
+    [t("assets.fieldSnapshot"), t("assets.fieldSnapshotValue")],
+    [t("assets.fieldCaptured"), asset.time],
   ];
   return (
     <div className="flex gap-6">
@@ -2665,7 +2585,7 @@ function LinkDetailBody({ asset, onOpen }: { asset: Asset; onOpen: () => void })
               className="shrink-0 text-[11.5px] font-semibold text-blue-600"
               onClick={onOpen}
             >
-              ↗ 打开
+              {t("assets.openExternal")}
             </button>
           </div>
         </div>
@@ -2677,11 +2597,11 @@ function LinkDetailBody({ asset, onOpen }: { asset: Asset; onOpen: () => void })
           onClick={onOpen}
         >
           <ExternalLink size={14} />
-          访问原网页
+          {t("assets.openOriginal")}
         </button>
         <div className="mt-5">
           <span className="mb-2.5 block text-[10.5px] font-semibold uppercase tracking-[.06em] text-zinc-400">
-            网页信息
+            {t("assets.webInfo")}
           </span>
           <DetailSideMetaList list={metaList} />
         </div>
@@ -2699,12 +2619,18 @@ function FileDetailBody({
   onOpen: () => void;
   onShowInFinder: () => void;
 }) {
+  const { t } = useTranslation();
   const [fmt, ...rest] = asset.meta.split(" · ");
   const metaList: [string, string][] = [
-    ["格式", fmt ?? "—"],
-    ["大小", rest.join(" · ") || "—"],
-    ["位置", asset.sourceType === "vault" ? "Vault 内" : "外部路径"],
-    ["修改", asset.time],
+    [t("assets.fieldFormat"), fmt ?? "—"],
+    [t("assets.fieldFileSize"), rest.join(" · ") || "—"],
+    [
+      t("assets.fieldLocation"),
+      asset.sourceType === "vault"
+        ? t("assets.fieldLocationVault")
+        : t("assets.fieldLocationExternal"),
+    ],
+    [t("assets.fieldModified"), asset.time],
   ];
   return (
     <div className="flex gap-6">
@@ -2718,14 +2644,14 @@ function FileDetailBody({
           onClick={onOpen}
         >
           <ExternalLink size={14} />
-          用默认应用打开
+          {t("assets.openDefault")}
         </button>
         <button
           type="button"
           className="mt-2 flex w-full items-center justify-center rounded-[10px] border border-zinc-200 bg-white px-4 py-[10px] text-[13px] text-zinc-900"
           onClick={onShowInFinder}
         >
-          在访达中显示
+          {t("assets.showInFinder")}
         </button>
         {asset.body ? (
           <p className="mt-3.5 rounded-[11px] border border-zinc-100 bg-zinc-50 px-4 py-3.5 text-[13.5px] leading-[1.7] text-zinc-700">
@@ -2734,7 +2660,7 @@ function FileDetailBody({
         ) : null}
         <div className="mt-5">
           <span className="mb-2.5 block text-[10.5px] font-semibold uppercase tracking-[.06em] text-zinc-400">
-            文件信息
+            {t("assets.fileInfo")}
           </span>
           <DetailSideMetaList list={metaList} />
         </div>
@@ -2756,6 +2682,7 @@ function AssetDetail({
   terminalOpen: boolean;
   onToggleTerminal: () => void;
 }) {
+  const { t } = useTranslation();
   const { label } = getKindMeta(asset.kind);
   const headerRef = useToolbarClearance();
   const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
@@ -2799,14 +2726,18 @@ function AssetDetail({
         ref={headerRef}
         className={`${dragClassName} relative z-[75] flex h-10 shrink-0 items-center gap-2 border-b border-zinc-100 bg-white px-6`}
       >
-        <span className="text-xs text-zinc-400">全部资产 / {asset.tag}</span>
+        <span className="text-xs text-zinc-400">{t("assets.breadcrumb", { tag: asset.tag })}</span>
         <div className="flex-1" />
         <div className="window-no-drag flex items-center gap-2">
           {canOpenInDefaultMediaApp ? (
             <Button
               size="sm"
               isIconOnly
-              aria-label={asset.kind === "image" ? "用系统图片预览打开" : "用系统视频播放器打开"}
+              aria-label={
+                asset.kind === "image"
+                  ? t("assets.openInSystemImage")
+                  : t("assets.openInSystemVideo")
+              }
               isDisabled={openFileMutation.isPending}
               className="window-no-drag h-6 min-h-0 rounded-lg border border-zinc-200 bg-white px-2 text-[11px] text-zinc-600 hover:bg-zinc-50"
               onPress={() => openFileMutation.mutate({ id: asset.id })}
@@ -2819,7 +2750,7 @@ function AssetDetail({
             <button
               type="button"
               className="inline-grid h-6 w-7 place-items-center border-r border-zinc-200 transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-45"
-              aria-label={`用 ${preferredOpenTarget.label} 打开资产库`}
+              aria-label={t("assets.openVaultWith", { label: preferredOpenTarget.label })}
               disabled={openVaultLocationMutation.isPending}
               onClick={() => openVaultWithTarget(preferredOpenTarget.id, false)}
             >
@@ -2828,7 +2759,7 @@ function AssetDetail({
             <Dropdown isOpen={openWithMenuOpen} onOpenChange={setOpenWithMenuOpen}>
               <Dropdown.Trigger
                 className="inline-grid h-6 w-6 place-items-center outline-none transition-colors hover:bg-zinc-50"
-                aria-label="选择打开方式"
+                aria-label={t("assets.chooseOpenMethod")}
               >
                 <ChevronDown
                   className={`${HEADER_ICON_CLASS_NAME} transition-transform duration-200 ${openWithMenuOpen ? "rotate-180" : ""}`}
@@ -2840,7 +2771,7 @@ function AssetDetail({
                 placement="bottom end"
               >
                 <Dropdown.Menu
-                  aria-label="打开资产库"
+                  aria-label={t("assets.openVault")}
                   className="min-w-36 p-0 outline-none"
                   disabledKeys={
                     openVaultLocationMutation.isPending ? OPEN_VAULT_TARGETS.map((t) => t.id) : []
@@ -2874,14 +2805,14 @@ function AssetDetail({
           <Button
             size="sm"
             isIconOnly
-            aria-label="复制文件路径"
+            aria-label={t("assets.copyPath")}
             className="window-no-drag h-6 min-h-0 rounded-lg border border-zinc-200 bg-white px-2 text-[11px] text-zinc-600 hover:bg-zinc-50"
             onPress={() => {
               copyAssetPathMutation.mutate(
                 { id: asset.id },
                 {
                   onSuccess: () => {
-                    toast.success("路径已复制");
+                    toast.success(t("assets.pathCopied"));
                     setPathCopied(true);
                     setTimeout(() => setPathCopied(false), 2000);
                   },
@@ -2901,7 +2832,9 @@ function AssetDetail({
               size="sm"
               isIconOnly
               isDisabled={!terminalAvailable}
-              aria-label={terminalAvailable ? "打开终端侧栏" : "当前平台暂不支持终端侧栏"}
+              aria-label={
+                terminalAvailable ? t("assets.openTerminal") : t("assets.terminalUnsupported")
+              }
               className={`window-no-drag h-6 min-h-0 rounded-lg border px-2 text-[11px] ${
                 terminalOpen
                   ? "border-zinc-300 bg-zinc-100 text-zinc-900"
@@ -2934,7 +2867,7 @@ function AssetDetail({
           <span className="opacity-60">·</span>
           <span>{asset.meta}</span>
           <span className="opacity-60">·</span>
-          <span className="text-zinc-400">只读预览</span>
+          <span className="text-zinc-400">{t("assets.readonlyPreview")}</span>
         </div>
         {/* tags row */}
         <div className="mt-3.5 flex flex-wrap items-center gap-2">
@@ -2970,7 +2903,11 @@ function AssetDetail({
   );
 }
 
-export function AssetManagerPage({ assetId }: { assetId?: string }) {
+export function AssetManagerPage() {
+  const { t } = useTranslation();
+  const search = useSearch({ from: "/_app/" });
+  const assetId =
+    typeof search.asset === "string" && search.asset.length > 0 ? search.asset : undefined;
   const filters = useAtomValue(assetFiltersAtom);
   const activeSidebarItem = useAtomValue(activeSidebarItemAtom);
   const { backgroundWindowDragEnabled } = useAppLayout();
@@ -3014,9 +2951,10 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
     ],
   );
   const listQueryResetKey = useMemo(() => JSON.stringify(listQueryInput), [listQueryInput]);
+  // Soft detail keeps the board mounted under the overlay — list queries stay enabled so scroll
+  // and hydrate state are warm when the user closes detail.
   const layoutIndexQuery = useQuery({
     ...trpc.assets.layoutIndex.queryOptions(listQueryInput),
-    enabled: !assetId,
     staleTime: 30_000,
     // Switching views/tags swaps the query key. Keep the previous result on screen while the next
     // one loads so the masonry grid doesn't flash blank (white) during the brief fetch gap.
@@ -3036,7 +2974,7 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
   const [hydrateRequestIds, setHydrateRequestIds] = useState<string[]>([]);
   const hydrateQuery = useQuery({
     ...trpc.assets.hydrate.queryOptions({ ids: hydrateRequestIds }),
-    enabled: !assetId && hydrateRequestIds.length > 0,
+    enabled: hydrateRequestIds.length > 0,
     staleTime: 5 * 60_000,
   });
   const requestAssetHydration = useCallback((assetIds: readonly string[]) => {
@@ -3323,24 +3261,18 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
         <ResizablePanel
           id="main"
           defaultSize={100}
-          minSize={assetId ? 34 : 42}
-          className="relative z-[60]"
+          minSize={42}
+          className="relative z-[60] h-full min-h-0"
         >
-          {assetId ? (
-            activeAsset ? (
-              <AssetDetail
-                asset={activeAsset}
-                dragEnabled={backgroundWindowDragEnabled}
-                terminalAvailable={terminalAvailable}
-                terminalOpen={terminalOpen}
-                onToggleTerminal={() => setTerminalOpen((open) => !open)}
-              />
-            ) : (
-              <main className="grid h-full place-items-center bg-white text-sm text-zinc-400">
-                {detailQuery.error ? detailQuery.error.message : "正在读取资产"}
-              </main>
-            )
-          ) : (
+          {/* Board stays mounted under soft detail so scroll/virtualizer state survives Back. */}
+          <div
+            className={
+              assetId
+                ? "invisible pointer-events-none absolute inset-0 overflow-hidden"
+                : "relative h-full min-h-0"
+            }
+            aria-hidden={Boolean(assetId)}
+          >
             <AssetBoard
               indexItems={layoutIndexItems}
               hydratedAssetsById={hydratedAssetsById}
@@ -3364,7 +3296,24 @@ export function AssetManagerPage({ assetId }: { assetId?: string }) {
               activeViewName={activeViewName}
               activeViewIcon={activeViewIcon}
             />
-          )}
+          </div>
+          {assetId ? (
+            <div className="absolute inset-0 z-[70] bg-white">
+              {activeAsset ? (
+                <AssetDetail
+                  asset={activeAsset}
+                  dragEnabled={backgroundWindowDragEnabled}
+                  terminalAvailable={terminalAvailable}
+                  terminalOpen={terminalOpen}
+                  onToggleTerminal={() => setTerminalOpen((open) => !open)}
+                />
+              ) : (
+                <main className="grid h-full place-items-center bg-white text-sm text-zinc-400">
+                  {detailQuery.error ? detailQuery.error.message : t("assets.readingAsset")}
+                </main>
+              )}
+            </div>
+          ) : null}
         </ResizablePanel>
 
         {!assetId && terminalOpen ? (

@@ -6,6 +6,7 @@
  */
 
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ComponentType, Dispatch, ReactNode, SetStateAction } from "react";
 import { AccordionBody, AccordionPanel, Button, Tag, TagGroup, Tabs } from "@heroui/react";
 import {
@@ -30,53 +31,40 @@ import type { SidebarTag } from "@/lib/asset-manager/types";
 import type { RouterInputs, RouterOutputs } from "@/lib/trpc";
 
 export const ASSET_TYPE_FILTERS = [
-  { value: "markdown", label: "文字", icon: FileText },
-  { value: "post", label: "Post", icon: MessageSquareQuote },
-  { value: "image", label: "图片", icon: ImageIcon },
-  { value: "video", label: "视频", icon: Video },
-  { value: "link", label: "链接", icon: LinkIcon },
-  { value: "file", label: "文件", icon: FileText },
-] satisfies Array<{ value: AssetTypeFilter; label: string; icon: typeof FileText }>;
+  { value: "markdown", labelKey: "assets.kind.markdown", icon: FileText },
+  { value: "post", labelKey: "assets.kind.post", icon: MessageSquareQuote },
+  { value: "image", labelKey: "assets.kind.image", icon: ImageIcon },
+  { value: "video", labelKey: "assets.kind.video", icon: Video },
+  { value: "link", labelKey: "assets.kind.link", icon: LinkIcon },
+  { value: "file", labelKey: "assets.kind.file", icon: FileText },
+] satisfies Array<{ value: AssetTypeFilter; labelKey: string; icon: typeof FileText }>;
 
 export const MATCH_FILTERS = [
-  { value: "and", label: "全部条件" },
-  { value: "or", label: "任意条件" },
-] satisfies Array<{ value: AssetFilterMatch; label: string }>;
+  { value: "and", labelKey: "filters.matchAnd" },
+  { value: "or", labelKey: "filters.matchOr" },
+] satisfies Array<{ value: AssetFilterMatch; labelKey: string }>;
 
 export const TIME_FILTERS = [
-  { value: "any", label: "不限" },
-  { value: "today", label: "今天" },
-  { value: "week", label: "本周" },
-  { value: "m30", label: "近 30 天" },
-  { value: "custom", label: "自定义" },
-] satisfies Array<{ value: AssetTimeFilter; label: string }>;
+  { value: "any", labelKey: "filters.timeAny" },
+  { value: "today", labelKey: "filters.timeToday" },
+  { value: "week", labelKey: "filters.timeWeek" },
+  { value: "m30", labelKey: "filters.time30d" },
+  { value: "custom", labelKey: "filters.timeCustom" },
+] satisfies Array<{ value: AssetTimeFilter; labelKey: string }>;
 
 export const STATUS_FILTERS = [
-  { value: "any", label: "不限" },
-  { value: "inbox", label: "待整理" },
-  { value: "draft", label: "草稿" },
-  { value: "published", label: "已发布" },
-] satisfies Array<{ value: AssetStatusFilter; label: string }>;
+  { value: "any", labelKey: "filters.statusAny" },
+  { value: "inbox", labelKey: "filters.statusInbox" },
+  { value: "draft", labelKey: "filters.statusDraft" },
+  { value: "published", labelKey: "filters.statusPublished" },
+] satisfies Array<{ value: AssetStatusFilter; labelKey: string }>;
 
 export const SORT_OPTIONS = [
-  { value: "updated_desc", label: "更新时间 · 降序" },
-  { value: "updated_asc", label: "更新时间 · 升序" },
-  { value: "created_desc", label: "创建时间 · 降序" },
-  { value: "created_asc", label: "创建时间 · 升序" },
-] satisfies Array<{ value: AssetSortOrder; label: string }>;
-
-export const TYPE_FILTER_LABELS = Object.fromEntries(
-  ASSET_TYPE_FILTERS.map((item) => [item.value, item.label]),
-) as Record<AssetTypeFilter, string>;
-export const TIME_FILTER_LABELS = Object.fromEntries(
-  TIME_FILTERS.map((item) => [item.value, item.label]),
-) as Record<AssetTimeFilter, string>;
-export const STATUS_FILTER_LABELS = Object.fromEntries(
-  STATUS_FILTERS.map((item) => [item.value, item.label]),
-) as Record<AssetStatusFilter, string>;
-export const SORT_OPTION_LABELS = Object.fromEntries(
-  SORT_OPTIONS.map((item) => [item.value, item.label]),
-) as Record<AssetSortOrder, string>;
+  { value: "updated_desc", labelKey: "filters.sortUpdatedDesc" },
+  { value: "updated_asc", labelKey: "filters.sortUpdatedAsc" },
+  { value: "created_desc", labelKey: "filters.sortCreatedDesc" },
+  { value: "created_asc", labelKey: "filters.sortCreatedAsc" },
+] satisfies Array<{ value: AssetSortOrder; labelKey: string }>;
 
 type AssetListInput = Extract<NonNullable<RouterInputs["assets"]["list"]>, Record<string, unknown>>;
 type AssetSourceType = NonNullable<AssetListInput["sourceTypes"]>[number];
@@ -85,18 +73,34 @@ export type SavedViewSortInput = RouterInputs["assets"]["createSavedView"]["sort
 export type SavedViewFiltersOutput =
   RouterOutputs["assets"]["sidebarMeta"]["views"][number]["filters"];
 
+/** Maps display/storage source tokens to API source types (includes legacy Chinese labels). */
 export const SOURCE_LABEL_TO_TYPE = {
+  vault: "vault",
+  external_file: "external_file",
+  url: "url",
   资产库: "vault",
   本地文件: "external_file",
   链接: "url",
+  Vault: "vault",
+  "Local file": "external_file",
+  URL: "url",
 } satisfies Record<string, AssetSourceType>;
 
-const SOURCE_TYPE_TO_LABEL = Object.fromEntries(
-  Object.entries(SOURCE_LABEL_TO_TYPE).map(([label, sourceType]) => [sourceType, label]),
-) as Record<AssetSourceType, string>;
+/** Stable keys stored in filter state and used for matching. */
+export const SOURCE_TYPE_KEYS = [
+  "vault",
+  "external_file",
+  "url",
+] as const satisfies readonly AssetSourceType[];
+
+const SOURCE_TYPE_LABEL_KEYS: Record<AssetSourceType, string> = {
+  vault: "assets.sourceVault",
+  external_file: "assets.sourceLocalFile",
+  url: "assets.sourceUrl",
+};
 
 type FilterSegmentProps<T extends string> = {
-  options: Array<{ value: T; label: string }>;
+  options: Array<{ value: T; labelKey: string }>;
   value: T;
   onChange: (value: T) => void;
 };
@@ -110,7 +114,12 @@ export function sourceLabelsToTypes(sources: readonly string[]) {
 }
 
 export function sourceTypesToLabels(sources: readonly AssetSourceType[]) {
-  return sources.map((source) => SOURCE_TYPE_TO_LABEL[source] ?? source);
+  // Store stable type keys in filter state (not localized display strings).
+  return sources.map((source) => source);
+}
+
+export function sourceTypeLabelKey(source: AssetSourceType): string {
+  return SOURCE_TYPE_LABEL_KEYS[source] ?? source;
 }
 
 export function assetFiltersToSavedViewFilters(
@@ -151,6 +160,7 @@ export function savedViewFiltersToAssetFilters(
 }
 
 function FilterSegment<T extends string>({ options, value, onChange }: FilterSegmentProps<T>) {
+  const { t } = useTranslation();
   return (
     <Tabs.Root
       selectedKey={value}
@@ -166,7 +176,7 @@ function FilterSegment<T extends string>({ options, value, onChange }: FilterSeg
               className="h-5 w-auto whitespace-nowrap rounded-md px-2 text-[10.5px] font-medium text-zinc-500 data-[selected=true]:text-zinc-950"
             >
               <Tabs.Indicator className="rounded-md bg-white shadow-[0_1px_2px_rgba(20,18,14,0.06)]" />
-              {option.label}
+              {t(option.labelKey)}
             </Tabs.Tab>
           ))}
         </Tabs.List>
@@ -201,6 +211,7 @@ function AssetFilterTagGroup<T extends string>({
   onSelectedValuesChange,
   collapsible = false,
 }: AssetFilterTagGroupProps<T>) {
+  const { t } = useTranslation();
   const [visibleRows, setVisibleRows] = useState(ASSET_TAG_ROWS_STEP);
   const clampRef = useRef<HTMLDivElement | null>(null);
   const [overflowing, setOverflowing] = useState(false);
@@ -300,7 +311,7 @@ function AssetFilterTagGroup<T extends string>({
             setVisibleRows((rows) => (canExpand ? rows + ASSET_TAG_ROWS_STEP : ASSET_TAG_ROWS_STEP))
           }
         >
-          {canExpand ? "显示更多" : "收起"}
+          {canExpand ? t("assets.showMore") : t("assets.collapse")}
         </button>
       ) : null}
     </div>
@@ -341,10 +352,34 @@ export function AssetFilterFields({
   tagOptions,
   sourceOptions,
 }: AssetFilterFieldsProps) {
+  const { t } = useTranslation();
+  const typeOptions = useMemo(
+    () =>
+      ASSET_TYPE_FILTERS.map((item) => ({
+        value: item.value,
+        label: t(item.labelKey),
+        icon: item.icon,
+      })),
+    [t],
+  );
+  const sourceFilterOptions = useMemo(
+    () =>
+      sourceOptions.map((source) => {
+        const sourceType = SOURCE_LABEL_TO_TYPE[source] ?? "external_file";
+        return {
+          value: sourceType,
+          label: t(sourceTypeLabelKey(sourceType)),
+        };
+      }),
+    [sourceOptions, t],
+  );
+
   return (
     <>
       <div className="flex items-center gap-2.5">
-        <span className="text-[10.5px] font-semibold tracking-wide text-zinc-400">符合</span>
+        <span className="text-[10.5px] font-semibold tracking-wide text-zinc-400">
+          {t("assets.match")}
+        </span>
         <FilterSegment
           options={MATCH_FILTERS}
           value={filters.match}
@@ -352,18 +387,18 @@ export function AssetFilterFields({
         />
       </div>
 
-      <AssetFilterField label="类型">
+      <AssetFilterField label={t("assets.type")}>
         <AssetFilterTagGroup
-          label="资产类型"
-          options={ASSET_TYPE_FILTERS}
+          label={t("assets.assetType")}
+          options={typeOptions}
           selectedValues={filters.types}
           onSelectedValuesChange={(types) => onFiltersChange((current) => ({ ...current, types }))}
         />
       </AssetFilterField>
 
-      <AssetFilterField label="标签">
+      <AssetFilterField label={t("assets.tags")}>
         <AssetFilterTagGroup
-          label="资产标签"
+          label={t("assets.assetTags")}
           collapsible
           options={tagOptions.map((tag) => ({
             value: tag.name,
@@ -375,10 +410,10 @@ export function AssetFilterFields({
         />
       </AssetFilterField>
 
-      <AssetFilterField label="来源">
+      <AssetFilterField label={t("assets.source")}>
         <AssetFilterTagGroup
-          label="资产来源"
-          options={sourceOptions.map((source) => ({ value: source, label: source }))}
+          label={t("assets.assetSource")}
+          options={sourceFilterOptions}
           selectedValues={filters.sources}
           onSelectedValuesChange={(sources) =>
             onFiltersChange((current) => ({ ...current, sources }))
@@ -386,7 +421,7 @@ export function AssetFilterFields({
         />
       </AssetFilterField>
 
-      <AssetFilterField label="时间">
+      <AssetFilterField label={t("assets.time")}>
         <FilterSegment
           options={TIME_FILTERS}
           value={filters.time}
@@ -394,7 +429,7 @@ export function AssetFilterFields({
         />
       </AssetFilterField>
 
-      <AssetFilterField label="状态">
+      <AssetFilterField label={t("assets.status")}>
         <FilterSegment
           options={STATUS_FILTERS}
           value={filters.status}
@@ -402,7 +437,7 @@ export function AssetFilterFields({
         />
       </AssetFilterField>
 
-      <AssetFilterField label="排序">
+      <AssetFilterField label={t("assets.sort")}>
         <FilterSegment
           options={SORT_OPTIONS}
           value={filters.sort}
@@ -428,6 +463,7 @@ export function AssetFilterPanel({
   resultCount,
   onSaveView,
 }: AssetFilterPanelProps) {
+  const { t } = useTranslation();
   return (
     <AccordionPanel
       id="asset-filter-panel"
@@ -448,7 +484,7 @@ export function AssetFilterPanel({
             className="h-7 min-h-0 px-1 text-[11.5px] text-zinc-500"
             onPress={onClearFilters}
           >
-            重置全部
+            {t("assets.clearAll")}
           </Button>
           <div className="ml-auto flex items-center gap-1.5">
             <Button
@@ -458,7 +494,7 @@ export function AssetFilterPanel({
               onPress={onSaveView}
             >
               <Plus size={13} />
-              存为视图
+              {t("assets.saveAsView")}
             </Button>
             <Button
               size="sm"
@@ -466,11 +502,31 @@ export function AssetFilterPanel({
               className="h-7 min-h-0 rounded-lg px-3 text-[11.5px] font-semibold"
               onPress={() => {}}
             >
-              应用筛选 · {resultCount} 项
+              {t("assets.applyFilter", { count: resultCount })}
             </Button>
           </div>
         </div>
       </AccordionBody>
     </AccordionPanel>
   );
+}
+
+export function getTypeFilterLabel(type: AssetTypeFilter, t: (k: string) => string) {
+  const item = ASSET_TYPE_FILTERS.find((entry) => entry.value === type);
+  return item ? t(item.labelKey) : type;
+}
+
+export function getTimeFilterLabel(time: AssetTimeFilter, t: (k: string) => string) {
+  const item = TIME_FILTERS.find((entry) => entry.value === time);
+  return item ? t(item.labelKey) : time;
+}
+
+export function getStatusFilterLabel(status: AssetStatusFilter, t: (k: string) => string) {
+  const item = STATUS_FILTERS.find((entry) => entry.value === status);
+  return item ? t(item.labelKey) : status;
+}
+
+export function getSortOptionLabel(sort: AssetSortOrder, t: (k: string) => string) {
+  const item = SORT_OPTIONS.find((entry) => entry.value === sort);
+  return item ? t(item.labelKey) : sort;
 }

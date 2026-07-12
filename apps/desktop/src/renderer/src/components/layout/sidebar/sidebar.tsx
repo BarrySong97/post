@@ -46,6 +46,7 @@ import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { isMacWindow } from "@/lib/platform";
 import { showToastAfterRefresh, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
+import { useTranslation } from "react-i18next";
 
 type SidebarSectionId = "views" | "tags";
 
@@ -281,12 +282,13 @@ function SidebarItemMoreMenu({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <Dropdown>
       <Dropdown.Trigger
         data-no-drag
         className={SIDEBAR_ITEM_MORE_TRIGGER_CLASS_NAME}
-        aria-label={`${itemName} 更多操作`}
+        aria-label={t("sidebar.itemMore", { name: itemName })}
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
       >
@@ -298,7 +300,7 @@ function SidebarItemMoreMenu({
         placement="bottom end"
       >
         <Dropdown.Menu
-          aria-label={`${itemName} 操作`}
+          aria-label={t("sidebar.itemActions", { name: itemName })}
           className="min-w-32 p-0 outline-none"
           disabledKeys={isFirst ? ["move-first"] : []}
           onAction={(key) => {
@@ -311,29 +313,29 @@ function SidebarItemMoreMenu({
           <Dropdown.Item
             key="move-first"
             id="move-first"
-            textValue="移到最前"
+            textValue={t("common.moveToFront")}
             className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[disabled]:opacity-45 data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100"
           >
             <ArrowUpToLine size={13} className="text-zinc-500" />
-            <span>移到最前</span>
+            <span>{t("common.moveToFront")}</span>
           </Dropdown.Item>
           <Dropdown.Item
             key="edit"
             id="edit"
-            textValue="编辑"
+            textValue={t("common.edit")}
             className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100"
           >
             <Pencil size={13} className="text-zinc-500" />
-            <span>编辑</span>
+            <span>{t("common.edit")}</span>
           </Dropdown.Item>
           <Dropdown.Item
             key="delete"
             id="delete"
-            textValue="删除"
+            textValue={t("common.delete")}
             className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-red-600 outline-none transition-colors data-[focused]:bg-red-50 data-[hovered]:bg-red-50"
           >
             <Trash2 size={13} />
-            <span>删除</span>
+            <span>{t("common.delete")}</span>
           </Dropdown.Item>
         </Dropdown.Menu>
       </Dropdown.Popover>
@@ -521,20 +523,19 @@ function TagDeleteDescription({
   updatedViews: SidebarView[];
   deletedViews: SidebarView[];
 }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-2">
-      <p>
-        将删除 Tag「{tag.name}」，并从 {tag.count} 个资产上移除这个 Tag 关联。
-      </p>
+      <p>{t("sidebar.deleteTagBody", { name: tag.name, count: tag.count })}</p>
       {updatedViews.length > 0 ? (
         <p>
-          这些 Views 会移除该 Tag 筛选后保留：
+          {t("sidebar.viewsKeepAfterTag")}
           {updatedViews.map((view) => `「${view.name}」`).join("、")}
         </p>
       ) : null}
       {deletedViews.length > 0 ? (
         <p>
-          这些 Views 只包含该 Tag 筛选，会一起删除：
+          {t("sidebar.viewsDeleteWithTag")}
           {deletedViews.map((view) => `「${view.name}」`).join("、")}
         </p>
       ) : null}
@@ -563,6 +564,7 @@ export function Sidebar({
   onEditView: (view: SidebarView) => void;
   floating?: boolean;
 }) {
+  const { t } = useTranslation();
   const [activeSidebarItem, setActiveSidebarItem] = useAtom(activeSidebarItemAtom);
   const setFilters = useSetAtom(assetFiltersAtom);
   const navigate = useNavigate();
@@ -631,10 +633,10 @@ export function Sidebar({
   const handleDeleteView = (view: SidebarView) => {
     void (async () => {
       const confirmed = await confirm({
-        title: `删除 View「${view.name}」？`,
-        description: "删除后不会影响资产或 Tags，只会移除这个保存的视图。",
-        confirmLabel: "删除",
-        cancelLabel: "取消",
+        title: t("sidebar.deleteViewTitle", { name: view.name }),
+        description: t("sidebar.deleteViewDesc"),
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
         variant: "danger",
         onConfirm: async () => {
           await deleteSavedView.mutateAsync({ id: view.id });
@@ -645,7 +647,7 @@ export function Sidebar({
       }
       await invalidateVaultState();
       showToastAfterRefresh(() => {
-        toast.success("View 已删除");
+        toast.success(t("sidebar.viewDeleted"));
       });
     })();
   };
@@ -655,12 +657,12 @@ export function Sidebar({
 
     void (async () => {
       const confirmed = await confirm({
-        title: `删除 Tag「${tag.name}」？`,
+        title: t("sidebar.deleteTagTitle", { name: tag.name }),
         description: (
           <TagDeleteDescription tag={tag} updatedViews={updatedViews} deletedViews={deletedViews} />
         ),
-        confirmLabel: "删除",
-        cancelLabel: "取消",
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
         variant: "danger",
         onConfirm: async () => {
           await deleteTag.mutateAsync({ id: tag.id });
@@ -671,7 +673,7 @@ export function Sidebar({
       }
       await invalidateVaultState();
       showToastAfterRefresh(() => {
-        toast.success("Tag 已删除");
+        toast.success(t("sidebar.tagDeleted"));
       });
     })();
   };
@@ -740,13 +742,13 @@ export function Sidebar({
     if (sectionId === "views") {
       return (
         <SidebarSection
-          title="Views"
+          title={t("sidebar.views")}
           dragHandleRef={dragHandleRef}
           action={
             <>
               <button
                 type="button"
-                aria-label="新建 View"
+                aria-label={t("sidebar.newView")}
                 data-no-drag
                 className="grid h-5 w-5 place-items-center rounded text-zinc-400 hover:bg-black/5 hover:text-zinc-700"
                 onClick={onCreateView}
@@ -759,7 +761,7 @@ export function Sidebar({
                 className="rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5 hover:text-zinc-700"
                 onClick={() => void navigate({ to: "/views" })}
               >
-                管理
+                {t("common.manage")}
               </button>
             </>
           }
@@ -782,13 +784,13 @@ export function Sidebar({
                   actions={
                     <>
                       <SidebarItemActionButton
-                        label={`${view.name} 往前移一格`}
+                        label={t("sidebar.moveItemUp", { name: view.name })}
                         icon={ArrowUp}
                         disabled={index === 0}
                         onClick={() => moveSidebarView(index, index - 1)}
                       />
                       <SidebarItemActionButton
-                        label={`${view.name} 往后移一格`}
+                        label={t("sidebar.moveItemDown", { name: view.name })}
                         icon={ArrowDown}
                         disabled={index === orderedViews.length - 1}
                         onClick={() => moveSidebarView(index, index + 1)}
@@ -812,13 +814,13 @@ export function Sidebar({
 
     return (
       <SidebarSection
-        title="Tags"
+        title={t("sidebar.tags")}
         dragHandleRef={dragHandleRef}
         action={
           <>
             <button
               type="button"
-              aria-label="新建 Tag"
+              aria-label={t("sidebar.newTag")}
               data-no-drag
               className="grid h-5 w-5 place-items-center rounded text-zinc-400 hover:bg-black/5 hover:text-zinc-700"
               onClick={onCreateTag}
@@ -831,7 +833,7 @@ export function Sidebar({
               className="rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5 hover:text-zinc-700"
               onClick={() => void navigate({ to: "/tags" })}
             >
-              管理
+              {t("common.manage")}
             </button>
           </>
         }
@@ -852,13 +854,13 @@ export function Sidebar({
                 actions={
                   <>
                     <SidebarItemActionButton
-                      label={`${tag.name} 往前移一格`}
+                      label={t("sidebar.moveItemUp", { name: tag.name })}
                       icon={ArrowUp}
                       disabled={index === 0}
                       onClick={() => moveSidebarTag(index, index - 1)}
                     />
                     <SidebarItemActionButton
-                      label={`${tag.name} 往后移一格`}
+                      label={t("sidebar.moveItemDown", { name: tag.name })}
                       icon={ArrowDown}
                       disabled={index === orderedTags.length - 1}
                       onClick={() => moveSidebarTag(index, index + 1)}
@@ -900,22 +902,32 @@ export function Sidebar({
 
       <div className="shrink-0 px-3 pb-1">
         <SidebarSection
-          title="资产管理"
+          title={t("sidebar.assetManagement")}
           action={
             <button
               type="button"
               className="window-no-drag flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-400 hover:bg-black/5"
             >
               <Plus size={11} />
-              新建
+              {t("common.new")}
             </button>
           }
         >
           <div className="space-y-0.5">
             {(
               [
-                { id: "all" as const, icon: Archive, label: "全部资产", count: summary.total },
-                { id: "inbox" as const, icon: Inbox, label: "待整理", count: summary.untagged },
+                {
+                  id: "all" as const,
+                  icon: Archive,
+                  label: t("sidebar.allAssets"),
+                  count: summary.total,
+                },
+                {
+                  id: "inbox" as const,
+                  icon: Inbox,
+                  label: t("sidebar.inbox"),
+                  count: summary.untagged,
+                },
               ] as const
             ).map((item) => (
               <SidebarItem
@@ -933,7 +945,7 @@ export function Sidebar({
             ))}
             <SidebarItem
               icon={Network}
-              label="知识图谱"
+              label={t("sidebar.knowledgeGraph")}
               active={location.pathname === "/graph"}
               onClick={() => void navigate({ to: "/graph" })}
             />

@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
@@ -33,6 +34,7 @@ export function AssetCardContextMenu({
   state: AssetCardContextMenuState;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
   const deleteAsset = useMutation(trpc.assets.deleteAsset.mutationOptions());
   const invalidateVaultState = useInvalidateVaultState();
@@ -78,11 +80,10 @@ export function AssetCardContextMenu({
     void (async () => {
       let movedToTrash = false;
       const confirmed = await confirm({
-        title: `删除资产「${state.asset.title}」？`,
-        description:
-          "源文件会移到系统废纸篓，资产会从 Post 中移除。将文件恢复到原路径后可重新索引。",
-        confirmLabel: "移到废纸篓",
-        cancelLabel: "取消",
+        title: t("assets.deleteAssetTitle", { title: state.asset.title }),
+        description: t("assets.deleteAssetDesc"),
+        confirmLabel: t("assets.moveToTrash"),
+        cancelLabel: t("common.cancel"),
         variant: "danger",
         onConfirm: async () => {
           const result = await deleteAsset.mutateAsync({ id: state.asset.id });
@@ -95,7 +96,7 @@ export function AssetCardContextMenu({
       }
       await invalidateVaultState();
       showToastAfterRefresh(() => {
-        toast.success(movedToTrash ? "资产已移到废纸篓" : "资产已删除");
+        toast.success(movedToTrash ? t("assets.assetMovedToTrash") : t("assets.assetDeleted"));
       });
     })();
   };
@@ -104,7 +105,7 @@ export function AssetCardContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      aria-label={`${state.asset.title} 操作`}
+      aria-label={t("assets.assetActions", { title: state.asset.title })}
       className="fixed z-[180] w-[168px] overflow-hidden rounded-lg border border-zinc-200 bg-white p-1 shadow-[0_14px_34px_rgba(20,18,16,0.14),0_2px_7px_rgba(20,18,16,0.07)]"
       style={{ left, top }}
       onContextMenu={(event) => event.preventDefault()}
@@ -116,7 +117,7 @@ export function AssetCardContextMenu({
         onClick={requestDelete}
       >
         <Trash2 size={13} />
-        <span>删除</span>
+        <span>{t("assets.delete")}</span>
       </button>
     </div>,
     document.body,

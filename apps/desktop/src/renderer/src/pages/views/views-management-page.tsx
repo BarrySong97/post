@@ -23,6 +23,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { PageChrome } from "@/components/layout/app-layout";
 import { useConfirmModal } from "@/components/common/confirm-modal";
@@ -73,6 +74,7 @@ function SortableViewRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   const { ref, handleRef, isDragging, isDropTarget } = useSortable({
     id: view.id,
     index,
@@ -95,7 +97,7 @@ function SortableViewRow({
         ref={handleRef}
         type="button"
         data-drag-handle
-        aria-label={`拖动 ${view.name}`}
+        aria-label={t("common.drag", { name: view.name })}
         className="grid h-7 w-7 cursor-grab place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 active:cursor-grabbing active:bg-blue-50 active:text-blue-600"
       >
         <GripVertical size={15} />
@@ -106,15 +108,25 @@ function SortableViewRow({
       <div className="min-w-0">
         <div className="truncate text-[13.5px] font-semibold text-zinc-900">{view.name}</div>
         <div className="mt-0.5 truncate text-[11.5px] text-zinc-400">
-          {view.conditions.length} 个条件
+          {t("views.conditionsCount", { count: view.conditions.length })}
         </div>
       </div>
-      <div className="justify-self-end text-[12px] font-medium text-zinc-500">{view.count} 项</div>
+      <div className="justify-self-end text-[12px] font-medium text-zinc-500">
+        {t("views.countItems", { count: view.count })}
+      </div>
       <div className="flex justify-end gap-1">
-        <IconButton label={`${view.name} 往前移一格`} disabled={isFirst} onPress={onMoveUp}>
+        <IconButton
+          label={t("sidebar.moveItemUp", { name: view.name })}
+          disabled={isFirst}
+          onPress={onMoveUp}
+        >
           <ArrowUp size={13} />
         </IconButton>
-        <IconButton label={`${view.name} 往后移一格`} disabled={isLast} onPress={onMoveDown}>
+        <IconButton
+          label={t("sidebar.moveItemDown", { name: view.name })}
+          disabled={isLast}
+          onPress={onMoveDown}
+        >
           <ArrowDown size={13} />
         </IconButton>
         <ViewRowMoreMenu
@@ -177,12 +189,14 @@ function ViewRowMoreMenu({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <Dropdown>
       <Dropdown.Trigger
         data-no-drag
         className={ROW_MORE_TRIGGER_CLASS_NAME}
-        aria-label={`${viewName} 更多操作`}
+        aria-label={t("sidebar.itemMore", { name: viewName })}
         onClick={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
       >
@@ -194,7 +208,7 @@ function ViewRowMoreMenu({
         placement="bottom end"
       >
         <Dropdown.Menu
-          aria-label={`${viewName} 操作`}
+          aria-label={t("sidebar.itemActions", { name: viewName })}
           className="min-w-32 p-0 outline-none"
           disabledKeys={isFirst ? ["move-first"] : []}
           onAction={(key) => {
@@ -207,29 +221,29 @@ function ViewRowMoreMenu({
           <Dropdown.Item
             key="move-first"
             id="move-first"
-            textValue="移到最前"
+            textValue={t("common.moveToFront")}
             className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[disabled]:opacity-45 data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100"
           >
             <ArrowUpToLine size={13} className="text-zinc-500" />
-            <span>移到最前</span>
+            <span>{t("common.moveToFront")}</span>
           </Dropdown.Item>
           <Dropdown.Item
             key="edit"
             id="edit"
-            textValue="编辑"
+            textValue={t("common.edit")}
             className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100"
           >
             <Pencil size={13} className="text-zinc-500" />
-            <span>编辑</span>
+            <span>{t("common.edit")}</span>
           </Dropdown.Item>
           <Dropdown.Item
             key="delete"
             id="delete"
-            textValue="删除"
+            textValue={t("common.delete")}
             className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-red-600 outline-none transition-colors data-[focused]:bg-red-50 data-[hovered]:bg-red-50"
           >
             <Trash2 size={13} />
-            <span>删除</span>
+            <span>{t("common.delete")}</span>
           </Dropdown.Item>
         </Dropdown.Menu>
       </Dropdown.Popover>
@@ -238,6 +252,7 @@ function ViewRowMoreMenu({
 }
 
 export function ViewsManagementPage() {
+  const { t } = useTranslation();
   const sidebarQuery = useQuery({
     ...trpc.assets.sidebarMeta.queryOptions(),
     refetchOnWindowFocus: false,
@@ -294,10 +309,10 @@ export function ViewsManagementPage() {
   const handleDelete = (view: SidebarView) => {
     void (async () => {
       const confirmed = await confirm({
-        title: `删除 View「${view.name}」？`,
-        description: "删除后不会影响资产或 Tags，只会移除这个保存的视图。",
-        confirmLabel: "删除",
-        cancelLabel: "取消",
+        title: t("views.deleteTitle", { name: view.name }),
+        description: t("views.deleteDesc"),
+        confirmLabel: t("common.delete"),
+        cancelLabel: t("common.cancel"),
         variant: "danger",
         onConfirm: async () => {
           await deleteSavedView.mutateAsync({ id: view.id });
@@ -308,7 +323,7 @@ export function ViewsManagementPage() {
       }
       await invalidateVaultState();
       showToastAfterRefresh(() => {
-        toast.success("View 已删除");
+        toast.success(t("views.deleted"));
       });
     })();
   };
@@ -318,7 +333,7 @@ export function ViewsManagementPage() {
       <PageChrome>
         <div className="window-no-drag flex items-center gap-2">
           <FolderKanban size={15} className="text-zinc-500" />
-          <h1 className="text-[13px] font-semibold text-zinc-900">Views 管理</h1>
+          <h1 className="text-[13px] font-semibold text-zinc-900">{t("views.title")}</h1>
           <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-500">
             {views.length}
           </span>
@@ -331,7 +346,7 @@ export function ViewsManagementPage() {
             onPress={() => setModalState({ kind: "create" })}
           >
             <Plus size={13} />
-            新建 View
+            {t("views.new")}
           </Button>
         </div>
       </PageChrome>
@@ -341,9 +356,9 @@ export function ViewsManagementPage() {
           <div className="grid grid-cols-[28px_34px_minmax(0,1fr)_76px_104px] items-center gap-3 border-b border-zinc-100 bg-zinc-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
             <span />
             <span>Icon</span>
-            <span>名称</span>
-            <span className="justify-self-end">资产</span>
-            <span className="justify-self-end">操作</span>
+            <span>{t("views.colName")}</span>
+            <span className="justify-self-end">{t("views.colAssets")}</span>
+            <span className="justify-self-end">{t("views.colActions")}</span>
           </div>
           {orderedViews.length > 0 ? (
             <DragDropProvider
@@ -389,7 +404,7 @@ export function ViewsManagementPage() {
             </DragDropProvider>
           ) : (
             <div className="grid h-48 place-items-center text-[13px] text-zinc-400">
-              {sidebarQuery.isLoading ? "正在读取 Views" : "还没有 View"}
+              {sidebarQuery.isLoading ? t("views.loading") : t("views.empty")}
             </div>
           )}
         </div>
