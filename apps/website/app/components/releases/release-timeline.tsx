@@ -20,10 +20,25 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.4",
+    date: "2026-07-12",
+    head: "Smoother success toasts, more reliable top-chrome window dragging, and less accidental text selection while moving the window.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Desktop",
+        items: [
+          "Success toasts after delete and edit actions stay in step with the asset list refresh, so feedback no longer races ahead of the board.",
+          "Toast enter animation is retained and no longer competes with modal close or heavy list reloads on the same frames.",
+          "Dragging the top window chrome is less likely to select text or hit dead zones under empty toast overlays.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.3",
     date: "2026-07-11",
     head: "Hidden files are no longer imported as assets, with a one-time cleanup of previously imported ones.",
-    badge: "latest",
     groups: [
       {
         title: "Desktop",
