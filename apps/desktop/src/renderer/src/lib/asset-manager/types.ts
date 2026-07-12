@@ -11,6 +11,12 @@ export type AssetKind = "markdown" | "post" | "image" | "video" | "link" | "web"
 export type AssetStatus = "inbox" | "organized" | "draft" | "published";
 export type AssetPrivacy = "normal" | "private";
 
+/** Bound vault tags on an asset (vault sortOrder). Cards use `tag` = first name. */
+export type AssetTagRef = {
+  id: string;
+  name: string;
+};
+
 export type Asset = {
   id: string;
   kind: AssetKind;
@@ -24,7 +30,9 @@ export type Asset = {
   time: string;
   timestampMs: number;
   createdTimestampMs: number;
+  /** Primary tag name for cards/breadcrumb; untagged sentinel when empty. */
   tag: string;
+  tags: AssetTagRef[];
   tagIds: string[];
   collection?: string;
   meta: string;

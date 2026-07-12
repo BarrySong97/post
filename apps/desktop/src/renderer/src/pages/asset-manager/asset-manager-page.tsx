@@ -71,7 +71,6 @@ import {
   MessageSquareQuote,
   PanelRightOpen,
   Play,
-  Plus,
   ShieldCheck,
   SquareTerminal,
   User,
@@ -94,6 +93,7 @@ import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import { openAssetDetail } from "@/lib/asset-manager/open-asset-detail";
 
+import { AssetDetailTags } from "@/components/asset-manager/asset-detail-tags";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAppLayout } from "@/components/layout/app-layout-context";
@@ -379,18 +379,6 @@ function buildAssetListInput({
     sourceTypes: getSourceTypes(filters.sources),
     sort: filters.sort,
   };
-}
-
-function TagPill({ name }: { name: string }) {
-  return (
-    <Chip size="sm" className="gap-1.5 bg-zinc-100 px-2 text-[11px] text-zinc-700">
-      <span
-        className="h-1.5 w-1.5 rounded-full"
-        style={{ background: `oklch(0.62 0.14 ${getTagHue(name)})` }}
-      />
-      {name}
-    </Chip>
-  );
 }
 
 function VisualBlock({ asset }: { asset: Asset }) {
@@ -2671,12 +2659,14 @@ function FileDetailBody({
 
 function AssetDetail({
   asset,
+  vaultTags,
   dragEnabled = true,
   terminalAvailable,
   terminalOpen,
   onToggleTerminal,
 }: {
   asset: Asset;
+  vaultTags: readonly SidebarTag[];
   dragEnabled?: boolean;
   terminalAvailable: boolean;
   terminalOpen: boolean;
@@ -2870,15 +2860,7 @@ function AssetDetail({
           <span className="text-zinc-400">{t("assets.readonlyPreview")}</span>
         </div>
         {/* tags row */}
-        <div className="mt-3.5 flex flex-wrap items-center gap-2">
-          <TagPill name={asset.tag} />
-          <button
-            type="button"
-            className="flex h-6 w-6 items-center justify-center rounded-[7px] border border-dashed border-zinc-200 text-zinc-400 hover:border-blue-200 hover:text-blue-500"
-          >
-            <Plus size={13} />
-          </button>
-        </div>
+        <AssetDetailTags asset={asset} vaultTags={vaultTags} />
       </div>
 
       {/* ── Body ── */}
@@ -3302,6 +3284,7 @@ export function AssetManagerPage() {
               {activeAsset ? (
                 <AssetDetail
                   asset={activeAsset}
+                  vaultTags={sidebarQuery.data?.tags ?? []}
                   dragEnabled={backgroundWindowDragEnabled}
                   terminalAvailable={terminalAvailable}
                   terminalOpen={terminalOpen}

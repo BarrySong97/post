@@ -117,8 +117,12 @@ function getAssetTimestampMs(value: unknown, fallbackMs = Date.now()) {
 }
 
 export function mapIndexedAsset(asset: IndexedAsset): Asset {
+  // Match vault sidebar order so cards and detail share the same primary tag.
+  const tags = [...asset.tags]
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "zh-Hans-CN"))
+    .map((tagItem) => ({ id: tagItem.id, name: tagItem.name }));
   // Sentinel display placeholder for untagged assets (not a real user tag).
-  const tag = asset.tags[0]?.name ?? i18n.t("assets.untagged");
+  const tag = tags[0]?.name ?? i18n.t("assets.untagged");
   const kind = mapIndexedAssetKind(asset.kind, asset.extension);
   const extension = asset.extension ?? asset.fileName.split(".").pop() ?? "file";
   const mediaUrl =
@@ -161,7 +165,8 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     timestampMs: updatedTimestampMs,
     createdTimestampMs: getAssetTimestampMs(asset.ctimeMs, updatedTimestampMs),
     tag,
-    tagIds: asset.tags.map((tagItem) => tagItem.id),
+    tags,
+    tagIds: tags.map((tagItem) => tagItem.id),
     meta: `${metaPrefix[kind]} · ${formatBytes(asset.sizeBytes)}`,
     accent: getTagHue(tag),
     height: kind === "image" || kind === "video" ? "medium" : "short",
@@ -216,9 +221,7 @@ export function getAssetSourceLabel(asset: Asset) {
 }
 
 function getAssetTagNames(asset: Asset) {
-  const untagged = i18n.t("assets.untagged");
-  // Also treat legacy Chinese placeholder as untagged for filter matching.
-  return asset.tag === untagged || asset.tag === "待整理" ? [] : [asset.tag];
+  return asset.tags.map((tagItem) => tagItem.name);
 }
 
 function isAssetInTimeRange(asset: Asset, time: AssetTimeFilter) {
