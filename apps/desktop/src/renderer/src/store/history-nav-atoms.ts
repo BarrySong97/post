@@ -2,7 +2,7 @@
  * @purpose Bridge the router's navigation history into jotai-readable back/forward availability.
  * @role    Shared store consumed by useHistoryNavigation / WindowChromeNav (and any future consumer).
  * @deps    jotai, the router singleton (lib/router), TanStack history `__TSR_index` + subscribe action.
- * @gotcha  REPLACE navigations (e.g. the asset list scroll `?i/o`) do not change the index, so they
+ * @gotcha  REPLACE navigations (e.g. soft detail asset switches) do not change the index, so they
  *          never affect back/forward state. A PUSH truncates the forward chain (resets `top`).
  */
 
