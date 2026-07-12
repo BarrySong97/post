@@ -3,6 +3,8 @@
  * @role    Desktop-only style layer consumed through @post/ui, built on the shared ./theme.css.
  * @deps    ./theme.css (Tailwind v4 + HeroUI + shared theme tokens).
  * @gotcha  Keep drag/no-drag and panel layout rules aligned with Electron window chrome behavior.
+ *          Default user-select is none so top-chrome drag does not fight text selection; opt
+ *          editable/copy surfaces back in (input/textarea/contenteditable/.user-select-text).
  *          Generic theme tokens/resets live in theme.css so non-Electron apps (e.g. apps/website)
  *          can reuse them without pulling in these Electron window assumptions.
  */
@@ -29,6 +31,20 @@
     min-width: 360px;
     overflow: hidden;
     background: transparent;
+    /* Desktop chrome: selection fights -webkit-app-region: drag and leaves residual highlights. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Re-enable selection only where users type or intentionally copy text. */
+  input,
+  textarea,
+  select,
+  [contenteditable="true"],
+  [contenteditable=""],
+  .user-select-text {
+    -webkit-user-select: text;
+    user-select: text;
   }
 
   button,
@@ -53,6 +69,8 @@
 
 .window-drag {
   -webkit-app-region: drag;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .window-no-drag {
