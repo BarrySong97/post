@@ -15,7 +15,13 @@ import { useNavigate } from "@tanstack/react-router";
 import { Button, Popover } from "@heroui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { CheckCircle2, Info, Settings2, TriangleAlert, X, XCircle } from "lucide-react";
-import { getToastSnapshot, subscribeToasts, toast, type ToastItem } from "@/lib/toast";
+import {
+  getToastSnapshot,
+  subscribeToasts,
+  toast,
+  TOAST_ENTER_MS,
+  type ToastItem,
+} from "@/lib/toast";
 
 import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
 import { applyFilterCommand } from "@/lib/asset-manager/apply-filter-command";
@@ -94,11 +100,11 @@ function GlobalToast({ item }: { item: ToastItem }) {
   return (
     <motion.div
       role="status"
-      initial={{ opacity: 0, y: -8 }}
+      initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -6 }}
-      transition={{ duration: 0.14, ease: "easeOut" }}
-      className="window-no-drag pointer-events-auto flex min-h-11 w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-[13px] text-zinc-800 shadow-md will-change-transform"
+      exit={{ opacity: 0, y: -6, transition: { duration: 0.12, ease: "easeIn" } }}
+      transition={{ duration: TOAST_ENTER_MS / 1000, ease: [0.22, 1, 0.36, 1] }}
+      className="window-no-drag pointer-events-auto flex min-h-11 w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-[13px] text-zinc-800 shadow-md will-change-[opacity,transform]"
     >
       <Icon aria-hidden="true" className={getToastIconClassName(item.variant)} size={15} />
       <div className="min-w-0 flex-1">

@@ -44,7 +44,7 @@ import type { AssetSummary, SidebarTag, SidebarView } from "@/lib/asset-manager/
 import { useConfirmModal } from "@/components/common/confirm-modal";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { isMacWindow } from "@/lib/platform";
-import { scheduleAfterToastPaint, toast } from "@/lib/toast";
+import { showToastAfterRefresh, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 
 type SidebarSectionId = "views" | "tags";
@@ -629,41 +629,51 @@ export function Sidebar({
   const orderedTags = useMemo(() => tagItems.slice(0, 10), [tagItems]);
 
   const handleDeleteView = (view: SidebarView) => {
-    void confirm({
-      title: `删除 View「${view.name}」？`,
-      description: "删除后不会影响资产或 Tags，只会移除这个保存的视图。",
-      confirmLabel: "删除",
-      cancelLabel: "取消",
-      variant: "danger",
-      onConfirm: async () => {
-        await deleteSavedView.mutateAsync({ id: view.id });
+    void (async () => {
+      const confirmed = await confirm({
+        title: `删除 View「${view.name}」？`,
+        description: "删除后不会影响资产或 Tags，只会移除这个保存的视图。",
+        confirmLabel: "删除",
+        cancelLabel: "取消",
+        variant: "danger",
+        onConfirm: async () => {
+          await deleteSavedView.mutateAsync({ id: view.id });
+        },
+      });
+      if (!confirmed) {
+        return;
+      }
+      await invalidateVaultState();
+      showToastAfterRefresh(() => {
         toast.success("View 已删除");
-        scheduleAfterToastPaint(() => {
-          void invalidateVaultState();
-        });
-      },
-    });
+      });
+    })();
   };
 
   const handleDeleteTag = (tag: SidebarTag) => {
     const { updatedViews, deletedViews } = getTagViewImpact(tag, viewItems);
 
-    void confirm({
-      title: `删除 Tag「${tag.name}」？`,
-      description: (
-        <TagDeleteDescription tag={tag} updatedViews={updatedViews} deletedViews={deletedViews} />
-      ),
-      confirmLabel: "删除",
-      cancelLabel: "取消",
-      variant: "danger",
-      onConfirm: async () => {
-        await deleteTag.mutateAsync({ id: tag.id });
+    void (async () => {
+      const confirmed = await confirm({
+        title: `删除 Tag「${tag.name}」？`,
+        description: (
+          <TagDeleteDescription tag={tag} updatedViews={updatedViews} deletedViews={deletedViews} />
+        ),
+        confirmLabel: "删除",
+        cancelLabel: "取消",
+        variant: "danger",
+        onConfirm: async () => {
+          await deleteTag.mutateAsync({ id: tag.id });
+        },
+      });
+      if (!confirmed) {
+        return;
+      }
+      await invalidateVaultState();
+      showToastAfterRefresh(() => {
         toast.success("Tag 已删除");
-        scheduleAfterToastPaint(() => {
-          void invalidateVaultState();
-        });
-      },
-    });
+      });
+    })();
   };
 
   const handleSidebarDragEnd = (event: DragEndEvent) => {

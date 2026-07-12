@@ -3,7 +3,8 @@
  * @role    Small renderer helper module outside page-specific ownership.
  * @deps    Renderer runtime only (no HeroUI ToastQueue — Electron + view transitions were unstable).
  * @gotcha  Keep helpers browser-safe unless they intentionally call preload-exposed APIs.
- *          Prefer `scheduleAfterToastPaint` for vault invalidation so toast can paint first.
+ *          For mutations that refresh the board: await invalidate first, then
+ *          `showToastAfterRefresh(() => toast.success(...))` so the toast tracks the list update.
  */
 
 import type { ReactNode } from "react";
@@ -28,6 +29,8 @@ export type ToastItem = {
 };
 
 const DEFAULT_TIMEOUT = 4000;
+/** Keep in sync with GlobalToast / UpdateToast enter `transition.duration`. */
+export const TOAST_ENTER_MS = 200;
 const listeners = new Set<() => void>();
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 let items: ToastItem[] = [];
@@ -91,19 +94,20 @@ function addToast(title: ReactNode, options?: ToastOptions) {
 }
 
 /**
- * Run heavy UI work (e.g. broad React Query invalidation) after the next paint.
- * Double-rAF waits for the browser to flush the toast commit so enter animation
- * is less likely to fight vault board re-renders on the same frame.
+ * Show a toast after vault refresh has been awaited, once the browser has had a chance
+ * to paint the updated list. Keeps success feedback in sync with the board instead of
+ * leading the list by a large margin.
  */
-export function scheduleAfterToastPaint(work: () => void) {
+export function showToastAfterRefresh(show: () => void) {
   if (typeof requestAnimationFrame !== "function") {
-    work();
+    show();
     return;
   }
 
+  // Double-rAF: first after style/layout from invalidate, second after that paint commits.
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
-      work();
+      show();
     });
   });
 }

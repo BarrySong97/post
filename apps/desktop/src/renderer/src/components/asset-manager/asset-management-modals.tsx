@@ -38,7 +38,7 @@ import {
 import { ChevronDown, Hash, Loader2 } from "lucide-react";
 
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
-import { scheduleAfterToastPaint, toast } from "@/lib/toast";
+import { showToastAfterRefresh, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 import { getDefaultAssetFilters, type AssetFilterState } from "@/store/asset-manager-atoms";
 import type { SidebarTag, SidebarView } from "@/lib/asset-manager/types";
@@ -177,16 +177,19 @@ export function TagFormModal({ isOpen, mode, vaultId, onOpenChange }: TagFormMod
   const onSubmit = handleSubmit(async (values) => {
     if (isEdit) {
       await updateTag.mutateAsync({ id: mode.tag.id, name: values.name, color: values.color });
-      toast.success("标签已更新");
+      onOpenChange(false);
+      await invalidateVaultState();
+      showToastAfterRefresh(() => {
+        toast.success("标签已更新");
+      });
     } else {
       await createTag.mutateAsync({ vaultId, name: values.name, color: values.color });
-      toast.success("标签已创建");
+      onOpenChange(false);
+      await invalidateVaultState();
+      showToastAfterRefresh(() => {
+        toast.success("标签已创建");
+      });
     }
-
-    onOpenChange(false);
-    scheduleAfterToastPaint(() => {
-      void invalidateVaultState();
-    });
   });
 
   return (
@@ -416,16 +419,19 @@ export function ViewFormModal({
 
     if (isEdit) {
       await updateSavedView.mutateAsync({ id: mode.view.id, ...payload });
-      toast.success("View 已更新");
+      onOpenChange(false);
+      await invalidateVaultState();
+      showToastAfterRefresh(() => {
+        toast.success("View 已更新");
+      });
     } else {
       await createSavedView.mutateAsync({ vaultId, ...payload });
-      toast.success("View 已创建");
+      onOpenChange(false);
+      await invalidateVaultState();
+      showToastAfterRefresh(() => {
+        toast.success("View 已创建");
+      });
     }
-
-    onOpenChange(false);
-    scheduleAfterToastPaint(() => {
-      void invalidateVaultState();
-    });
   });
 
   return (

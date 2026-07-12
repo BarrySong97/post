@@ -13,7 +13,7 @@ import { Trash2 } from "lucide-react";
 import { useConfirmModal } from "@/components/common/confirm-modal";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import type { Asset } from "@/lib/asset-manager/types";
-import { scheduleAfterToastPaint, toast } from "@/lib/toast";
+import { showToastAfterRefresh, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 
 const MENU_WIDTH = 168;
@@ -75,20 +75,29 @@ export function AssetCardContextMenu({
 
   const requestDelete = () => {
     onClose();
-    void confirm({
-      title: `删除资产「${state.asset.title}」？`,
-      description: "源文件会移到系统废纸篓，资产会从 Post 中移除。将文件恢复到原路径后可重新索引。",
-      confirmLabel: "移到废纸篓",
-      cancelLabel: "取消",
-      variant: "danger",
-      onConfirm: async () => {
-        const result = await deleteAsset.mutateAsync({ id: state.asset.id });
-        toast.success(result.movedToTrash ? "资产已移到废纸篓" : "资产已删除");
-        scheduleAfterToastPaint(() => {
-          void invalidateVaultState();
-        });
-      },
-    });
+    void (async () => {
+      let movedToTrash = false;
+      const confirmed = await confirm({
+        title: `删除资产「${state.asset.title}」？`,
+        description:
+          "源文件会移到系统废纸篓，资产会从 Post 中移除。将文件恢复到原路径后可重新索引。",
+        confirmLabel: "移到废纸篓",
+        cancelLabel: "取消",
+        variant: "danger",
+        onConfirm: async () => {
+          const result = await deleteAsset.mutateAsync({ id: state.asset.id });
+          movedToTrash = result.movedToTrash;
+        },
+      });
+      // After modal close: refresh list first, then toast so feedback tracks the board.
+      if (!confirmed) {
+        return;
+      }
+      await invalidateVaultState();
+      showToastAfterRefresh(() => {
+        toast.success(movedToTrash ? "资产已移到废纸篓" : "资产已删除");
+      });
+    })();
   };
 
   return createPortal(

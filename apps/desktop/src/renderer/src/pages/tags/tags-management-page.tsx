@@ -31,7 +31,7 @@ import { TagFormModal } from "@/components/asset-manager/asset-management-modals
 import { getTagHue } from "@/lib/asset-manager/asset-model";
 import type { SidebarTag, SidebarView } from "@/lib/asset-manager/types";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
-import { scheduleAfterToastPaint, toast } from "@/lib/toast";
+import { showToastAfterRefresh, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 
 type TagModalState = { kind: "create" } | { kind: "edit"; tag: SidebarTag };
@@ -349,20 +349,25 @@ export function TagsManagementPage() {
   const handleDelete = (tag: SidebarTag) => {
     const impact = getTagDeleteImpact(tag, views);
 
-    void confirm({
-      title: `删除 Tag「${tag.name}」？`,
-      description: <TagDeleteDescription tag={tag} impact={impact} />,
-      confirmLabel: "删除",
-      cancelLabel: "取消",
-      variant: "danger",
-      onConfirm: async () => {
-        await deleteTag.mutateAsync({ id: tag.id });
+    void (async () => {
+      const confirmed = await confirm({
+        title: `删除 Tag「${tag.name}」？`,
+        description: <TagDeleteDescription tag={tag} impact={impact} />,
+        confirmLabel: "删除",
+        cancelLabel: "取消",
+        variant: "danger",
+        onConfirm: async () => {
+          await deleteTag.mutateAsync({ id: tag.id });
+        },
+      });
+      if (!confirmed) {
+        return;
+      }
+      await invalidateVaultState();
+      showToastAfterRefresh(() => {
         toast.success("Tag 已删除");
-        scheduleAfterToastPaint(() => {
-          void invalidateVaultState();
-        });
-      },
-    });
+      });
+    })();
   };
 
   return (

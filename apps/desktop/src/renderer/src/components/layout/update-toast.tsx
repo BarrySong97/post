@@ -13,6 +13,7 @@ import { useRouterState } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "motion/react";
 import { Info, X } from "lucide-react";
 
+import { TOAST_ENTER_MS } from "@/lib/toast";
 import { updateStatusAtom } from "@/store/update-atoms";
 import type { UpdateStatusEvent } from "@shared/contracts/update/update.contract";
 
@@ -77,11 +78,11 @@ export function UpdateToast() {
           <motion.div
             key="post-update"
             role="status"
-            initial={{ opacity: 0, y: -8 }}
+            initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.14, ease: "easeOut" }}
-            className="window-no-drag pointer-events-auto flex min-h-11 w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-[13px] text-zinc-800 shadow-md will-change-transform"
+            exit={{ opacity: 0, y: -6, transition: { duration: 0.12, ease: "easeIn" } }}
+            transition={{ duration: TOAST_ENTER_MS / 1000, ease: [0.22, 1, 0.36, 1] }}
+            className="window-no-drag pointer-events-auto flex min-h-11 w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-[13px] text-zinc-800 shadow-md will-change-[opacity,transform]"
           >
             <Info aria-hidden="true" className="shrink-0 text-blue-600" size={15} />
             <div className="min-w-0 flex-1">

@@ -31,7 +31,7 @@ import { ViewFormModal } from "@/components/asset-manager/asset-management-modal
 import { ViewIconRenderer } from "@/components/asset-manager/view-icon-picker";
 import type { SidebarView } from "@/lib/asset-manager/types";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
-import { scheduleAfterToastPaint, toast } from "@/lib/toast";
+import { showToastAfterRefresh, toast } from "@/lib/toast";
 import { trpc } from "@/lib/trpc";
 
 type ViewModalState = { kind: "create" } | { kind: "edit"; view: SidebarView };
@@ -292,20 +292,25 @@ export function ViewsManagementPage() {
   };
 
   const handleDelete = (view: SidebarView) => {
-    void confirm({
-      title: `删除 View「${view.name}」？`,
-      description: "删除后不会影响资产或 Tags，只会移除这个保存的视图。",
-      confirmLabel: "删除",
-      cancelLabel: "取消",
-      variant: "danger",
-      onConfirm: async () => {
-        await deleteSavedView.mutateAsync({ id: view.id });
+    void (async () => {
+      const confirmed = await confirm({
+        title: `删除 View「${view.name}」？`,
+        description: "删除后不会影响资产或 Tags，只会移除这个保存的视图。",
+        confirmLabel: "删除",
+        cancelLabel: "取消",
+        variant: "danger",
+        onConfirm: async () => {
+          await deleteSavedView.mutateAsync({ id: view.id });
+        },
+      });
+      if (!confirmed) {
+        return;
+      }
+      await invalidateVaultState();
+      showToastAfterRefresh(() => {
         toast.success("View 已删除");
-        scheduleAfterToastPaint(() => {
-          void invalidateVaultState();
-        });
-      },
-    });
+      });
+    })();
   };
 
   return (
