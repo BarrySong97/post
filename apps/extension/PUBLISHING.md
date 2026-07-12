@@ -8,10 +8,17 @@ accept the same package.
 
 ```bash
 pnpm -F extension package:prod
-# -> apps/extension/post-extension.zip  (upload this)
+# -> apps/extension/post-extension.zip  (manifest.json + INSTALL.md at zip root)
 ```
 
-The zip has `manifest.json` at its root, the `icons/`, and the bundled scripts.
+The zip has `manifest.json` at its root, `INSTALL.md`, the `icons/`, and the bundled scripts.
+
+### GitHub Releases
+
+The Release workflow builds this prod zip and uploads it as
+`Post-<version>-chrome-extension.zip` on the same GitHub Release as the Mac desktop
+artifacts (see `.github/workflows/release.yml`). Users can download it from
+https://github.com/BarrySong97/post/releases.
 
 ## Store listing checklist
 

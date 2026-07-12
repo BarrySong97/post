@@ -81,3 +81,19 @@ jobs:
         run: pnpm -F desktop exec electron-builder --mac --publish always $ELECTRON_BUILDER_EXTRA_ARGS
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package and upload Chrome extension
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          ASSET="Post-${VERSION}-chrome-extension.zip"
+
+          pnpm -F extension package:prod
+          cp apps/extension/post-extension.zip "apps/extension/${ASSET}"
+
+          gh release upload "${TAG}" "apps/extension/${ASSET}" \
+            --repo BarrySong97/post \
+            --clobber

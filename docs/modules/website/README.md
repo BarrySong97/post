@@ -20,7 +20,7 @@ Canvas colors come from the shared [ui](../ui/README.md) package (`@post/ui/them
 - `apps/website/app/components/faq-section.tsx` - Post FAQ copy.
 - `apps/website/app/components/closing-cta.tsx` - final landing-page CTA.
 - `apps/website/app/components/site-footer.tsx` - footer navigation groups and copyright.
-- `apps/website/app/releases/page.tsx` - public changelog and latest Mac download route.
+- `apps/website/app/releases/page.tsx` - public changelog and latest Mac / Chrome extension download entry (assets live on GitHub Releases).
 - `apps/website/app/components/releases/release-timeline.tsx` - release note data rendered by the changelog and validated before release.
 - `apps/website/app/lib/seo.ts` - shared site, GitHub, release, and download URLs.
 - `apps/website/app/globals.css` - imports `@post/ui/theme.css`; no locally-defined color tokens.
@@ -35,7 +35,7 @@ Canvas colors come from the shared [ui](../ui/README.md) package (`@post/ui/them
 
 - Development command from the repo root: `pnpm dev:website` (runs `pnpm -F website dev`).
 - Workspace commands: `pnpm -F website dev | build | start | check-types`.
-- Public download URL: `https://github.com/BarrySong97/post/releases/latest`.
+- Public download URL: `https://github.com/BarrySong97/post/releases/latest` (Mac desktop artifacts plus `Post-<version>-chrome-extension.zip`).
 - Changelog route: `/releases`.
 - Cloudflare Pages production URL: `https://topostt.pages.dev`.
 - Cloudflare Pages build command: `pnpm -F website build`.

@@ -20,6 +20,8 @@ The extension builds as two separate installs so a test browser and a release br
 - `apps/extension/src/content/twitter-video-context.ts` - Twitter/X content script that captures the right-clicked Post plus current-post video and visible media context.
 - `apps/extension/native-host/post-native-host.mjs` - Chrome Native Messaging stdio host that forwards extension requests to Desktop local IPC.
 - `apps/extension/native-host/install-native-host.mjs` - dev helper that writes the browser-specific native messaging host manifest for an extension ID.
+- `apps/extension/scripts/package-extension.mjs` - prod zip packager (copies `INSTALL.md` into the zip root).
+- `apps/extension/INSTALL.md` - end-user install notes shipped inside the release zip.
 - `apps/extension/vite.config.chrome.ts` - CRXJS/Vite build config for the unpacked Chrome extension output.
 - `apps/extension/nodemon.chrome.json` - development watch command used by `pnpm -F extension dev`.
 - `apps/extension/tsconfig.json` - TypeScript config extending the shared strict compiler settings.
@@ -29,6 +31,7 @@ The extension builds as two separate installs so a test browser and a release br
 - Development command from the repo root: `pnpm dev:extension`.
 - Workspace commands: `pnpm -F extension dev | build | check-types`.
 - Channel builds: `pnpm -F extension build` (dev → `dist_chrome`) and `pnpm -F extension build:prod` (release → `dist_chrome_prod`).
+- Prod zip: `pnpm -F extension package:prod` → `apps/extension/post-extension.zip` (includes `INSTALL.md`). GitHub Releases attach the same package as `Post-<version>-chrome-extension.zip` on each `v*` tag.
 - Native host registration: `pnpm -F extension native-host:install -- --extension-id <id>[,<id2>,...]`. Pass both the dev and prod extension IDs (comma-separated) so the one native host allows both channels.
 - Custom Chromium host directory: add `--manifest-dir "<NativeMessagingHosts directory>"` when the target browser is not one of `chrome`, `chromium`, `chrome-for-testing`, `edge`, or `brave`.
 - Build output: `apps/extension/dist_chrome` (dev) and `dist_chrome_prod` (release), each loaded as an unpacked/packed Chrome extension.
