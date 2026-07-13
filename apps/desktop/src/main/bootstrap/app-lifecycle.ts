@@ -24,6 +24,7 @@ import {
 } from "../services/asset-profile-log-service";
 import { APP_DISPLAY_NAME } from "./app-info";
 import { initAutoUpdate } from "./auto-update";
+import { installNativeMessagingHost } from "./native-messaging-host";
 import { isDevRuntime } from "./runtime-env";
 import { createWindow, getDevDockIconPath } from "./window";
 
@@ -35,6 +36,18 @@ function applyDevDockIcon(): void {
   }
 
   app.dock?.setIcon(getDevDockIconPath());
+}
+
+function applyNativeMessagingHost(): void {
+  if (isDevRuntime()) {
+    return;
+  }
+
+  try {
+    installNativeMessagingHost();
+  } catch (error) {
+    console.error("Failed to install the native messaging host manifest", error);
+  }
 }
 
 function applyUserDataPath(): void {
@@ -60,6 +73,7 @@ export function bootApplication(): void {
     startLocalIpcServer(app.getPath("userData"));
     electronApp.setAppUserModelId("com.post.desktop");
     applyDevDockIcon();
+    applyNativeMessagingHost();
 
     app.on("browser-window-created", (_, window) => {
       optimizer.watchWindowShortcuts(window);

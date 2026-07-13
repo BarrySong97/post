@@ -18,6 +18,8 @@ extraResources:
       - ffmpeg
       - ffmpeg.exe
       - LICENSE*
+  - from: ../extension/native-host/post-native-host.mjs
+    to: native-host/post-native-host.mjs
 asarUnpack:
   - "**/*.node"
   - "node_modules/node-pty/**"
