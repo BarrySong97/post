@@ -81,6 +81,7 @@ declare global {
       trpcUnsubscribe: (request: { id: string }) => void;
       onTRPCSubscriptionEvent: (callback: (event: TRPCSubscriptionEvent) => void) => () => void;
       onHistoryNavigate: (callback: (direction: "back" | "forward") => void) => () => void;
+      resolveDroppedFilePaths: (files: File[]) => string[];
     };
   }
 }

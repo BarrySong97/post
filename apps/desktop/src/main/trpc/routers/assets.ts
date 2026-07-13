@@ -36,6 +36,7 @@ import {
   copyAssetPathInputSchema,
   deleteAssetInputSchema,
   ensureThumbnailsInputSchema,
+  importLocalFilesInputSchema,
   openAssetInEditorInputSchema,
   openFileInputSchema,
   openVaultLocationInputSchema,
@@ -85,6 +86,7 @@ import { runIndexerTask } from "../../services/indexer-task-service";
 import { readMarkdownContent } from "../../services/markdown-preview-service";
 import { writeAssetProfileLog } from "../../services/asset-profile-log-service";
 import { startThumbnailPrewarm } from "../../services/thumbnail-service";
+import { importLocalFiles as importLocalFilesIntoVault } from "../../services/local-file-import-service";
 import { resolveVaultFilePath } from "../../services/vault-file-service";
 import { runDomain } from "../../domain-context";
 import { publicProcedure, router } from "../trpc";
@@ -191,6 +193,12 @@ export const assetsRouter = router({
       rootPath: vault.rootPath,
     };
   }),
+
+  importLocalFiles: publicProcedure
+    .input(importLocalFilesInputSchema)
+    .mutation(async ({ input }) => {
+      return importLocalFilesIntoVault(input);
+    }),
 
   reconcile: publicProcedure.input(reconcileVaultInputSchema).mutation(async ({ input }) => {
     const vault = getVaultOrThrow(input.vaultId);

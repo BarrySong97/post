@@ -7,6 +7,7 @@
  *          work. Their fixed shells must be window-drag (not default/no-drag) or Chromium app-region
  *          punches a dead zone through the top-center chrome even when empty/pointer-events-none.
  *          Toast enter/exit avoids motion `layout` so paint stays cheap next to vault invalidation.
+ *          FileDropZone wraps the shell chrome for OS file drops into assets/imports/.
  */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -30,6 +31,7 @@ import { openAssetDetail } from "@/lib/asset-manager/open-asset-detail";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { useHistoryNavigationShortcuts } from "@/hooks/use-history-navigation-shortcuts";
 import { ConfirmModalProvider } from "@/components/common/confirm-modal";
+import { FileDropZone } from "@/components/layout/file-drop-zone";
 import { UpdateToast } from "@/components/layout/update-toast";
 import { AutoUpdateProvider } from "@/providers/auto-update-provider";
 
@@ -65,10 +67,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <ConfirmModalProvider>
       <AutoUpdateProvider />
-      <div className="flex h-screen min-h-0 flex-col overflow-hidden text-zinc-950">
-        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
-        <GlobalStatusLine />
-      </div>
+      <FileDropZone>
+        <div className="flex h-full min-h-0 flex-col overflow-hidden text-zinc-950">
+          <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+          <GlobalStatusLine />
+        </div>
+      </FileDropZone>
       {/* DOM-after AppLayout so toast no-drag wins clicks over chrome drag.
           The fixed shell is itself window-drag: an unmarked (default no-drag) shell would
           punch a dead zone through the top-center drag strip even when empty and

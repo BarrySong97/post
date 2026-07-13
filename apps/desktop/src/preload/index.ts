@@ -3,9 +3,11 @@
  * @role    Security boundary between renderer React code and main-process native capabilities.
  * @deps    electron contextBridge/ipcRenderer, @electron-toolkit/preload.
  * @gotcha  Add renderer capabilities here instead of enabling direct Node or Electron access in the renderer.
+ *          resolveDroppedFilePaths must stay in preload — webUtils.getPathForFile is not available in the
+ *          sandboxed renderer, and File.path is unreliable under contextIsolation.
  */
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { electronAPI } from "@electron-toolkit/preload";
 
 import type { UpdateStatusEvent } from "@shared/contracts/update/update.contract";
@@ -117,6 +119,16 @@ const api = {
     };
     ipcRenderer.on("history:navigate", listener);
     return () => ipcRenderer.off("history:navigate", listener);
+  },
+  resolveDroppedFilePaths: (files: File[]) => {
+    const paths: string[] = [];
+    for (const file of files) {
+      const filePath = webUtils.getPathForFile(file);
+      if (filePath) {
+        paths.push(filePath);
+      }
+    }
+    return paths;
   },
 };
 

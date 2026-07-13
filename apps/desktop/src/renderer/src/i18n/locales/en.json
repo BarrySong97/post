@@ -56,7 +56,12 @@
       "sync": "Sync",
       "thumbnails": "Thumbnails",
       "import": "Import"
-    }
+    },
+    "dropImportHint": "Drop to import into vault",
+    "dropImportSuccess": "Imported {{count}} file(s)",
+    "dropImportSkipped": "Nothing new to import",
+    "dropImportFailed": "Could not import dropped files",
+    "dropImportNoVault": "Link a vault before importing files"
   },
   "nav": {
     "expandSidebar": "Expand sidebar",

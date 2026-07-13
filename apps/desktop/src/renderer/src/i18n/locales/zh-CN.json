@@ -56,7 +56,12 @@
       "sync": "同步",
       "thumbnails": "缩略图",
       "import": "导入"
-    }
+    },
+    "dropImportHint": "松手导入到资产库",
+    "dropImportSuccess": "已导入 {{count}} 个文件",
+    "dropImportSkipped": "没有可导入的新文件",
+    "dropImportFailed": "导入失败",
+    "dropImportNoVault": "请先关联资产库再导入文件"
   },
   "nav": {
     "expandSidebar": "展开左侧栏",

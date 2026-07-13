@@ -31,3 +31,10 @@ export const ensureThumbnailsInputSchema = z.object({
   vaultId: z.string().min(1).optional(),
   assetIds: z.array(z.string().min(1)).max(80).default([]),
 });
+
+export const importLocalFilesInputSchema = z.object({
+  paths: z.array(z.string().min(1)).min(1).max(500),
+  vaultId: z.string().min(1).optional(),
+});
+
+export type ImportLocalFilesInput = z.infer<typeof importLocalFilesInputSchema>;
