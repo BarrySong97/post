@@ -186,6 +186,9 @@ struct ThumbnailTarget {
     cached_source_mtime_ms: Option<i64>,
     cached_source_quick_fingerprint: Option<String>,
     cached_thumbnail_luma: Option<i64>,
+    // None = never written (needs backfill for videos). Some(-1) = probed, unavailable.
+    // Some(ms >= 0) = known duration.
+    cached_video_duration_ms: Option<i64>,
 }
 
 struct GeneratedThumbnail {
@@ -1332,11 +1335,43 @@ fn run_thumbnail_generation(config: &Config) -> Result<(), String> {
 
     for target in targets {
         if thumbnail_cache_matches(&target) {
-            cached_count += 1;
-            emit_event(
-                "thumbnail_cached",
-                &[("assetId", JsonValue::String(target.asset_id.clone()))],
-            );
+            if video_duration_backfill_needed(&target) {
+                let source_path = config.root_path.join(&target.relative_path);
+                // -1 marks "probed, unavailable" so prewarm does not retry forever.
+                let duration_ms = probe_video_duration_ms(&source_path).unwrap_or(-1);
+                push_image_cache_duration_sql(&mut sql, &target, duration_ms, now_ms());
+                pending_sql_rows += 1;
+                if duration_ms >= 0 {
+                    ready_count += 1;
+                    emit_event(
+                        "thumbnail_ready",
+                        &[
+                            ("assetId", JsonValue::String(target.asset_id.clone())),
+                            ("videoDurationMs", JsonValue::Number(duration_ms)),
+                            ("durationBackfill", JsonValue::Raw("true".to_string())),
+                        ],
+                    );
+                } else {
+                    cached_count += 1;
+                    emit_event(
+                        "thumbnail_cached",
+                        &[
+                            ("assetId", JsonValue::String(target.asset_id.clone())),
+                            ("durationBackfill", JsonValue::Raw("true".to_string())),
+                        ],
+                    );
+                }
+            } else {
+                cached_count += 1;
+                emit_event(
+                    "thumbnail_cached",
+                    &[("assetId", JsonValue::String(target.asset_id.clone()))],
+                );
+            }
+
+            if pending_sql_rows >= THUMBNAIL_DB_FLUSH_BATCH {
+                flush_thumbnail_sql(config, &mut sql, &mut pending_sql_rows)?;
+            }
             continue;
         }
 
@@ -1455,7 +1490,8 @@ SELECT
   COALESCE(ic.source_size_bytes, -1),
   COALESCE(ic.source_mtime_ms, -1),
   COALESCE(ic.source_quick_fingerprint, ''),
-  COALESCE(ic.thumbnail_luma, -1)
+  COALESCE(ic.thumbnail_luma, -1),
+  CASE WHEN ic.video_duration_ms IS NULL THEN '' ELSE CAST(ic.video_duration_ms AS TEXT) END
 FROM asset_files af
 INNER JOIN assets a ON a.id = af.asset_id
 LEFT JOIN image_cache ic ON ic.asset_id = af.asset_id
@@ -1472,7 +1508,7 @@ ORDER BY af.mtime_ms DESC
 
     for line in output.lines().filter(|line| !line.trim().is_empty()) {
         let columns: Vec<_> = line.split('\t').collect();
-        if columns.len() != 15 {
+        if columns.len() != 16 {
             return Err(format!(
                 "unexpected sqlite row while loading thumbnail targets: {line}"
             ));
@@ -1494,6 +1530,7 @@ ORDER BY af.mtime_ms DESC
             cached_source_mtime_ms: parse_optional_i64(columns[12])?,
             cached_source_quick_fingerprint: none_if_empty(columns[13]),
             cached_thumbnail_luma: parse_optional_i64(columns[14])?,
+            cached_video_duration_ms: parse_optional_i64_allow_negative(columns[15])?,
         });
     }
 
@@ -1530,13 +1567,17 @@ fn thumbnail_source_matches(target: &ThumbnailTarget) -> bool {
 
 fn thumbnail_generation_needed(target: &ThumbnailTarget) -> bool {
     match target.cache_status.as_deref() {
-        Some("ready") => !thumbnail_cache_matches(target),
+        Some("ready") => !thumbnail_cache_matches(target) || video_duration_backfill_needed(target),
         Some("failed") => {
             !thumbnail_source_matches(target)
                 || thumbnail_failure_is_retryable(target.cached_error_message.as_deref())
         }
         _ => true,
     }
+}
+
+fn video_duration_backfill_needed(target: &ThumbnailTarget) -> bool {
+    target.kind == "video" && target.cached_video_duration_ms.is_none()
 }
 
 fn thumbnail_failure_is_retryable(error_message: Option<&str>) -> bool {
@@ -2915,10 +2956,30 @@ ON CONFLICT(asset_id) DO UPDATE SET
         generated.thumbnail_height,
         generated.thumbnail_size_bytes,
         generated.bottom_luma,
-        sql_nullable_i64(generated.video_duration_ms),
+        // Videos with a failed duration probe store -1 so cache hits do not retry forever.
+        sql_nullable_i64(match (target.kind.as_str(), generated.video_duration_ms) {
+            ("video", None) => Some(-1),
+            (_, value) => value,
+        }),
         target.size_bytes,
         target.mtime_ms,
         sql_text(&target.quick_fingerprint),
+    ));
+}
+
+fn push_image_cache_duration_sql(
+    sql: &mut String,
+    target: &ThumbnailTarget,
+    video_duration_ms: i64,
+    now: i64,
+) {
+    sql.push_str(&format!(
+        "\
+UPDATE image_cache
+SET video_duration_ms = {video_duration_ms},
+    updated_at = {now}
+WHERE asset_id = {};\n",
+        sql_text(&target.asset_id),
     ));
 }
 
@@ -3802,6 +3863,14 @@ fn parse_u64(value: &str, column: &str) -> Result<u64, String> {
 fn parse_optional_i64(value: &str) -> Result<Option<i64>, String> {
     let parsed = parse_i64(value, "optional integer")?;
     Ok((parsed >= 0).then_some(parsed))
+}
+
+/// Empty → None (SQL NULL). Keeps negatives such as the -1 "probed, unavailable" sentinel.
+fn parse_optional_i64_allow_negative(value: &str) -> Result<Option<i64>, String> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(parse_i64(value, "optional integer")?))
 }
 
 fn parse_optional_u64(value: &str) -> Result<Option<u64>, String> {
