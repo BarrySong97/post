@@ -31,7 +31,12 @@ import {
   readAssetFilterOpenFromStorage,
   writeAssetFilterOpenToStorage,
 } from "@/lib/asset-manager/storage";
-import { getActiveFilterCount, getTagHue, mapIndexedAsset } from "@/lib/asset-manager/asset-model";
+import {
+  getActiveFilterCount,
+  getTagHue,
+  mapIndexedAsset,
+  formatVideoDuration,
+} from "@/lib/asset-manager/asset-model";
 import { resolveMarkdownAssetUrl, buildAssetThumbnailUrl } from "@/lib/asset-manager/asset-url";
 import type {
   Asset,
@@ -543,6 +548,11 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hoveringRef = useRef(false);
   const [previewing, setPreviewing] = useState(false);
+  const [durationLabel, setDurationLabel] = useState(asset.duration);
+
+  useEffect(() => {
+    setDurationLabel(asset.duration);
+  }, [asset.duration]);
 
   const startPreview = useCallback(() => {
     const video = videoRef.current;
@@ -561,11 +571,12 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
     hoveringRef.current = false;
     const video = videoRef.current;
     setPreviewing(false);
+    setDurationLabel(asset.duration);
     if (video) {
       video.pause();
       video.currentTime = 0;
     }
-  }, []);
+  }, [asset.duration]);
 
   // Reveal the video only once it actually has frames, so preload="none"'s loading gap
   // shows the thumbnail rather than a black flash. Guard against a pointer that already left.
@@ -574,6 +585,16 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
       setPreviewing(true);
     }
   }, []);
+
+  const handleTimeUpdate = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !hoveringRef.current || asset.durationMs === undefined) {
+      return;
+    }
+
+    const remainingMs = Math.max(0, asset.durationMs - video.currentTime * 1000);
+    setDurationLabel(formatVideoDuration(remainingMs));
+  }, [asset.durationMs]);
 
   return (
     <div
@@ -611,6 +632,7 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
           tabIndex={-1}
           aria-hidden
           onPlaying={handlePlaying}
+          onTimeUpdate={asset.durationMs !== undefined ? handleTimeUpdate : undefined}
           className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${
             previewing ? "opacity-100" : "opacity-0"
           }`}
@@ -626,9 +648,9 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
           >
             <Play size={17} fill="currentColor" />
           </span>
-          {asset.duration ? (
-            <span className="absolute right-2.5 top-2.5 rounded-md bg-[#1c1916]/55 px-1.5 py-0.5 font-mono text-[10.5px] text-white">
-              {asset.duration}
+          {durationLabel ? (
+            <span className="absolute right-2.5 top-2.5 rounded-md bg-[#1c1916]/55 px-1.5 py-0.5 font-mono text-[10.5px] text-white tabular-nums">
+              {durationLabel}
             </span>
           ) : null}
         </>

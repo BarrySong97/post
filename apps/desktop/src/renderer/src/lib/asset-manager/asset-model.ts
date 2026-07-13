@@ -116,7 +116,7 @@ function getAssetTimestampMs(value: unknown, fallbackMs = Date.now()) {
   return Number.isNaN(date.getTime()) ? fallbackMs : date.getTime();
 }
 
-function formatVideoDuration(durationMs: number) {
+export function formatVideoDuration(durationMs: number) {
   const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -172,11 +172,12 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
       : coverMode
         ? noteImagesRaw.slice(0, 1)
         : noteImagesRaw.slice(0, 3);
-  const durationMs = asset.image?.videoDurationMs;
-  const duration =
-    kind === "video" && typeof durationMs === "number" && durationMs >= 0
-      ? formatVideoDuration(durationMs)
+  const rawDurationMs = asset.image?.videoDurationMs;
+  const durationMs =
+    kind === "video" && typeof rawDurationMs === "number" && rawDurationMs >= 0
+      ? rawDurationMs
       : undefined;
+  const duration = durationMs !== undefined ? formatVideoDuration(durationMs) : undefined;
 
   return {
     id: asset.id,
@@ -198,6 +199,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     accent: getTagHue(tag),
     height: kind === "image" || kind === "video" ? "medium" : "short",
     duration,
+    durationMs,
     mediaUrl,
     thumbnailUrl,
     thumbnailStatus: asset.image?.status ?? (usesOriginalAsThumbnail ? "ready" : null),

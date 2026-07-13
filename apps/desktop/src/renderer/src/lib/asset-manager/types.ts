@@ -38,7 +38,10 @@ export type Asset = {
   meta: string;
   accent: number;
   height?: "short" | "medium" | "tall";
+  /** Formatted total duration for video cards (`m:ss` / `h:mm:ss`). */
   duration?: string;
+  /** Raw video duration in ms; used for hover-preview remaining-time countdown. */
+  durationMs?: number;
   mediaUrl?: string;
   thumbnailUrl?: string;
   thumbnailStatus?: "pending" | "ready" | "failed" | null;

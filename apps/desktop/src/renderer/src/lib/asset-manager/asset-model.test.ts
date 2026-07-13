@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { extractDomain, mapIndexedAsset } from "./asset-model";
+import { extractDomain, formatVideoDuration, mapIndexedAsset } from "./asset-model";
 import type { IndexedAsset } from "./types";
 
 function buildIndexedAsset(overrides: Partial<IndexedAsset> = {}): IndexedAsset {
@@ -107,6 +107,58 @@ function buildImageCache(luma: number | null) {
     updatedAt: "2026-03-12T08:00:00.000Z",
   } as NonNullable<IndexedAsset["image"]>;
 }
+
+describe("formatVideoDuration", () => {
+  it("formats minutes and seconds", () => {
+    expect(formatVideoDuration(65_000)).toBe("1:05");
+  });
+
+  it("formats hours when needed", () => {
+    expect(formatVideoDuration(3_725_000)).toBe("1:02:05");
+  });
+
+  it("clamps negative values used by remaining-time countdown", () => {
+    expect(formatVideoDuration(-500)).toBe("0:00");
+  });
+});
+
+describe("mapIndexedAsset video duration", () => {
+  it("exposes formatted and raw duration for video cards", () => {
+    const asset = mapIndexedAsset(
+      buildIndexedAsset({
+        kind: "video",
+        extension: "mp4",
+        fileName: "clip.mp4",
+        relativePath: "media/clip.mp4",
+        image: {
+          ...buildImageCache(40),
+          videoDurationMs: 125_000,
+        },
+      }),
+    );
+
+    expect(asset.duration).toBe("2:05");
+    expect(asset.durationMs).toBe(125_000);
+  });
+
+  it("omits duration when the cache sentinel marks a failed probe", () => {
+    const asset = mapIndexedAsset(
+      buildIndexedAsset({
+        kind: "video",
+        extension: "mp4",
+        fileName: "clip.mp4",
+        relativePath: "media/clip.mp4",
+        image: {
+          ...buildImageCache(40),
+          videoDurationMs: -1,
+        },
+      }),
+    );
+
+    expect(asset.duration).toBeUndefined();
+    expect(asset.durationMs).toBeUndefined();
+  });
+});
 
 describe("mapIndexedAsset cover luma", () => {
   it("flags a bright bottom strip as a light cover", () => {
