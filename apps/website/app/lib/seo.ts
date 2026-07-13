@@ -27,3 +27,5 @@ export const GITHUB_URL = "https://github.com/BarrySong97/post";
 export const GITHUB_RELEASES_URL = `${GITHUB_URL}/releases`;
 export const GITHUB_LATEST_RELEASE_URL = `${GITHUB_RELEASES_URL}/latest`;
 export const DOWNLOAD_URL = GITHUB_LATEST_RELEASE_URL;
+export const EXTENSION_DOWNLOAD_URL =
+  "https://chromewebstore.google.com/detail/post/mdpiamelfbcdfglbodgnfdkilamgllae";

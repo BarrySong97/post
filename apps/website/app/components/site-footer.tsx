@@ -5,7 +5,7 @@
  * @gotcha  Download and GitHub links must stay aligned with app/lib/seo.ts.
  */
 import { Link } from "./ui";
-import { DOWNLOAD_URL, GITHUB_URL } from "../lib/seo";
+import { DOWNLOAD_URL, EXTENSION_DOWNLOAD_URL, GITHUB_URL } from "../lib/seo";
 
 const FOOTER = [
   {
@@ -15,6 +15,7 @@ const FOOTER = [
       { label: "Roadmap", href: "#roadmap" },
       { label: "Download", href: DOWNLOAD_URL },
       { label: "Desktop app", href: DOWNLOAD_URL },
+      { label: "Chrome extension", href: EXTENSION_DOWNLOAD_URL },
     ],
   },
   {
