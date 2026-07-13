@@ -101,6 +101,23 @@ function postTitle(post: ResolvedTwitterPost) {
   return `X post ${post.postId}`;
 }
 
+function subjectNameFromPostInput(input: SaveExtensionPostInput): string {
+  const snapshotText = input.visibleSnapshot?.text
+    ?.split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (snapshotText) {
+    return snapshotText.slice(0, 140);
+  }
+
+  const handle = input.visibleSnapshot?.authorHandle?.trim();
+  if (handle) {
+    return `@${handle.replace(/^@/, "")}`;
+  }
+
+  return `X post ${input.postId}`;
+}
+
 function relativeMediaLink(postRelativePath: string, mediaRelativePath: string) {
   return path.posix.relative(path.posix.dirname(postRelativePath), mediaRelativePath);
 }
@@ -373,11 +390,13 @@ export async function saveExtensionPost(
     throw new Error("No active vault selected.");
   }
   const tag = resolveTag(input.tagId, vault.id);
+  const subjectName = subjectNameFromPostInput(input);
   const task = backgroundTaskManager.createTask({
     type: "import",
     title: "Importing X post",
     vaultId: vault.id,
     vaultName: vault.name,
+    subject: { names: [subjectName], count: 1 },
     progress: { current: 0, label: "Resolving post" },
   });
   backgroundTaskManager.startTask(task.id);

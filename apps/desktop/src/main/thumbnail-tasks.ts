@@ -3,10 +3,12 @@
  * @role    Background task coordinator between asset records, indexer thumbnails, and UI events.
  * @deps    indexer utilities, database repositories, background task/event services.
  * @gotcha  Avoid blocking app startup; thumbnail work should remain incremental and cancellable where possible.
+ *          Retry payloads omit assetIds above 500 to keep task.updated IPC small.
  */
 
-import { backgroundTaskManager } from "./background-tasks";
+import { backgroundTaskManager, type BackgroundTaskSubject } from "./background-tasks";
 import { runIndexer, type IndexerEvent } from "./indexer";
+import { getAssetRowsByIds } from "./repositories/assets-repository";
 
 type ThumbnailVault = {
   id: string;
@@ -27,12 +29,23 @@ type ThumbnailTaskState = {
   failed: number;
 };
 
+const RETRY_ASSET_ID_LIMIT = 500;
+
 export function runThumbnailTask(vault: ThumbnailVault, input: ThumbnailTaskInput = {}) {
+  const nameByAssetId = new Map<string, string>();
+  const subject = buildThumbnailSubject(input.assetIds, nameByAssetId);
+  const retry =
+    input.assetIds && input.assetIds.length > 0 && input.assetIds.length <= RETRY_ASSET_ID_LIMIT
+      ? { kind: "thumbnails" as const, assetIds: [...input.assetIds] }
+      : undefined;
+
   const task = backgroundTaskManager.createTask({
     type: "thumbnails",
     title: "Generating thumbnails",
     vaultId: vault.id,
     vaultName: vault.name,
+    subject,
+    retry,
     hidden: input.hidden,
   });
   const state: ThumbnailTaskState = {
@@ -54,7 +67,7 @@ export function runThumbnailTask(vault: ThumbnailVault, input: ThumbnailTaskInpu
     },
     {
       onEvent: (event) => {
-        applyThumbnailEventToTask(task.id, event, state);
+        applyThumbnailEventToTask(task.id, event, state, subject, nameByAssetId);
       },
     },
   )
@@ -68,13 +81,54 @@ export function runThumbnailTask(vault: ThumbnailVault, input: ThumbnailTaskInpu
     });
 }
 
-function applyThumbnailEventToTask(taskId: string, event: IndexerEvent, state: ThumbnailTaskState) {
-  if (event.type === "started" && typeof event.requested === "number") {
-    state.requested = event.requested;
+function buildThumbnailSubject(
+  assetIds: string[] | undefined,
+  nameByAssetId: Map<string, string>,
+): BackgroundTaskSubject | undefined {
+  if (!assetIds || assetIds.length === 0) {
+    return undefined;
   }
 
+  const rows = getAssetRowsByIds(assetIds);
+  for (const row of rows) {
+    const name = row.title?.trim() || row.fileName;
+    if (name) {
+      nameByAssetId.set(row.id, name);
+    }
+  }
+
+  const names = Array.from(nameByAssetId.values()).slice(0, 3);
+
+  return {
+    names,
+    count: assetIds.length,
+  };
+}
+
+function applyThumbnailEventToTask(
+  taskId: string,
+  event: IndexerEvent,
+  state: ThumbnailTaskState,
+  subject: BackgroundTaskSubject | undefined,
+  nameByAssetId: Map<string, string>,
+) {
+  if (event.type === "started" && typeof event.requested === "number") {
+    state.requested = event.requested;
+    // Full-vault runs omit assetIds at create time — backfill count from indexer started.
+    if (!subject) {
+      backgroundTaskManager.updateTask(taskId, {
+        subject: {
+          names: [],
+          count: event.requested,
+        },
+      });
+    }
+  }
+
+  let progressLabel: string | undefined;
   if (event.type === "thumbnail_ready") {
     state.ready += 1;
+    progressLabel = resolveAssetLabel(event, nameByAssetId) ?? subject?.names[0];
   } else if (event.type === "thumbnail_cached") {
     state.cached += 1;
   } else if (event.type === "thumbnail_failed") {
@@ -96,9 +150,21 @@ function applyThumbnailEventToTask(taskId: string, event: IndexerEvent, state: T
     progress: {
       current,
       total: state.requested || undefined,
-      label: state.requested > 0 ? `${current} / ${state.requested}` : `${current} thumbnails`,
+      label:
+        progressLabel ??
+        (state.requested > 0 ? `${current} / ${state.requested}` : `${current} thumbnails`),
     },
   });
+}
+
+function resolveAssetLabel(
+  event: IndexerEvent,
+  nameByAssetId: Map<string, string>,
+): string | undefined {
+  if (typeof event.assetId === "string") {
+    return nameByAssetId.get(event.assetId);
+  }
+  return undefined;
 }
 
 function getThumbnailCompletionSummary(state: ThumbnailTaskState) {

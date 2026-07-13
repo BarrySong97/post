@@ -10,6 +10,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildImportSubject,
   buildUniqueDirectoryName,
   buildUniqueRelativePath,
   isHiddenPathSegment,
@@ -56,5 +57,16 @@ describe("local file import helpers", () => {
     const existing = new Set([`${LOCAL_IMPORT_DIR}/vacation`]);
     const name = buildUniqueDirectoryName("vacation", existing, () => false);
     expect(name).toBe("vacation-2");
+  });
+
+  it("builds import subjects from basenames", () => {
+    expect(buildImportSubject(["/tmp/a.png", "/tmp/b.png", "/tmp/c.png", "/tmp/d.png"])).toEqual({
+      names: ["a.png", "b.png", "c.png"],
+      count: 4,
+    });
+    expect(buildImportSubject(["/tmp/only.jpg"])).toEqual({
+      names: ["only.jpg"],
+      count: 1,
+    });
   });
 });

@@ -93,6 +93,19 @@ export function buildUniqueDirectoryName(
   }
 }
 
+/** Build a short subject for footer/pill display from dropped absolute paths. */
+export function buildImportSubject(paths: readonly string[]) {
+  const names = paths
+    .map((item) => path.basename(item))
+    .filter((name) => name.length > 0)
+    .slice(0, 3);
+
+  return {
+    names,
+    count: paths.length,
+  };
+}
+
 async function pathExists(absolutePath: string): Promise<boolean> {
   try {
     await stat(absolutePath);
@@ -248,6 +261,7 @@ export async function importLocalFiles(
     title: "Importing files",
     vaultId: vault.id,
     vaultName: vault.name,
+    subject: buildImportSubject(input.paths),
     progress: {
       current: 0,
       total: input.paths.length,

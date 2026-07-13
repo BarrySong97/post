@@ -57,9 +57,28 @@
       "thumbnails": "缩略图",
       "import": "导入"
     },
-    "dropImportHint": "松手导入到资产库",
-    "dropImportSuccess": "已导入 {{count}} 个文件",
-    "dropImportSkipped": "没有可导入的新文件",
+    "dropHoverTitle": "松手导入",
+    "dropHoverTarget": "到 {{name}}",
+    "dropBlockedTitle": "尚未关联资产库",
+    "dropBlockedHint": "请先关联资产库再导入文件",
+    "importPillRunning": "正在导入 {{current}}/{{total}}",
+    "importPillDone": "已导入 {{count}} 个",
+    "importPillFailed": "导入失败",
+    "retry": "重试",
+    "inProgress": "进行中",
+    "justNow": "刚刚",
+    "digestLine": "{{label}} · 近 30 分钟 · {{count}} 个",
+    "taskSubjectMany": {
+      "thumbnails": "生成 {{count}} 个缩略图",
+      "import": "导入 {{count}} 项",
+      "indexing": "索引 {{count}} 项",
+      "reconcile": "校验 {{count}} 项",
+      "sync": "同步 {{count}} 项"
+    },
+    "pillRunningNamed": {
+      "thumbnails": "{{name}}…",
+      "import": "{{name}}…"
+    },
     "dropImportFailed": "导入失败",
     "dropImportNoVault": "请先关联资产库再导入文件"
   },

@@ -3,6 +3,7 @@
  * @role    Background task registry for indexing, thumbnails, and other asynchronous workflows.
  * @deps    events module, task router consumers, native services.
  * @gotcha  Update task status consistently so renderer indicators do not get stuck.
+ *          completedDigest is a rolling 30m window independent of recentlyCompleted retention.
  */
 
 import { app } from "electron";
@@ -18,6 +19,17 @@ export type BackgroundTaskProgress = {
   label?: string;
 };
 
+export type BackgroundTaskSubject = {
+  /** Up to 3 display names for the objects this task acts on. */
+  names: string[];
+  count: number;
+};
+
+export type BackgroundTaskRetry = {
+  kind: "thumbnails";
+  assetIds: string[];
+};
+
 export type BackgroundTask = {
   id: string;
   type: BackgroundTaskType;
@@ -27,11 +39,20 @@ export type BackgroundTask = {
   vaultName?: string;
   progress?: BackgroundTaskProgress;
   summary?: string;
+  subject?: BackgroundTaskSubject;
+  retry?: BackgroundTaskRetry;
   startedAt: number;
   updatedAt: number;
   completedAt?: number;
   errorMessage?: string;
   hidden?: boolean;
+};
+
+export type CompletedDigestEntry = {
+  type: BackgroundTaskType;
+  taskCount: number;
+  itemCount: number;
+  lastCompletedAt: number;
 };
 
 export type BackgroundTaskSnapshot = {
@@ -40,6 +61,7 @@ export type BackgroundTaskSnapshot = {
   queued: BackgroundTask[];
   recentlyCompleted: BackgroundTask[];
   failed: BackgroundTask[];
+  completedDigest: CompletedDigestEntry[];
   appVersion: string;
   activeVault: {
     id: string;
@@ -54,6 +76,8 @@ type CreateTaskInput = {
   vaultId?: string;
   vaultName?: string;
   progress?: BackgroundTaskProgress;
+  subject?: BackgroundTaskSubject;
+  retry?: BackgroundTaskRetry;
   hidden?: boolean;
 };
 
@@ -61,12 +85,22 @@ type SnapshotContext = {
   activeVault?: BackgroundTaskSnapshot["activeVault"];
 };
 
+type CompletedLogEntry = {
+  type: BackgroundTaskType;
+  vaultId?: string;
+  completedAt: number;
+  itemCount: number;
+};
+
 const RECENT_COMPLETED_LIMIT = 10;
 const RECENT_COMPLETED_TTL_MS = 30 * 60 * 1000;
+const DIGEST_TTL_MS = 30 * 60 * 1000;
+const DIGEST_LOG_HARD_LIMIT = 1000;
 
-class BackgroundTaskManager {
+export class BackgroundTaskManager {
   private tasks = new Map<string, BackgroundTask>();
   private sequence = 0;
+  private completedLog: CompletedLogEntry[] = [];
 
   createTask(input: CreateTaskInput): BackgroundTask {
     const now = Date.now();
@@ -78,6 +112,8 @@ class BackgroundTaskManager {
       vaultId: input.vaultId,
       vaultName: input.vaultName,
       progress: input.progress,
+      subject: input.subject,
+      retry: input.retry,
       hidden: input.hidden,
       startedAt: now,
       updatedAt: now,
@@ -95,18 +131,32 @@ class BackgroundTaskManager {
 
   updateTask(
     taskId: string,
-    patch: Partial<Pick<BackgroundTask, "progress" | "summary" | "title">>,
+    patch: Partial<Pick<BackgroundTask, "progress" | "summary" | "title" | "subject">>,
   ): void {
     this.patch(taskId, patch);
   }
 
   completeTask(taskId: string, summary?: string): void {
+    const existing = this.tasks.get(taskId);
     this.patch(taskId, {
       status: "completed",
       summary,
       completedAt: Date.now(),
       errorMessage: undefined,
     });
+
+    if (existing && !existing.hidden) {
+      const completedAt = Date.now();
+      const itemCount =
+        existing.progress?.current ?? existing.progress?.total ?? existing.subject?.count ?? 1;
+      this.completedLog.push({
+        type: existing.type,
+        vaultId: existing.vaultId,
+        completedAt,
+        itemCount,
+      });
+      this.pruneLog(completedAt);
+    }
   }
 
   failTask(taskId: string, error: unknown): void {
@@ -152,6 +202,7 @@ class BackgroundTaskManager {
 
   getSnapshot(context: SnapshotContext = {}): BackgroundTaskSnapshot {
     this.prune();
+    this.pruneLog(Date.now());
 
     const tasks = Array.from(this.tasks.values())
       .filter((task) => !task.hidden)
@@ -173,9 +224,52 @@ class BackgroundTaskManager {
       queued,
       recentlyCompleted,
       failed,
+      completedDigest: this.buildCompletedDigest(),
       appVersion: app.getVersion(),
       activeVault: context.activeVault ?? null,
     };
+  }
+
+  /** Test helper — clears in-memory task + digest state. */
+  resetForTests(): void {
+    this.tasks.clear();
+    this.sequence = 0;
+    this.completedLog = [];
+  }
+
+  private buildCompletedDigest(): CompletedDigestEntry[] {
+    const byType = new Map<BackgroundTaskType, CompletedDigestEntry>();
+
+    for (const entry of this.completedLog) {
+      const current = byType.get(entry.type);
+      if (!current) {
+        byType.set(entry.type, {
+          type: entry.type,
+          taskCount: 1,
+          itemCount: entry.itemCount,
+          lastCompletedAt: entry.completedAt,
+        });
+        continue;
+      }
+
+      current.taskCount += 1;
+      current.itemCount += entry.itemCount;
+      if (entry.completedAt > current.lastCompletedAt) {
+        current.lastCompletedAt = entry.completedAt;
+      }
+    }
+
+    return Array.from(byType.values()).sort(
+      (left, right) => right.lastCompletedAt - left.lastCompletedAt,
+    );
+  }
+
+  private pruneLog(now: number): void {
+    const cutoff = now - DIGEST_TTL_MS;
+    this.completedLog = this.completedLog.filter((entry) => entry.completedAt >= cutoff);
+    if (this.completedLog.length > DIGEST_LOG_HARD_LIMIT) {
+      this.completedLog = this.completedLog.slice(this.completedLog.length - DIGEST_LOG_HARD_LIMIT);
+    }
   }
 
   private patch(taskId: string, patch: Partial<BackgroundTask>): void {

@@ -7,6 +7,7 @@
 
 export const app = {
   getPath: () => "/tmp/post-test-user-data",
+  getVersion: () => "0.0.0-test",
 };
 
 export const clipboard = {

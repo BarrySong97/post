@@ -19,8 +19,7 @@ import {
   type IndexerWatchDaemon,
   type IndexerWatchScope,
 } from "./indexer";
-import { runThumbnailTask } from "./thumbnail-tasks";
-import { filterThumbnailAssetIdsNeedingWork } from "./services/thumbnail-service";
+import { disposeThumbnailQueue, enqueueThumbnails } from "./services/thumbnail-queue";
 
 export type VaultWatcherScopeInput =
   | {
@@ -58,14 +57,7 @@ type ActiveWatcher = {
   stopRequested: boolean;
 };
 
-type ThumbnailVault = {
-  id: string;
-  rootPath: string;
-  name: string;
-};
-
 const WATCH_SYNC_DEBOUNCE_MS = 500;
-const THUMBNAIL_RETRY_DELAY_MS = 1000;
 
 class VaultWatcherManager {
   private active: ActiveWatcher | null = null;
@@ -79,10 +71,6 @@ class VaultWatcherManager {
   private syncQueued = false;
   private pendingSyncPaths = new Set<string>();
   private pendingSyncChangeCount = 0;
-  private pendingThumbnailAssetIds = new Set<string>();
-  private pendingThumbnailVault: ThumbnailVault | null = null;
-  private thumbnailRunning = false;
-  private thumbnailTimer: ReturnType<typeof setTimeout> | null = null;
 
   setScope(scope: VaultWatcherScopeInput): VaultWatcherSnapshot {
     this.scope = scope;
@@ -179,6 +167,7 @@ class VaultWatcherManager {
       return;
     }
 
+    const vaultId = this.active.vaultId;
     this.active.stopRequested = true;
     this.active.handle.stop();
     this.active = null;
@@ -186,9 +175,7 @@ class VaultWatcherManager {
     this.syncQueued = false;
     this.pendingSyncPaths.clear();
     this.pendingSyncChangeCount = 0;
-    this.pendingThumbnailAssetIds.clear();
-    this.pendingThumbnailVault = null;
-    this.clearThumbnailTimer();
+    disposeThumbnailQueue(vaultId);
   }
 
   private handleIndexerEvent(event: IndexerEvent): void {
@@ -390,79 +377,14 @@ class VaultWatcherManager {
     scope: Exclude<VaultWatcherScopeInput, { type: "idle" }>,
     assetIds: string[],
   ): void {
-    if (assetIds.length === 0) {
-      return;
-    }
-
-    this.pendingThumbnailVault = {
-      id: scope.vaultId,
-      rootPath: scope.rootPath,
-      name: scope.vaultName,
-    };
-    for (const assetId of assetIds) {
-      this.pendingThumbnailAssetIds.add(assetId);
-    }
-    this.runPendingThumbnailGeneration();
-  }
-
-  private runPendingThumbnailGeneration(): void {
-    if (
-      this.thumbnailRunning ||
-      this.pendingThumbnailAssetIds.size === 0 ||
-      !this.pendingThumbnailVault
-    ) {
-      return;
-    }
-
-    if (backgroundTaskManager.hasActiveTask("thumbnails", this.pendingThumbnailVault.id)) {
-      this.scheduleThumbnailRetry();
-      return;
-    }
-
-    const vault = this.pendingThumbnailVault;
-    const assetIds = filterThumbnailAssetIdsNeedingWork(
-      vault,
-      Array.from(this.pendingThumbnailAssetIds),
+    enqueueThumbnails(
+      {
+        id: scope.vaultId,
+        rootPath: scope.rootPath,
+        name: scope.vaultName,
+      },
+      assetIds,
     );
-    this.pendingThumbnailAssetIds.clear();
-    if (assetIds.length === 0) {
-      this.pendingThumbnailVault = null;
-      return;
-    }
-    this.thumbnailRunning = true;
-
-    void runThumbnailTask(vault, { assetIds, limit: assetIds.length })
-      .catch((error) => {
-        console.error("Failed to generate watcher thumbnails", error);
-      })
-      .finally(() => {
-        this.thumbnailRunning = false;
-        if (this.pendingThumbnailAssetIds.size > 0) {
-          this.runPendingThumbnailGeneration();
-        } else {
-          this.pendingThumbnailVault = null;
-        }
-      });
-  }
-
-  private scheduleThumbnailRetry(): void {
-    if (this.thumbnailTimer != null) {
-      return;
-    }
-
-    this.thumbnailTimer = setTimeout(() => {
-      this.thumbnailTimer = null;
-      this.runPendingThumbnailGeneration();
-    }, THUMBNAIL_RETRY_DELAY_MS);
-  }
-
-  private clearThumbnailTimer(): void {
-    if (!this.thumbnailTimer) {
-      return;
-    }
-
-    clearTimeout(this.thumbnailTimer);
-    this.thumbnailTimer = null;
   }
 }
 

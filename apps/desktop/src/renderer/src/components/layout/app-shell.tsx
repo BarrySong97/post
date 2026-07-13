@@ -28,6 +28,8 @@ import {
 import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
 import { applyFilterCommand } from "@/lib/asset-manager/apply-filter-command";
 import { openAssetDetail } from "@/lib/asset-manager/open-asset-detail";
+import { formatRelativeTime } from "@/lib/relative-time";
+import { buildPillLabel, buildTaskTitle } from "@/lib/task-labels";
 import { useInvalidateVaultState } from "@/hooks/use-invalidate-vault-state";
 import { useHistoryNavigationShortcuts } from "@/hooks/use-history-navigation-shortcuts";
 import { ConfirmModalProvider } from "@/components/common/confirm-modal";
@@ -37,6 +39,7 @@ import { AutoUpdateProvider } from "@/providers/auto-update-provider";
 
 type TaskSnapshot = RouterOutputs["tasks"]["snapshot"];
 type BackgroundTask = NonNullable<TaskSnapshot["activeTask"]>;
+type CompletedDigestEntry = TaskSnapshot["completedDigest"][number];
 type FooterTaskType = BackgroundTask["type"];
 type FooterTaskState = BackgroundTask["status"];
 type FooterTask = {
@@ -47,6 +50,10 @@ type FooterTask = {
   total: number;
   label?: string;
   reason?: string;
+  summary?: string;
+  vaultName?: string;
+  subject?: BackgroundTask["subject"];
+  retry?: BackgroundTask["retry"];
   completedAt?: number;
 };
 
@@ -199,6 +206,7 @@ function GlobalStatusLine() {
       onSuccess: invalidateVaultState,
     }),
   );
+  const ensureThumbnails = useMutation(trpc.assets.ensureThumbnails.mutationOptions());
   const tasksQuery = useQuery({
     ...trpc.tasks.snapshot.queryOptions(),
     refetchInterval: (query) => {
@@ -343,8 +351,11 @@ function GlobalStatusLine() {
   const live = useMemo(() => tasks.filter((task) => !dismissed.has(task.id)), [dismissed, tasks]);
   const running = live.filter((task) => task.state === "running");
   const queued = live.filter((task) => task.state === "queued");
+  const inProgress = [...running, ...queued];
   const failed = live.filter((task) => task.state === "failed");
-  const completed = live.filter((task) => task.state === "completed");
+  // Non-import completed rows are folded into completedDigest — keep import rows as detail lines.
+  const completed = live.filter((task) => task.state === "completed" && task.type === "import");
+  const completedDigest = snapshot?.completedDigest ?? [];
 
   for (const task of completed) {
     if (task.completedAt == null && !completedFirstSeen.current.has(task.id)) {
@@ -356,38 +367,46 @@ function GlobalStatusLine() {
     const completedAt = task.completedAt ?? completedFirstSeen.current.get(task.id) ?? now;
     return now < completedAt + COMPLETED_VISIBLE_MS;
   });
+  const freshDigestDone = completedDigest.filter(
+    (entry) => entry.type !== "import" && now < entry.lastCompletedAt + COMPLETED_VISIBLE_MS,
+  );
 
   useEffect(() => {
-    if (freshDone.length === 0) {
+    if (freshDone.length === 0 && freshDigestDone.length === 0) {
       return;
     }
 
     const intervalId = window.setInterval(() => setNow(Date.now()), 500);
     return () => window.clearInterval(intervalId);
-  }, [freshDone.length, completed.map((task) => task.id).join()]);
+  }, [freshDone.length, freshDigestDone.length, completed.map((task) => task.id).join()]);
 
-  let kind: "run" | "queue" | "bad" | "good" | null = null;
+  let kind: "run" | "bad" | "good" | null = null;
   let active: FooterTask | null = null;
   let shown = 0;
 
   if (running.length > 0) {
     kind = "run";
-    active = running[0];
+    active = running[0] ?? null;
     shown = 1;
   } else if (queued.length > 0) {
-    kind = "queue";
-    shown = queued.length;
+    kind = "run";
+    active = queued[0] ?? null;
+    shown = 1;
   } else if (failed.length > 0) {
     kind = "bad";
     shown = failed.length;
-  } else if (freshDone.length > 0) {
+  } else if (freshDone.length > 0 || freshDigestDone.length > 0) {
     kind = "good";
-    active = freshDone[0];
+    active = freshDone[0] ?? null;
     shown = 1;
   }
 
   const others = Math.max(0, live.length - shown);
-  const hasPop = live.length > 0;
+  const hasPop =
+    inProgress.length > 0 ||
+    failed.length > 0 ||
+    completed.length > 0 ||
+    completedDigest.some((entry) => entry.type !== "import");
   const appVersion = __APP_VERSION__;
   const activeVault = snapshot?.activeVault ?? null;
   const vaultName = activeVault?.name ?? null;
@@ -400,6 +419,13 @@ function GlobalStatusLine() {
   const canSync = Boolean(activeVault) && !syncRunning;
   const dismissTask = (id: string) => {
     setDismissed((current) => new Set(current).add(id));
+  };
+  const retryTask = (task: FooterTask) => {
+    if (task.retry?.kind !== "thumbnails") {
+      return;
+    }
+    ensureThumbnails.mutate({ assetIds: task.retry.assetIds });
+    dismissTask(task.id);
   };
   const chooseFolder = () => {
     setFolderOpen(false);
@@ -418,7 +444,8 @@ function GlobalStatusLine() {
       active={active}
       others={others}
       open={open}
-      count={kind === "queue" ? queued.length : kind === "bad" ? failed.length : null}
+      count={kind === "bad" ? failed.length : null}
+      digestFresh={freshDigestDone[0] ?? null}
     />
   ) : hasPop ? (
     <span className={`pf-pill pf-pill--stale ${open ? "is-open" : ""}`}>
@@ -536,11 +563,12 @@ function GlobalStatusLine() {
             <Popover.Content className="pf-pop-content" offset={6} placement="top end">
               <Popover.Dialog className="pf-pop-dialog">
                 <PFPopover
-                  running={running}
-                  queued={queued}
+                  inProgress={inProgress}
                   failed={failed}
                   completed={completed}
+                  digest={completedDigest.filter((entry) => entry.type !== "import")}
                   onDismiss={dismissTask}
+                  onRetry={retryTask}
                 />
               </Popover.Dialog>
             </Popover.Content>
@@ -565,6 +593,10 @@ function toFooterTask(task: BackgroundTask): FooterTask {
     total,
     label: task.progress?.label,
     reason: task.errorMessage,
+    summary: task.summary,
+    vaultName: task.vaultName,
+    subject: task.subject,
+    retry: task.retry,
     completedAt: task.completedAt,
   };
 }
@@ -588,31 +620,32 @@ function PFPill({
   count,
   others,
   open,
+  digestFresh,
 }: {
-  kind: "run" | "queue" | "bad" | "good";
+  kind: "run" | "bad" | "good";
   active: FooterTask | null;
   count: number | null;
   others: number;
   open: boolean;
+  digestFresh: CompletedDigestEntry | null;
 }) {
-  const { t } = useTranslation();
-  const activeTypeLabel = active ? taskTypeLabel(active.type, t) : t("shell.task");
+  const { t, i18n } = useTranslation();
   const label =
-    kind === "run"
-      ? t("shell.taskRunning", { label: activeTypeLabel })
-      : kind === "queue"
-        ? t("shell.taskQueued", { count: count ?? 0 })
-        : kind === "bad"
-          ? t("shell.taskFailed", { count: count ?? 0 })
-          : t("shell.taskCompleted", { label: activeTypeLabel });
+    kind === "run" && active
+      ? buildPillLabel(active, t, i18n.language)
+      : kind === "bad"
+        ? t("shell.taskFailed", { count: count ?? 0 })
+        : active
+          ? t("shell.taskCompleted", { label: taskTypeLabel(active.type, t) })
+          : digestFresh
+            ? t("shell.taskCompleted", { label: taskTypeLabel(digestFresh.type, t) })
+            : t("shell.recentDone");
   const countStr = kind === "run" && active ? getTaskProgressLabel(active) : null;
   const glyph =
     kind === "run" ? (
       <span className="pf-spin" />
     ) : (
-      <span
-        className={`pf-dot ${kind === "bad" ? "pf-dot--bad" : kind === "good" ? "pf-dot--good" : "pf-dot--queue"}`}
-      />
+      <span className={`pf-dot ${kind === "bad" ? "pf-dot--bad" : "pf-dot--good"}`} />
     );
 
   return (
@@ -627,26 +660,27 @@ function PFPill({
 }
 
 function PFPopover({
-  running,
-  queued,
+  inProgress,
   failed,
   completed,
+  digest,
   onDismiss,
+  onRetry,
 }: {
-  running: FooterTask[];
-  queued: FooterTask[];
+  inProgress: FooterTask[];
   failed: FooterTask[];
   completed: FooterTask[];
+  digest: CompletedDigestEntry[];
   onDismiss: (id: string) => void;
+  onRetry: (task: FooterTask) => void;
 }) {
   const { t } = useTranslation();
   const groups = [
-    { key: "running", title: t("shell.running"), items: running },
-    { key: "queued", title: t("shell.queued"), items: queued },
+    { key: "running", title: t("shell.inProgress"), items: inProgress },
     { key: "failed", title: t("shell.failed"), items: failed },
     { key: "completed", title: t("shell.recentDone"), items: completed },
-  ].filter((group) => group.items.length > 0);
-  const total = running.length + queued.length + failed.length + completed.length;
+  ].filter((group) => group.items.length > 0 || (group.key === "completed" && digest.length > 0));
+  const total = inProgress.length + failed.length + completed.length + digest.length;
 
   return (
     <div className="pf-pop" onClick={(event) => event.stopPropagation()}>
@@ -660,13 +694,51 @@ function PFPopover({
             <div className="pf-grp-head">
               <span className={`pf-grp-dot pf-grp-dot--${group.key}`} />
               {group.title}
-              <span className="pf-grp-n">{group.items.length}</span>
+              <span className="pf-grp-n">
+                {group.key === "completed"
+                  ? group.items.length + digest.length
+                  : group.items.length}
+              </span>
             </div>
             {group.items.map((task) => (
-              <PFRow key={task.id} task={task} group={group.key} onDismiss={onDismiss} />
+              <PFRow
+                key={task.id}
+                task={task}
+                group={group.key}
+                onDismiss={onDismiss}
+                onRetry={onRetry}
+              />
             ))}
+            {group.key === "completed"
+              ? digest.map((entry) => <PFDigestRow key={`digest-${entry.type}`} entry={entry} />)
+              : null}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function PFDigestRow({ entry }: { entry: CompletedDigestEntry }) {
+  const { t, i18n } = useTranslation();
+  const relative = formatRelativeTime(entry.lastCompletedAt, i18n.language) ?? t("shell.justNow");
+
+  return (
+    <div className="pf-trow pf-trow--completed">
+      <span className="pf-tico">
+        <PFTaskIco type={entry.type} />
+      </span>
+      <div className="pf-tmain">
+        <div className="pf-tlabel">
+          {t("shell.digestLine", {
+            label: taskTypeLabel(entry.type, t),
+            count: entry.itemCount,
+          })}
+        </div>
+        <div className="pf-tsub">{relative}</div>
+      </div>
+      <div className="pf-tright pf-tright--good">
+        <PFCheck s={13} />
       </div>
     </div>
   );
@@ -676,13 +748,28 @@ function PFRow({
   task,
   group,
   onDismiss,
+  onRetry,
 }: {
   task: FooterTask;
   group: string;
   onDismiss: (id: string) => void;
+  onRetry: (task: FooterTask) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const progress = task.total > 0 ? Math.round((task.done / task.total) * 100) : 0;
+  const title = buildTaskTitle(task, t, i18n.language);
+  const relative =
+    task.completedAt != null
+      ? (formatRelativeTime(task.completedAt, i18n.language) ?? t("shell.justNow"))
+      : null;
+  const canRetry = group === "failed" && task.retry?.kind === "thumbnails";
+
+  const runningSub =
+    task.state === "running"
+      ? [task.label, task.vaultName].filter(Boolean).join(" · ")
+      : task.state === "queued"
+        ? t("shell.waiting")
+        : null;
 
   return (
     <div className={`pf-trow pf-trow--${group}`}>
@@ -690,36 +777,51 @@ function PFRow({
         <PFTaskIco type={task.type} />
       </span>
       <div className="pf-tmain">
-        <div className="pf-tlabel">{taskTypeLabel(task.type, t)}</div>
-        {group === "running" ? (
-          <div className="pf-tbar">
-            <i style={{ width: `${progress}%` }} />
-          </div>
+        <div className="pf-tlabel">{title}</div>
+        {task.state === "running" ? (
+          <>
+            {runningSub ? <div className="pf-tsub">{runningSub}</div> : null}
+            <div className="pf-tbar">
+              <i style={{ width: `${progress}%` }} />
+            </div>
+          </>
         ) : (
           <div className={`pf-tsub ${group === "failed" ? "pf-tsub--bad" : ""}`}>
-            {group === "queued"
-              ? t("shell.queued")
+            {task.state === "queued"
+              ? t("shell.waiting")
               : group === "failed"
                 ? (task.reason ?? t("shell.failed"))
-                : t("shell.completed")}
+                : (task.summary ?? relative ?? t("shell.completed"))}
           </div>
         )}
       </div>
       <div className={`pf-tright ${group === "completed" ? "pf-tright--good" : ""}`}>
-        {group === "running" ? <span>{getTaskProgressLabel(task)}</span> : null}
-        {group === "queued" ? (
+        {task.state === "running" ? <span>{getTaskProgressLabel(task)}</span> : null}
+        {task.state === "queued" ? (
           <span style={{ color: "var(--faint,#b6b6b2)" }}>{t("shell.waiting")}</span>
         ) : null}
-        {group === "completed" ? <PFCheck s={13} /> : null}
+        {group === "completed" ? (
+          <>
+            {relative ? <span className="pf-trow-time">{relative}</span> : null}
+            <PFCheck s={13} />
+          </>
+        ) : null}
         {group === "failed" ? (
-          <button
-            type="button"
-            className="pf-tdismiss"
-            title={t("shell.dismiss")}
-            onClick={() => onDismiss(task.id)}
-          >
-            ✕
-          </button>
+          <>
+            {canRetry ? (
+              <button type="button" className="pf-tretry" onClick={() => onRetry(task)}>
+                {t("shell.retry")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="pf-tdismiss"
+              title={t("shell.dismiss")}
+              onClick={() => onDismiss(task.id)}
+            >
+              ✕
+            </button>
+          </>
         ) : null}
       </div>
     </div>

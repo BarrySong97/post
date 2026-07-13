@@ -57,9 +57,28 @@
       "thumbnails": "Thumbnails",
       "import": "Import"
     },
-    "dropImportHint": "Drop to import into vault",
-    "dropImportSuccess": "Imported {{count}} file(s)",
-    "dropImportSkipped": "Nothing new to import",
+    "dropHoverTitle": "Drop to import",
+    "dropHoverTarget": "Into {{name}}",
+    "dropBlockedTitle": "No vault linked",
+    "dropBlockedHint": "Link a vault before importing files",
+    "importPillRunning": "Importing {{current}}/{{total}}",
+    "importPillDone": "Imported {{count}}",
+    "importPillFailed": "Import failed",
+    "retry": "Retry",
+    "inProgress": "In progress",
+    "justNow": "Just now",
+    "digestLine": "{{label}} · last 30 min · {{count}}",
+    "taskSubjectMany": {
+      "thumbnails": "Generate {{count}} thumbnails",
+      "import": "Import {{count}} items",
+      "indexing": "Index {{count}} items",
+      "reconcile": "Reconcile {{count}} items",
+      "sync": "Sync {{count}} items"
+    },
+    "pillRunningNamed": {
+      "thumbnails": "{{name}}…",
+      "import": "{{name}}…"
+    },
     "dropImportFailed": "Could not import dropped files",
     "dropImportNoVault": "Link a vault before importing files"
   },

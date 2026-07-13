@@ -132,6 +132,29 @@ function titleFromInput(input: SaveExtensionVideoInput, url: URL): string {
   return decodedBaseName.replace(/\.[a-z0-9]+$/i, "").slice(0, 140) || "Video";
 }
 
+function subjectNameFromVideoInput(input: SaveExtensionVideoInput): string {
+  const pageTitle = input.pageTitle?.trim();
+  if (pageTitle) {
+    return pageTitle.slice(0, 140);
+  }
+
+  if (input.tweetId) {
+    return `Twitter video ${input.tweetId}`;
+  }
+
+  if (input.srcUrl) {
+    try {
+      const url = new URL(input.srcUrl);
+      const decodedBaseName = decodeURIComponent(path.basename(url.pathname) || "video");
+      return decodedBaseName.replace(/\.[a-z0-9]+$/i, "").slice(0, 140) || "Video";
+    } catch {
+      // Fall through.
+    }
+  }
+
+  return "Video";
+}
+
 async function getCandidateUrls(input: SaveExtensionVideoInput) {
   const resolvedVariants = await resolveTwitterVideoVariants(input.tweetId);
   return Array.from(
@@ -444,11 +467,13 @@ export async function saveExtensionVideo(
     throw new Error("No active vault selected.");
   }
 
+  const subjectName = subjectNameFromVideoInput(input);
   const task = backgroundTaskManager.createTask({
     type: "import",
     title: "Importing video",
     vaultId: vault.id,
     vaultName: vault.name,
+    subject: { names: [subjectName], count: 1 },
     progress: { current: 0, label: "准备下载" },
     hidden: input.hiddenTask,
   });

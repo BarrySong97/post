@@ -14,7 +14,7 @@ import { and, eq } from "drizzle-orm";
 import { schema, type TagRecord } from "@post/db";
 import { getDatabase } from "../db";
 import { getRequestedOrActiveVault } from "../repositories/vaults-repository";
-import { runThumbnailTask } from "../thumbnail-tasks";
+import { enqueueThumbnails } from "./thumbnail-queue";
 
 const WEB_CLIP_DIR = "assets/web-clips";
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
@@ -308,9 +308,7 @@ export async function saveExtensionImage(
     }
   });
 
-  void runThumbnailTask(vault, { assetIds: [assetId], limit: 1 }).catch((error) => {
-    console.error("Failed to generate imported image thumbnail", error);
-  });
+  enqueueThumbnails(vault, [assetId]);
 
   return {
     assetId,
