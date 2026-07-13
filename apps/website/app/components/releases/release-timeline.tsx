@@ -20,10 +20,24 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.9",
+    date: "2026-07-13",
+    head: "Video duration badges backfill for assets that already had thumbnails.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Desktop",
+        items: [
+          "Ready thumbnail cache hits now probe and store missing video durations without regenerating frames, so older videos get the duration badge after prewarm.",
+          "Failed duration probes record a sentinel so the indexer does not retry forever.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.8",
     date: "2026-07-13",
     head: "Clearer drag-and-drop import feedback, plus a richer background-task footer.",
-    badge: "latest",
     groups: [
       {
         title: "Desktop",
