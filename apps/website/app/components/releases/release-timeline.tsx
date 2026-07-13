@@ -20,10 +20,25 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.8",
+    date: "2026-07-13",
+    head: "Clearer drag-and-drop import feedback, plus a richer background-task footer.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Desktop",
+        items: [
+          "Dropping files onto the window shows hover, blocked, in-progress, and done/failed states, with a bottom-right import progress pill.",
+          "Background tasks show file or subject names, fold queued work into In progress, and summarize recent non-import completions in a 30-minute digest.",
+          "Failed thumbnail tasks can be retried from the footer; short thumbnail bursts from the watcher and extension imports coalesce into one queue.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.7",
     date: "2026-07-12",
     head: "Asset detail shows every bound tag and lets you bind, unbind, or create tags inline.",
-    badge: "latest",
     groups: [
       {
         title: "Desktop",
