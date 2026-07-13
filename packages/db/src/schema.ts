@@ -203,6 +203,9 @@ export const imageCache = sqliteTable(
     // overlay text between dark-on-light and light-on-dark. Null for pre-existing
     // thumbnails until they regenerate.
     thumbnailLuma: integer("thumbnail_luma"),
+    // Video duration in milliseconds from ffprobe during thumbnail generation.
+    // Null for non-video assets, or when ffprobe is unavailable / fails.
+    videoDurationMs: integer("video_duration_ms"),
     sourceSizeBytes: integer("source_size_bytes"),
     sourceMtimeMs: integer("source_mtime_ms", { mode: "timestamp_ms" }),
     sourceQuickFingerprint: text("source_quick_fingerprint"),

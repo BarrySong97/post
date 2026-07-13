@@ -32,7 +32,7 @@ import {
   writeAssetFilterOpenToStorage,
 } from "@/lib/asset-manager/storage";
 import { getActiveFilterCount, getTagHue, mapIndexedAsset } from "@/lib/asset-manager/asset-model";
-import { resolveMarkdownAssetUrl } from "@/lib/asset-manager/asset-url";
+import { resolveMarkdownAssetUrl, buildAssetThumbnailUrl } from "@/lib/asset-manager/asset-url";
 import type {
   Asset,
   AssetKind,
@@ -42,7 +42,7 @@ import type {
 } from "@/lib/asset-manager/types";
 import { isMacWindow } from "@/lib/platform";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
 import { useSearch } from "@tanstack/react-router";
 import { Plyr, type PlyrOptions, type PlyrSource } from "plyr-react";
 import "plyr-react/plyr.css";
@@ -288,7 +288,9 @@ const ASSET_COLUMN_WIDTH = 260;
 const ASSET_COLUMN_GUTTER = 16;
 const ASSET_GRID_PADDING_X = 24; // px-6 viewport padding, both sides
 const ASSET_GRID_PADDING_Y = 18; // vertical padding, applied via the virtualizer
-const ASSET_CARD_OVERSCAN = 8;
+// Per-lane overscan in ITEMS-PER-COLUMN (each lane has its own virtualizer): 3 rows per
+// column is the row-count equivalent of the old single-virtualizer `overscan: 8` items.
+const ASSET_LANE_OVERSCAN = 3;
 // Reflow animation: how long after the last resize tick to keep the card transition enabled. Must
 // exceed the transition duration + a couple frames so clearing the flag never snaps a mid-flight card.
 const ASSET_REFLOW_SETTLE_MS = 400;
@@ -640,6 +642,10 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
 // Always-on info layer embedded in a cover's bottom edge: primary tag (left) and, when
 // present, source (right). Pressed into the media so it never adds card height. Renders
 // nothing when there is nothing to say (untagged local media stays a clean image).
+// Web OG covers are designed text images, so subtitle text would collide with the
+// artwork's own type: they get a soft scrim with always-white text. Photo and video
+// covers stay scrim-free and flip via luma instead — dark-on-light for light covers,
+// light-on-dark (with a glyph-hugging shadow) otherwise, including unknown luma.
 function AssetCardMediaOverlay({ asset }: { asset: Asset }) {
   const hasTag = asset.tagIds.length > 0;
   const source = asset.domain;
@@ -648,37 +654,113 @@ function AssetCardMediaOverlay({ asset }: { asset: Asset }) {
     return null;
   }
 
-  // Subtitle-style text with no container: flip dark-on-light for light covers, and
-  // light-on-dark otherwise (including unknown luma). Only the dark variant carries a
-  // glyph-hugging shadow — dark text on a light cover is print-grade contrast already,
-  // and a white glow reads as a halo on near-white images.
-  const isLight = asset.coverIsLight === true;
+  const useScrim = asset.kind === "web";
+  const isLight = !useScrim && asset.coverIsLight === true;
   const textColor = isLight ? "text-[#3a3833]" : "text-white";
-  const textShadow = isLight
-    ? "none"
-    : "0 1px 3px rgba(20,17,14,0.65), 0 0 1px rgba(20,17,14,0.55)";
+  const textShadow =
+    useScrim || isLight ? "none" : "0 1px 3px rgba(20,17,14,0.65), 0 0 1px rgba(20,17,14,0.55)";
   const dotLightness = isLight ? 0.58 : 0.8;
 
   return (
-    <div
-      className={`pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 px-3 pb-2.5 pt-2 text-[11px] font-medium ${textColor}`}
-      style={{ textShadow }}
-    >
-      {hasTag ? (
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span
-            className="h-[7px] w-[7px] shrink-0 rounded-full"
-            style={{
-              background: `oklch(${dotLightness} 0.15 ${getTagHue(asset.tag)})`,
-              boxShadow: isLight ? "none" : "0 1px 2px rgba(20,17,14,0.4)",
-            }}
-          />
-          <span className="min-w-0 truncate">{asset.tag}</span>
+    <>
+      {useScrim ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-16"
+          style={{
+            background:
+              "linear-gradient(to top, rgba(20,17,14,0.55) 0%, rgba(20,17,14,0.22) 55%, rgba(20,17,14,0) 100%)",
+          }}
+        />
+      ) : null}
+      <div
+        className={`pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 px-3 pb-2.5 pt-2 text-[11px] font-medium ${textColor}`}
+        style={{ textShadow }}
+      >
+        {hasTag ? (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span
+              className="h-[7px] w-[7px] shrink-0 rounded-full"
+              style={{
+                background: `oklch(${dotLightness} 0.15 ${getTagHue(asset.tag)})`,
+                boxShadow: useScrim || isLight ? "none" : "0 1px 2px rgba(20,17,14,0.4)",
+              }}
+            />
+            <span className="min-w-0 truncate">{asset.tag}</span>
+          </span>
+        ) : (
+          <span />
+        )}
+        {source ? <span className="min-w-0 shrink-0 truncate opacity-90">{source}</span> : null}
+      </div>
+    </>
+  );
+}
+
+// Markdown note cards only: a compact 44px strip of vault-resolved embeds, capped at
+// three thumbs with a +N overflow cell. Cover-mode notes skip this for a top cover.
+function AssetCardThumbnailStrip({ asset }: { asset: Asset }) {
+  const images = asset.noteImages ?? [];
+  if (images.length === 0) {
+    return null;
+  }
+
+  const overflow =
+    typeof asset.noteImageCount === "number" && asset.noteImageCount > images.length
+      ? asset.noteImageCount - images.length
+      : 0;
+
+  return (
+    <div className="mt-2.5 flex gap-1.5">
+      {images.map((image) => (
+        <img
+          key={image.assetId}
+          src={buildAssetThumbnailUrl(image.assetId, image.fileName)}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="h-11 w-11 shrink-0 rounded-md object-cover"
+          style={{
+            boxShadow: "inset 0 0 0 1px rgba(28,25,22,0.06)",
+            background: `
+              radial-gradient(120% 90% at 18% 12%, oklch(0.93 0 0) 0%, transparent 62%),
+              linear-gradient(150deg, oklch(0.87 0 0) 0%, oklch(0.92 0 0) 100%)
+            `,
+          }}
+        />
+      ))}
+      {overflow > 0 ? (
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-md bg-[#ecebe6] text-[12px] font-semibold text-[#6c6a64]">
+          +{overflow}
         </span>
-      ) : (
-        <span />
-      )}
-      {source ? <span className="min-w-0 shrink-0 truncate opacity-90">{source}</span> : null}
+      ) : null}
+    </div>
+  );
+}
+
+function AssetCardNoteCover({ asset }: { asset: Asset }) {
+  const cover = asset.noteImages?.[0];
+  if (!cover) {
+    return null;
+  }
+
+  return (
+    <div
+      className="relative aspect-[3/2] overflow-hidden"
+      style={{
+        background: `
+          radial-gradient(120% 90% at 18% 12%, oklch(0.93 0 0) 0%, transparent 62%),
+          linear-gradient(150deg, oklch(0.87 0 0) 0%, oklch(0.92 0 0) 100%)
+        `,
+      }}
+    >
+      <img
+        src={buildAssetThumbnailUrl(cover.assetId, cover.fileName)}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        className="absolute inset-0 h-full w-full object-cover"
+      />
     </div>
   );
 }
@@ -887,30 +969,44 @@ const AssetCard = React.memo(function AssetCard({
         {hasCover ? (
           <AssetCardMedia asset={asset} />
         ) : (
-          <div className="px-4 py-3.5">
-            {asset.kind === "post" ? (
-              <AssetCardAttribution asset={asset} />
-            ) : (
-              <h2 className="line-clamp-2 text-[14px] font-semibold leading-[1.4] text-[#1c1b19]">
-                {asset.title}
-              </h2>
-            )}
+          <>
+            {asset.coverMode ? <AssetCardNoteCover asset={asset} /> : null}
+            <div className="px-4 py-3.5">
+              {asset.kind === "post" ? (
+                <AssetCardAttribution asset={asset} />
+              ) : (
+                <h2 className="line-clamp-2 text-[14px] font-semibold leading-[1.4] text-[#1c1b19]">
+                  {asset.title}
+                </h2>
+              )}
 
-            {asset.kind === "file" ? <AssetFilePreview asset={asset} /> : null}
-            {showUrlRow ? <AssetUrlPreview asset={asset} /> : null}
+              {asset.kind === "file" ? <AssetFilePreview asset={asset} /> : null}
+              {showUrlRow ? <AssetUrlPreview asset={asset} /> : null}
 
-            {asset.body ? (
-              <p
-                className={`line-clamp-4 whitespace-pre-line text-[13px] leading-[1.6] ${
-                  asset.kind === "post" ? "mt-2.5 text-[#1c1b19]" : "mt-2 text-[#6c6a64]"
-                }`}
-              >
-                {asset.body}
-              </p>
-            ) : null}
+              {asset.body ? (
+                <p
+                  className={`whitespace-pre-line text-[13px] leading-[1.6] ${
+                    // Note excerpts span paragraphs (indexer joins them with \n), so give
+                    // them more clamp room than the single-utterance post body. Cover-mode
+                    // notes keep a short caption under the hero image.
+                    asset.kind === "post"
+                      ? "line-clamp-4 mt-2.5 text-[#1c1b19]"
+                      : asset.coverMode
+                        ? "line-clamp-2 mt-2 text-[#6c6a64]"
+                        : "line-clamp-6 mt-2 text-[#6c6a64]"
+                  }`}
+                >
+                  {asset.body}
+                </p>
+              ) : null}
 
-            <AssetCardTagRow asset={asset} />
-          </div>
+              {!asset.coverMode && asset.kind === "markdown" ? (
+                <AssetCardThumbnailStrip asset={asset} />
+              ) : null}
+
+              <AssetCardTagRow asset={asset} />
+            </div>
+          </>
         )}
       </button>
       {asset.kind === "post" ? (
@@ -941,9 +1037,10 @@ function getLayoutIndexMediaHeight(item: AssetLayoutIndexItem) {
 
 function getAssetCardHeightEstimate(item: AssetLayoutIndexItem) {
   const mediaHeight = getLayoutIndexMediaHeight(item);
-  // Cover cards are pure media (no chrome); text cards reserve ~170px for title + excerpt + tags.
-  // Add the column gutter because each cell's wrapper padding is measured into its height.
-  return (mediaHeight > 0 ? mediaHeight : 170) + ASSET_COLUMN_GUTTER;
+  // Cover cards are pure media (no chrome); text cards reserve ~190px for title + a
+  // multi-paragraph excerpt (clamp-6) + tags. Add the column gutter because each cell's
+  // wrapper padding is measured into its height.
+  return (mediaHeight > 0 ? mediaHeight : 190) + ASSET_COLUMN_GUTTER;
 }
 
 const AssetCardPlaceholder = React.memo(function AssetCardPlaceholder({
@@ -1367,6 +1464,116 @@ type MasonryVirtualizerHandle = {
   scrollToIndex: (index: number, options?: { align?: "start" | "center" | "end" | "auto" }) => void;
 };
 
+type LaneVirtualizer = Virtualizer<HTMLDivElement, Element>;
+
+type MasonryLaneItem = {
+  item: AssetLayoutIndexItem;
+  // Position in the full indexItems array, for hydrate-range and scroll-index mapping
+  // (originalIndex = inLaneIndex * columnCount + laneIndex).
+  originalIndex: number;
+};
+
+// One column of the masonry with its own virtualizer. Lane membership is decided by the
+// parent's round-robin split, so card placement is a pure function of list order — height
+// estimates only affect in-lane scroll positioning, never which column a card lands in.
+function MasonryLane({
+  laneIndex,
+  columnCount,
+  laneItems,
+  scrollViewportRef,
+  hydratedAssetsById,
+  wrapperTransition,
+  onOpenContextMenu,
+  onRangeChange,
+  registerVirtualizer,
+}: {
+  laneIndex: number;
+  columnCount: number;
+  laneItems: MasonryLaneItem[];
+  scrollViewportRef: React.RefObject<HTMLDivElement | null>;
+  hydratedAssetsById: ReadonlyMap<string, Asset>;
+  wrapperTransition: string | undefined;
+  onOpenContextMenu: (state: AssetCardContextMenuState) => void;
+  onRangeChange: (laneIndex: number, start: number, end: number) => void;
+  registerVirtualizer: (laneIndex: number, virtualizer: LaneVirtualizer) => void;
+}) {
+  const virtualizer = useVirtualizer({
+    count: laneItems.length,
+    getScrollElement: () => scrollViewportRef.current,
+    estimateSize: (index) => getAssetCardHeightEstimate(laneItems[index].item),
+    getItemKey: (index) => laneItems[index].item.id,
+    overscan: ASSET_LANE_OVERSCAN,
+    paddingStart: ASSET_GRID_PADDING_Y,
+    paddingEnd: ASSET_GRID_PADDING_Y,
+    // A fresh virtualizer scrolls its element to initialOffset on attach (virtual-core
+    // _willUpdate). All lanes share one viewport, so read the live scrollTop: the attach
+    // write becomes a no-op and the first render windows from the correct offset.
+    initialOffset: () => scrollViewportRef.current?.scrollTop ?? 0,
+  });
+  registerVirtualizer(laneIndex, virtualizer);
+
+  const range = virtualizer.range;
+  const rangeStart = range?.startIndex ?? -1;
+  const rangeEnd = range?.endIndex ?? -1;
+
+  // Report the visible in-lane range up for cross-lane hydrate batching. `laneItems` is a
+  // dependency so a data identity change re-reports even when the numeric range is unchanged.
+  useEffect(() => {
+    onRangeChange(laneIndex, rangeStart, rangeEnd);
+  }, [laneIndex, rangeStart, rangeEnd, laneItems, onRangeChange]);
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: `${100 / columnCount}%`,
+        flexShrink: 0,
+        height: virtualizer.getTotalSize(),
+      }}
+    >
+      {virtualizer.getVirtualItems().map((virtualItem) => {
+        const laneItem = laneItems[virtualItem.index];
+        if (!laneItem) {
+          return null;
+        }
+
+        const hydratedAsset = hydratedAssetsById.get(laneItem.item.id);
+
+        return (
+          <div
+            key={virtualItem.key}
+            data-index={virtualItem.index}
+            ref={virtualizer.measureElement}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${virtualItem.start}px)`,
+              padding: ASSET_COLUMN_GUTTER / 2,
+              boxSizing: "border-box",
+              transition: wrapperTransition,
+              willChange: wrapperTransition ? "transform" : undefined,
+            }}
+          >
+            {/* FLIP layer: its transform is driven imperatively across a column-count remount to
+                slide each card from its old to new position. Kept separate from the wrapper so it
+                never fights the virtualizer's translateY (and its transform is layout-neutral, so it
+                doesn't retrigger measurement). */}
+            <div data-flip-id={laneItem.item.id}>
+              {hydratedAsset ? (
+                <AssetCard asset={hydratedAsset} onOpenContextMenu={onOpenContextMenu} />
+              ) : (
+                <AssetCardPlaceholder item={laneItem.item} />
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AssetMasonryColumns({
   scrollViewportRef,
   columnCount,
@@ -1387,7 +1594,16 @@ function AssetMasonryColumns({
   onOpenContextMenu: (state: AssetCardContextMenuState) => void;
 }) {
   const hydrateFrame = useRef<number | undefined>(undefined);
-  const queuedHydrateIds = useRef<string[]>([]);
+  const laneRangesRef = useRef<Array<{ start: number; end: number } | null>>([]);
+  const laneVirtualizersRef = useRef<Array<LaneVirtualizer | null>>([]);
+  const columnCountRef = useRef(columnCount);
+  const indexItemsRef = useRef(indexItems);
+  columnCountRef.current = columnCount;
+  indexItemsRef.current = indexItems;
+  // Drop stale per-lane slots when the column count shrinks.
+  laneRangesRef.current.length = columnCount;
+  laneVirtualizersRef.current.length = columnCount;
+
   const reduceMotion = useReducedMotion();
   // Gate the card transition to resize-driven reflows only — a persistent virtual item's translateY
   // is otherwise constant during scroll, so an always-on transition would animate scroll-time repacks
@@ -1395,41 +1611,57 @@ function AssetMasonryColumns({
   // the FLIP layer instead), so this transition only covers the same-column-count vertical repack.
   const wrapperTransition = reflowing && !reduceMotion ? ASSET_REFLOW_TRANSITION : undefined;
 
-  const virtualizer = useVirtualizer({
-    count: indexItems.length,
-    getScrollElement: () => scrollViewportRef.current,
-    estimateSize: (index) => getAssetCardHeightEstimate(indexItems[index]),
-    getItemKey: (index) => indexItems[index].id,
-    lanes: columnCount,
-    overscan: ASSET_CARD_OVERSCAN,
-    paddingStart: ASSET_GRID_PADDING_Y,
-    paddingEnd: ASSET_GRID_PADDING_Y,
-  });
-  // Expose the virtualizer to the parent grid for index-based scroll save/restore.
-  virtualizerRef.current = virtualizer;
+  // Strict Z-order: card i always lands in lane i % N, so the grid reads left-to-right in
+  // list order and the layout is identical on every visit regardless of estimate accuracy.
+  const laneItemsList = useMemo(() => {
+    const lanes: MasonryLaneItem[][] = Array.from({ length: columnCount }, () => []);
+    indexItems.forEach((item, originalIndex) => {
+      lanes[originalIndex % columnCount].push({ item, originalIndex });
+    });
+    return lanes;
+  }, [indexItems, columnCount]);
 
-  const virtualItems = virtualizer.getVirtualItems();
-  const range = virtualizer.range;
-  const rangeStart = range?.startIndex ?? -1;
-  const rangeEnd = range?.endIndex ?? -1;
-
-  // Lazily hydrate the rendered range (plus a buffer) as the user scrolls.
-  useEffect(() => {
-    if (rangeStart < 0 || indexItems.length === 0) {
-      return;
-    }
-
-    const start = Math.max(0, rangeStart - ASSET_HYDRATE_RENDER_BUFFER);
-    const stop = Math.min(indexItems.length - 1, rangeEnd + ASSET_HYDRATE_RENDER_BUFFER);
-    queuedHydrateIds.current = indexItems.slice(start, stop + 1).map((item) => item.id);
-
-    if (hydrateFrame.current === undefined) {
+  // Lazily hydrate the union of the lanes' visible ranges (plus a buffer). Lane callbacks
+  // only write refs — a single rAF per frame folds all N lanes into one hydrate request,
+  // and scrolling never re-renders this parent. The contiguous [min, max] span (instead of
+  // an exact per-lane union) over-includes at most ~N edge cards, which the ±buffer already
+  // dwarfs, and keeps the top-down priority order that hydrate batching truncates by.
+  const handleLaneRange = useCallback(
+    (laneIndex: number, start: number, end: number) => {
+      laneRangesRef.current[laneIndex] = start < 0 ? null : { start, end };
+      if (hydrateFrame.current !== undefined) {
+        return;
+      }
       hydrateFrame.current = window.requestAnimationFrame(() => {
         hydrateFrame.current = undefined;
-        onHydrateAssets(queuedHydrateIds.current);
+        const laneCount = columnCountRef.current;
+        const items = indexItemsRef.current;
+        if (items.length === 0) {
+          return;
+        }
+        let lo = Infinity;
+        let hi = -1;
+        for (let lane = 0; lane < laneCount; lane++) {
+          const laneRange = laneRangesRef.current[lane];
+          if (!laneRange) {
+            continue;
+          }
+          lo = Math.min(lo, laneRange.start * laneCount + lane);
+          hi = Math.max(hi, laneRange.end * laneCount + lane);
+        }
+        if (hi < 0) {
+          return;
+        }
+        const first = Math.max(0, lo - ASSET_HYDRATE_RENDER_BUFFER);
+        const last = Math.min(items.length - 1, hi + ASSET_HYDRATE_RENDER_BUFFER);
+        if (first > last) {
+          return;
+        }
+        onHydrateAssets(items.slice(first, last + 1).map((item) => item.id));
       });
-    }
-  }, [rangeStart, rangeEnd, indexItems, onHydrateAssets]);
+    },
+    [onHydrateAssets],
+  );
 
   useEffect(() => {
     return () => {
@@ -1439,48 +1671,55 @@ function AssetMasonryColumns({
     };
   }, []);
 
-  return (
-    <div style={{ position: "relative", width: "100%", height: virtualizer.getTotalSize() }}>
-      {virtualItems.map((virtualItem) => {
-        const item = indexItems[virtualItem.index];
-        if (!item) {
-          return null;
+  const registerLaneVirtualizer = useCallback((laneIndex: number, virtualizer: LaneVirtualizer) => {
+    laneVirtualizersRef.current[laneIndex] = virtualizer;
+  }, []);
+
+  // Expose an aggregate handle to the parent grid for index-based scroll save/restore.
+  // scrollToIndex targets one lane's virtualizer, but it writes the shared viewport's
+  // scrollTop, so the whole grid scrolls.
+  virtualizerRef.current = {
+    getVirtualItems: () => {
+      const out: Array<{ index: number; start: number; end: number }> = [];
+      for (let lane = 0; lane < columnCount; lane++) {
+        const laneVirtualizer = laneVirtualizersRef.current[lane];
+        if (!laneVirtualizer) {
+          continue;
         }
+        for (const virtualItem of laneVirtualizer.getVirtualItems()) {
+          out.push({
+            index: virtualItem.index * columnCount + lane,
+            start: virtualItem.start,
+            end: virtualItem.end,
+          });
+        }
+      }
+      return out.sort((a, b) => a.index - b.index);
+    },
+    scrollToIndex: (index, options) => {
+      laneVirtualizersRef.current[index % columnCount]?.scrollToIndex(
+        Math.floor(index / columnCount),
+        options,
+      );
+    },
+  };
 
-        const lane = virtualItem.lane < columnCount ? virtualItem.lane : 0;
-        const hydratedAsset = hydratedAssetsById.get(item.id);
-
-        return (
-          <div
-            key={virtualItem.key}
-            data-index={virtualItem.index}
-            ref={virtualizer.measureElement}
-            style={{
-              position: "absolute",
-              top: 0,
-              left: `${(lane / columnCount) * 100}%`,
-              width: `${100 / columnCount}%`,
-              transform: `translateY(${virtualItem.start}px)`,
-              padding: ASSET_COLUMN_GUTTER / 2,
-              boxSizing: "border-box",
-              transition: wrapperTransition,
-              willChange: wrapperTransition ? "transform" : undefined,
-            }}
-          >
-            {/* FLIP layer: its transform is driven imperatively across a column-count remount to
-                slide each card from its old to new position. Kept separate from the wrapper so it
-                never fights the virtualizer's translateY (and its transform is layout-neutral, so it
-                doesn't retrigger measurement). */}
-            <div data-flip-id={item.id}>
-              {hydratedAsset ? (
-                <AssetCard asset={hydratedAsset} onOpenContextMenu={onOpenContextMenu} />
-              ) : (
-                <AssetCardPlaceholder item={item} />
-              )}
-            </div>
-          </div>
-        );
-      })}
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", width: "100%" }}>
+      {laneItemsList.map((laneItems, laneIndex) => (
+        <MasonryLane
+          key={laneIndex}
+          laneIndex={laneIndex}
+          columnCount={columnCount}
+          laneItems={laneItems}
+          scrollViewportRef={scrollViewportRef}
+          hydratedAssetsById={hydratedAssetsById}
+          wrapperTransition={wrapperTransition}
+          onOpenContextMenu={onOpenContextMenu}
+          onRangeChange={handleLaneRange}
+          registerVirtualizer={registerLaneVirtualizer}
+        />
+      ))}
     </div>
   );
 }
@@ -1509,9 +1748,10 @@ function AssetMasonryGrid({
   const firstResetRef = useRef(true);
   // Reflow animation. In-band (same column count): pulse `reflowing` so the vertical repack
   // transitions on the wrapper's translateY. Column-count change: a manual FLIP slides each on-screen
-  // card from its old to new position. The virtualizer is NOT remounted on a column change — a fresh
-  // virtualizer inits at scrollTop 0 (virtual-core initialOffset), losing the on-screen cards — so it
-  // persists, and the FLIP holding cards at their old screen positions is also what avoids the blank.
+  // card from its old to new position. Lanes keyed by laneIndex persist across a column change; only
+  // a newly added lane mounts a fresh virtualizer, which scrolls the shared viewport to its
+  // initialOffset on attach (virtual-core _willUpdate) — every lane passes the live scrollTop as
+  // initialOffset so that write is a no-op instead of a jump to the top.
   const [reflowing, setReflowing] = useState(false);
   const columnCountRef = useRef(1);
   const firstRecomputeRef = useRef(true);

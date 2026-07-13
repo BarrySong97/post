@@ -13,8 +13,10 @@
 
 The Electron main process starts the indexer with a vault ID, root path, database path, and command. The indexer writes asset, file, link, markdown cache, thumbnail cache, sync run, and sync event data to SQLite, while emitting structured progress events to stdout for the main process to consume.
 
-When parsing markdown, the indexer derives a plain-text `excerpt` (frontmatter, code fences, headings, and inline markup stripped; first prose paragraph truncated to ~160 chars) and stores it in `markdown_cache.excerpt`. The renderer surfaces this as the text-card preview body. Because excerpts are only (re)written when a markdown file is parsed, a full reindex backfills them for existing notes; the `PARSER_VERSION` constant tracks excerpt/parse behavior changes.
+When parsing markdown, the indexer derives a plain-text `excerpt` (frontmatter, code fences, headings, and inline markup stripped; prose accumulated across paragraphs — joined with `\n` so the renderer's `whitespace-pre-line` keeps the breaks — truncated to ~240 chars) and stores it in `markdown_cache.excerpt`. The renderer surfaces this as the text-card preview body. Because excerpts are only (re)written when a markdown file is parsed, a full reindex backfills them for existing notes; the `PARSER_VERSION` constant tracks excerpt/parse behavior changes.
 Markdown files whose frontmatter declares `type: x-post` are indexed with asset kind `post` while still using the normal Markdown parser and link cache. This preserves their first-class Post identity across scan, refresh, reconcile, and watcher events.
+
+Video thumbnail generation still uses ffmpeg for a representative frame. In the same pass the indexer best-effort probes duration — preferring `ffprobe` (`format=duration`), then falling back to parsing `Duration:` from `ffmpeg -i` stderr because the desktop app only ships ffmpeg — and stores milliseconds in `image_cache.video_duration_ms`. Missing tools or unparseable output leave the column null and do not fail the thumbnail. The renderer formats that value as the card's duration badge (`m:ss` / `h:mm:ss`).
 
 ## Commands
 

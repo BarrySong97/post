@@ -52,6 +52,12 @@ export type Asset = {
   fileExt?: string;
   domain?: string;
   imageCount?: number;
+  // Markdown note cards: vault images referenced via ![ ]() / ![[ ]], ordered by
+  // source span. coverMode upgrades the first thumb to a top cover when the note
+  // is image-primary (has images and body text under 80 chars).
+  noteImages?: Array<{ assetId: string; fileName: string }>;
+  noteImageCount?: number;
+  coverMode?: boolean;
   // Whether the cover's bottom strip is light, so overlay text flips to dark-on-light.
   // Undefined when the thumbnail predates luma capture (renderer falls back to light text).
   coverIsLight?: boolean;

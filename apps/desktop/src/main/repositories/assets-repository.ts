@@ -15,6 +15,7 @@ import {
   gt,
   gte,
   inArray,
+  isNotNull,
   isNull,
   lt,
   notExists,
@@ -202,6 +203,43 @@ export function attachRelations(rows: AssetJoinedRow[]) {
     }
   }
 
+  // Resolved vault images/embeds referenced by markdown notes, ordered by source
+  // span so cards show thumbs in document order. Join image_cache.status=ready so
+  // remote/unresolved/non-image targets never reach the renderer.
+  const noteImageRows = getDatabase()
+    .select({
+      sourceAssetId: schema.assetLinks.sourceAssetId,
+      assetId: schema.assetLinks.targetAssetId,
+      fileName: schema.assetFiles.fileName,
+    })
+    .from(schema.assetLinks)
+    .innerJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assetLinks.targetAssetId))
+    .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assetLinks.targetAssetId))
+    .where(
+      and(
+        inArray(schema.assetLinks.sourceAssetId, assetIds),
+        inArray(schema.assetLinks.relationType, ["markdown_image", "embed"]),
+        eq(schema.assetLinks.resolvedStatus, "resolved"),
+        isNotNull(schema.assetLinks.targetAssetId),
+        eq(schema.imageCache.status, "ready"),
+      ),
+    )
+    .orderBy(asc(schema.assetLinks.sourceSpanStart))
+    .all();
+
+  const noteImagesByAsset = new Map<string, Array<{ assetId: string; fileName: string }>>();
+  for (const row of noteImageRows) {
+    if (!row.assetId) {
+      continue;
+    }
+    const images = noteImagesByAsset.get(row.sourceAssetId) ?? [];
+    if (images.some((image) => image.assetId === row.assetId)) {
+      continue;
+    }
+    images.push({ assetId: row.assetId, fileName: row.fileName });
+    noteImagesByAsset.set(row.sourceAssetId, images);
+  }
+
   return rows.map((row) => ({
     id: row.asset.id,
     vaultId: row.asset.vaultId,
@@ -242,6 +280,7 @@ export function attachRelations(rows: AssetJoinedRow[]) {
       : null,
     tags: tagsByAsset.get(row.asset.id) ?? [],
     relatedIds: Array.from(relatedByAsset.get(row.asset.id) ?? []),
+    noteImages: noteImagesByAsset.get(row.asset.id) ?? [],
   }));
 }
 

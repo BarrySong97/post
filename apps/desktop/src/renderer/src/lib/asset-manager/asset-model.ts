@@ -116,6 +116,17 @@ function getAssetTimestampMs(value: unknown, fallbackMs = Date.now()) {
   return Number.isNaN(date.getTime()) ? fallbackMs : date.getTime();
 }
 
+function formatVideoDuration(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 export function mapIndexedAsset(asset: IndexedAsset): Asset {
   // Match vault sidebar order so cards and detail share the same primary tag.
   const tags = [...asset.tags]
@@ -150,6 +161,22 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
   } satisfies Record<AssetKind, string>;
 
   const updatedTimestampMs = getAssetTimestampMs(asset.mtimeMs);
+  const body = asset.description ?? asset.markdown?.excerpt ?? undefined;
+  const noteImagesRaw = kind === "markdown" ? (asset.noteImages ?? []) : [];
+  // Image-primary notes (short body + at least one vault image) upgrade to a cover.
+  const coverMode = noteImagesRaw.length > 0 && (body?.trim().length ?? 0) < 80;
+  const noteImageCount = noteImagesRaw.length > 0 ? noteImagesRaw.length : undefined;
+  const noteImages =
+    noteImagesRaw.length === 0
+      ? undefined
+      : coverMode
+        ? noteImagesRaw.slice(0, 1)
+        : noteImagesRaw.slice(0, 3);
+  const durationMs = asset.image?.videoDurationMs;
+  const duration =
+    kind === "video" && typeof durationMs === "number" && durationMs >= 0
+      ? formatVideoDuration(durationMs)
+      : undefined;
 
   return {
     id: asset.id,
@@ -157,7 +184,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     status: mapIndexedAssetStatus(asset.status),
     privacy: asset.privacy,
     title: asset.title,
-    body: asset.description ?? asset.markdown?.excerpt ?? undefined,
+    body,
     source: `${asset.vaultName} / ${asset.relativePath}`,
     sourceType: "vault",
     fileExists: asset.fileExists,
@@ -170,6 +197,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     meta: `${metaPrefix[kind]} · ${formatBytes(asset.sizeBytes)}`,
     accent: getTagHue(tag),
     height: kind === "image" || kind === "video" ? "medium" : "short",
+    duration,
     mediaUrl,
     thumbnailUrl,
     thumbnailStatus: asset.image?.status ?? (usesOriginalAsThumbnail ? "ready" : null),
@@ -180,6 +208,9 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     related: asset.relatedIds,
     fileExt: kind === "file" || kind === "image" || kind === "video" ? extension : undefined,
     imageCount: kind === "image" ? 1 : undefined,
+    noteImages,
+    noteImageCount,
+    coverMode: coverMode || undefined,
     ogImage,
     // >150/255 reads as a light bottom strip; leave undefined when luma is uncaptured.
     coverIsLight:

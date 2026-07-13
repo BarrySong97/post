@@ -78,6 +78,13 @@
       "when": 1783767616757,
       "tag": "0010_prune_hidden_assets",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1783913335686,
+      "tag": "0011_dazzling_richard_fisk",
+      "breakpoints": true
     }
   ]
 }

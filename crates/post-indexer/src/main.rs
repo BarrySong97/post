@@ -24,7 +24,7 @@ use image::{
 use notify::{Config as NotifyConfig, Event as NotifyEvent, PollWatcher, RecursiveMode, Watcher};
 
 const INDEXER_VERSION: &str = "post-indexer/0.1.0";
-const PARSER_VERSION: &str = "markdown-links/0.2.0";
+const PARSER_VERSION: &str = "markdown-links/0.3.0";
 const THUMBNAIL_LONG_EDGE: u32 = 720;
 const THUMBNAIL_JPEG_QUALITY: u8 = 82;
 const THUMBNAIL_DB_FLUSH_BATCH: usize = 8;
@@ -196,6 +196,8 @@ struct GeneratedThumbnail {
     thumbnail_height: u32,
     thumbnail_size_bytes: u64,
     bottom_luma: u8,
+    // Populated for video assets when ffprobe succeeds; None otherwise.
+    video_duration_ms: Option<i64>,
 }
 
 struct MarkdownLink {
@@ -1596,7 +1598,10 @@ fn generate_video_thumbnail(
     let frame = decode_image_file(&frame_path, "video frame");
     let _ = fs::remove_file(&frame_path);
 
-    persist_thumbnail_from_image(config, target, thumbnail_root, frame?)
+    let mut generated = persist_thumbnail_from_image(config, target, thumbnail_root, frame?)?;
+    // Duration is best-effort: missing/failing ffprobe must not block a ready thumbnail.
+    generated.video_duration_ms = probe_video_duration_ms(source_path);
+    Ok(generated)
 }
 
 fn persist_thumbnail_from_image(
@@ -1658,6 +1663,7 @@ fn persist_thumbnail_from_image(
         thumbnail_height,
         thumbnail_size_bytes,
         bottom_luma,
+        video_duration_ms: None,
     })
 }
 
@@ -1780,9 +1786,17 @@ fn extract_video_frame_with_ffmpeg(source_path: &Path, frame_path: &Path) -> Res
 }
 
 fn ffmpeg_candidates() -> Vec<PathBuf> {
+    media_tool_candidates("POST_FFMPEG_PATH", "ffmpeg")
+}
+
+fn ffprobe_candidates() -> Vec<PathBuf> {
+    media_tool_candidates("POST_FFPROBE_PATH", "ffprobe")
+}
+
+fn media_tool_candidates(env_key: &str, tool_name: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    if let Ok(path) = env::var("POST_FFMPEG_PATH") {
+    if let Ok(path) = env::var(env_key) {
         if !path.trim().is_empty() {
             candidates.push(PathBuf::from(path));
         }
@@ -1790,17 +1804,101 @@ fn ffmpeg_candidates() -> Vec<PathBuf> {
 
     if let Ok(executable) = env::current_exe() {
         if let Some(executable_dir) = executable.parent() {
-            let binary_name = ffmpeg_binary_name();
-            candidates.push(executable_dir.join("ffmpeg").join(binary_name));
-            candidates.push(executable_dir.join("bin").join(binary_name));
-            candidates.push(executable_dir.join(binary_name));
+            let binary_name = media_tool_binary_name(tool_name);
+            // Bundled layout keeps ffmpeg/ffprobe under the same sibling folders.
+            candidates.push(executable_dir.join("ffmpeg").join(&binary_name));
+            candidates.push(executable_dir.join("bin").join(&binary_name));
+            candidates.push(executable_dir.join(&binary_name));
         }
     }
 
     if allow_system_ffmpeg() {
-        candidates.push(PathBuf::from("ffmpeg"));
+        candidates.push(PathBuf::from(tool_name));
     }
     dedupe_paths(candidates)
+}
+
+/// Best-effort duration probe for video assets. Prefers ffprobe; falls back to
+/// parsing `Duration:` from `ffmpeg -i` stderr because the desktop app only
+/// bundles ffmpeg. Missing tools or unparseable output return None — never fail
+/// the thumbnail path.
+fn probe_video_duration_ms(source_path: &Path) -> Option<i64> {
+    for ffprobe_path in ffprobe_candidates() {
+        let output = Command::new(&ffprobe_path)
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(source_path)
+            .output();
+
+        let Ok(output) = output else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(duration_ms) = parse_ffprobe_duration_ms(&stdout) {
+            return Some(duration_ms);
+        }
+    }
+
+    for ffmpeg_path in ffmpeg_candidates() {
+        // ffmpeg -i prints metadata to stderr and exits non-zero without an
+        // output target; that is expected for a probe-only invocation.
+        let output = Command::new(&ffmpeg_path).arg("-i").arg(source_path).output();
+        let Ok(output) = output else {
+            continue;
+        };
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if let Some(duration_ms) = parse_ffmpeg_duration_ms(&stderr) {
+            return Some(duration_ms);
+        }
+    }
+    None
+}
+
+fn parse_ffprobe_duration_ms(raw: &str) -> Option<i64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let seconds: f64 = trimmed.parse().ok()?;
+    if !seconds.is_finite() || seconds < 0.0 {
+        return None;
+    }
+    Some((seconds * 1000.0).round() as i64)
+}
+
+fn parse_ffmpeg_duration_ms(raw: &str) -> Option<i64> {
+    let marker = "Duration: ";
+    let start = raw.find(marker)? + marker.len();
+    let rest = raw.get(start..)?;
+    let end = rest.find([',', '\n']).unwrap_or(rest.len());
+    let token = rest.get(..end)?.trim();
+    if token.is_empty() || token.starts_with('N') {
+        return None;
+    }
+
+    let mut parts = token.split(':');
+    let hours: f64 = parts.next()?.parse().ok()?;
+    let minutes: f64 = parts.next()?.parse().ok()?;
+    let seconds: f64 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if ![hours, minutes, seconds]
+        .into_iter()
+        .all(|value| value.is_finite() && value >= 0.0)
+    {
+        return None;
+    }
+    Some(((hours * 3600.0 + minutes * 60.0 + seconds) * 1000.0).round() as i64)
 }
 
 fn allow_system_ffmpeg() -> bool {
@@ -1810,11 +1908,11 @@ fn allow_system_ffmpeg() -> bool {
     )
 }
 
-fn ffmpeg_binary_name() -> &'static str {
+fn media_tool_binary_name(tool_name: &str) -> String {
     if cfg!(windows) {
-        "ffmpeg.exe"
+        format!("{tool_name}.exe")
     } else {
-        "ffmpeg"
+        tool_name.to_string()
     }
 }
 
@@ -2782,10 +2880,11 @@ fn push_image_cache_ready_sql(
         "\
 INSERT INTO image_cache (
   asset_id, vault_id, file_id, width, height, thumbnail_path, thumbnail_width,
-  thumbnail_height, thumbnail_size_bytes, thumbnail_format, thumbnail_luma, source_size_bytes,
-  source_mtime_ms, source_quick_fingerprint, status, error_message, generated_at, updated_at
+  thumbnail_height, thumbnail_size_bytes, thumbnail_format, thumbnail_luma, video_duration_ms,
+  source_size_bytes, source_mtime_ms, source_quick_fingerprint, status, error_message,
+  generated_at, updated_at
 ) VALUES (
-  {}, {}, {}, {}, {}, {}, {}, {}, {}, 'jpeg', {}, {}, {}, {}, 'ready', NULL, {now}, {now}
+  {}, {}, {}, {}, {}, {}, {}, {}, {}, 'jpeg', {}, {}, {}, {}, {}, 'ready', NULL, {now}, {now}
 )
 ON CONFLICT(asset_id) DO UPDATE SET
   vault_id = excluded.vault_id,
@@ -2798,6 +2897,7 @@ ON CONFLICT(asset_id) DO UPDATE SET
   thumbnail_size_bytes = excluded.thumbnail_size_bytes,
   thumbnail_format = excluded.thumbnail_format,
   thumbnail_luma = excluded.thumbnail_luma,
+  video_duration_ms = excluded.video_duration_ms,
   source_size_bytes = excluded.source_size_bytes,
   source_mtime_ms = excluded.source_mtime_ms,
   source_quick_fingerprint = excluded.source_quick_fingerprint,
@@ -2815,6 +2915,7 @@ ON CONFLICT(asset_id) DO UPDATE SET
         generated.thumbnail_height,
         generated.thumbnail_size_bytes,
         generated.bottom_luma,
+        sql_nullable_i64(generated.video_duration_ms),
         target.size_bytes,
         target.mtime_ms,
         sql_text(&target.quick_fingerprint),
@@ -3270,10 +3371,13 @@ fn word_count(content: &str) -> usize {
 }
 
 /// Build a short plain-text excerpt for card previews: skip YAML frontmatter,
-/// code fences, headings, and other block decorations, then take the first
-/// prose paragraph with inline markup stripped, truncated to a small budget.
+/// code fences, headings, and other block decorations, then accumulate prose
+/// across paragraphs (joined with `\n` so the renderer's `whitespace-pre-line`
+/// keeps the breaks) with inline markup stripped, truncated to a small budget.
+/// A short opening paragraph must not starve the preview, so blank lines mark
+/// a boundary instead of ending the excerpt.
 fn make_excerpt(content: &str) -> Option<String> {
-    const MAX_CHARS: usize = 160;
+    const MAX_CHARS: usize = 240;
 
     let mut lines = content.lines().peekable();
 
@@ -3287,8 +3391,9 @@ fn make_excerpt(content: &str) -> Option<String> {
         }
     }
 
-    let mut paragraph = String::new();
+    let mut excerpt = String::new();
     let mut in_code_fence = false;
+    let mut at_paragraph_break = false;
 
     for raw_line in lines {
         let line = raw_line.trim();
@@ -3301,8 +3406,8 @@ fn make_excerpt(content: &str) -> Option<String> {
             continue;
         }
         if line.is_empty() {
-            if !paragraph.is_empty() {
-                break; // end of the first paragraph
+            if !excerpt.is_empty() {
+                at_paragraph_break = true;
             }
             continue;
         }
@@ -3315,20 +3420,21 @@ fn make_excerpt(content: &str) -> Option<String> {
         if cleaned.is_empty() {
             continue;
         }
-        if !paragraph.is_empty() {
-            paragraph.push(' ');
+        if !excerpt.is_empty() {
+            excerpt.push(if at_paragraph_break { '\n' } else { ' ' });
         }
-        paragraph.push_str(cleaned);
-        if paragraph.chars().count() >= MAX_CHARS {
+        at_paragraph_break = false;
+        excerpt.push_str(cleaned);
+        if excerpt.chars().count() >= MAX_CHARS {
             break;
         }
     }
 
-    let paragraph = paragraph.trim();
-    if paragraph.is_empty() {
+    let excerpt = excerpt.trim();
+    if excerpt.is_empty() {
         return None;
     }
-    Some(truncate_chars(paragraph, MAX_CHARS))
+    Some(truncate_chars(excerpt, MAX_CHARS))
 }
 
 /// Block-level lines that carry no prose worth showing in a preview.
@@ -3841,7 +3947,18 @@ mod tests {
         let content = "---\ntitle: Demo\ntags: [a]\n---\n\n# Heading\n\nFirst **bold** paragraph with a [link](http://x).\n\nSecond paragraph.";
         assert_eq!(
             make_excerpt(content).as_deref(),
-            Some("First bold paragraph with a link.")
+            Some("First bold paragraph with a link.\nSecond paragraph.")
+        );
+    }
+
+    #[test]
+    fn excerpt_continues_past_short_opening_paragraph() {
+        // A one-line opener must not starve the preview: later paragraphs keep
+        // accumulating, separated by newlines, and headings in between are skipped.
+        let content = "Opening line.\n\n## Section\n\nSecond paragraph\nwraps here.\n\nThird paragraph.";
+        assert_eq!(
+            make_excerpt(content).as_deref(),
+            Some("Opening line.\nSecond paragraph wraps here.\nThird paragraph.")
         );
     }
 
@@ -3865,7 +3982,7 @@ mod tests {
         let long = "word ".repeat(200);
         let excerpt = make_excerpt(&long).expect("excerpt");
         assert!(excerpt.ends_with('…'));
-        assert!(excerpt.chars().count() <= 161);
+        assert!(excerpt.chars().count() <= 241);
     }
 
     #[test]
@@ -3896,5 +4013,26 @@ mod tests {
         assert!(!thumbnail_failure_is_retryable(Some(
             "failed to extract video frame with ffmpeg: Invalid data found when processing input"
         )));
+    }
+
+    #[test]
+    fn parses_ffprobe_duration_to_milliseconds() {
+        assert_eq!(parse_ffprobe_duration_ms("12.345\n"), Some(12345));
+        assert_eq!(parse_ffprobe_duration_ms("0"), Some(0));
+        assert_eq!(parse_ffprobe_duration_ms("65.0"), Some(65000));
+        assert_eq!(parse_ffprobe_duration_ms(""), None);
+        assert_eq!(parse_ffprobe_duration_ms("N/A"), None);
+        assert_eq!(parse_ffprobe_duration_ms("-1"), None);
+    }
+
+    #[test]
+    fn parses_ffmpeg_duration_metadata_line() {
+        let stderr = "Input #0, mov, from 'clip.mp4':\n  Duration: 00:01:05.12, start: 0.000000, bitrate: 1234 kb/s\n";
+        assert_eq!(parse_ffmpeg_duration_ms(stderr), Some(65120));
+        assert_eq!(
+            parse_ffmpeg_duration_ms("  Duration: 01:00:00.00, start: 0.000000\n"),
+            Some(3_600_000)
+        );
+        assert_eq!(parse_ffmpeg_duration_ms("Duration: N/A, start: 0.000000"), None);
     }
 }

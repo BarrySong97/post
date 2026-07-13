@@ -1,0 +1,1 @@
+ALTER TABLE `image_cache` ADD `video_duration_ms` integer;
