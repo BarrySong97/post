@@ -23,6 +23,7 @@
  */
 import type { SVGProps } from "react";
 import { Link } from "./ui";
+import { AgentSetupNote } from "./agent-setup-note";
 import { DOWNLOAD_URL, EXTENSION_DOWNLOAD_URL } from "../lib/seo";
 
 function LogosChromeWebStore(props: SVGProps<SVGSVGElement>) {
@@ -122,6 +123,7 @@ export function HeroSection() {
           Get the Chrome Extension
         </Link>
       </div>
+      <AgentSetupNote />
     </div>
   );
 }
