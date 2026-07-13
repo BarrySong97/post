@@ -20,10 +20,23 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.10",
+    date: "2026-07-13",
+    head: "Video card duration badges count down while hover preview plays.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Desktop",
+        items: [
+          "Hovering a video card now ticks the top-right duration badge down with remaining time, then restores the full duration when the pointer leaves.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.9",
     date: "2026-07-13",
     head: "Video duration badges backfill for assets that already had thumbnails.",
-    badge: "latest",
     groups: [
       {
         title: "Desktop",
