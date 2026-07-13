@@ -3,19 +3,21 @@
  * @role    App-level React component composed by routes, shell, or shared workflows.
  * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
  * @gotcha  Keep operational layouts dense and aligned with design.md icon and panel sizing rules.
- *          Language preference is stored under post.locale via changeAppLanguage.
+ *          Language preference is stored under post.locale via changeAppLanguage. Software Update
+ *          actions optimistically set updateStatusAtom so the button shows a spinner on the same click.
  */
 
 import { useMemo, useState } from "react";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Settings } from "lucide-react";
-import { Button, Input, ListBox, Select } from "@heroui/react";
+import { Button, Input, ListBox, Select, Spinner } from "@heroui/react";
 import { useTranslation } from "react-i18next";
 
 import { changeAppLanguage, getStoredLocalePreference, type AppLocale } from "@/i18n";
 import { readSidebarWidthPct, SIDEBAR_MIN_WIDTH_PX } from "@/lib/asset-manager/storage";
 import { isMacWindow } from "@/lib/platform";
+import { requestUpdateCheck, requestUpdateDownload } from "@/lib/updater-actions";
 import { updateStatusAtom } from "@/store/update-atoms";
 import type { UpdateStatusEvent } from "@shared/contracts/update/update.contract";
 
@@ -245,20 +247,25 @@ function SettingSelect({
 function GeneralSection() {
   const { t } = useTranslation();
   const updateStatus = useAtomValue(updateStatusAtom);
+  const setUpdateStatus = useSetAtom(updateStatusAtom);
   const [localePreference, setLocalePreference] = useState<AppLocale>(() =>
     getStoredLocalePreference(),
   );
   const updateButtonLabel = updateActionLabel(updateStatus, t);
   const updateButtonDisabled = isUpdateActionDisabled(updateStatus);
+  const updatePending =
+    updateStatus?.state === "checking" ||
+    updateStatus?.state === "downloading" ||
+    updateStatus?.state === "downloaded";
   const handleUpdateAction = () => {
     if (updateButtonDisabled) {
       return;
     }
     if (updateStatus?.state === "available") {
-      void window.api.updater.download();
+      void requestUpdateDownload(setUpdateStatus, updateStatus.version);
       return;
     }
-    void window.api.updater.check();
+    void requestUpdateCheck(setUpdateStatus);
   };
 
   return (
@@ -307,10 +314,11 @@ function GeneralSection() {
         <SettingRow title={t("settings.softwareUpdate")} desc={updateStatusNote(updateStatus, t)}>
           <Button
             size="sm"
-            className="h-8 rounded-lg px-3 text-[12.5px]"
+            className="h-8 min-w-24 gap-1.5 rounded-lg px-3 text-[12.5px]"
             isDisabled={updateButtonDisabled}
             onPress={handleUpdateAction}
           >
+            {updatePending ? <Spinner size="sm" color="current" /> : null}
             {updateButtonLabel}
           </Button>
         </SettingRow>

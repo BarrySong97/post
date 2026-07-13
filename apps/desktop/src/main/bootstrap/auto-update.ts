@@ -42,8 +42,10 @@ function registerHandlers(): void {
 }
 
 function registerInertHandlers(getWindow: GetWindow): void {
+  // Dev / unpackaged builds have no app-update.yml. Still emit status so the
+  // renderer's optimistic loading state is overwritten instead of hanging.
   ipcMain.handle("post:updater:check", () => emit(getWindow, { state: "not-available" }));
-  ipcMain.handle("post:updater:download", () => {});
+  ipcMain.handle("post:updater:download", () => emit(getWindow, { state: "not-available" }));
 }
 
 function hasPackagedUpdateMetadata(): boolean {

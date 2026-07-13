@@ -1,20 +1,23 @@
 /**
  * @purpose Show a top-center update toast that mirrors GlobalToast visuals and updates in place.
  * @role    AppShell-mounted surface driven by updateStatusAtom (not the generic toast queue).
- * @deps    Jotai update atom, TanStack Router, motion, lucide icons, preload updater bridge.
+ * @deps    Jotai update atom, TanStack Router, motion, HeroUI Button/Spinner, lucide icons, updater actions.
  * @gotcha  Must stay DOM-after AppLayout. Fixed shell is window-drag (empty no-drag shells punch a
  *          dead zone through top chrome); the card itself is window-no-drag so actions stay clickable.
- *          Suppressed on /settings where the Software Update row is inline.
+ *          Suppressed on /settings where the Software Update row is inline. Download clicks optimistically
+ *          flip the atom to downloading so the toast reacts before the first progress IPC event.
  */
 
 import { useState } from "react";
-import { useAtomValue } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { useRouterState } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "motion/react";
+import { Button, Spinner } from "@heroui/react";
 import { Info, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { TOAST_ENTER_MS } from "@/lib/toast";
+import { requestUpdateDownload } from "@/lib/updater-actions";
 import { updateStatusAtom } from "@/store/update-atoms";
 import type { UpdateStatusEvent } from "@shared/contracts/update/update.contract";
 
@@ -65,6 +68,7 @@ function isUpdateToastState(status: UpdateStatusEvent | null): status is UpdateS
 export function UpdateToast() {
   const { t } = useTranslation();
   const status = useAtomValue(updateStatusAtom);
+  const setUpdateStatus = useSetAtom(updateStatusAtom);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
 
@@ -74,6 +78,7 @@ export function UpdateToast() {
   const dismissed = dismissedKey === versionKey;
   const visible = !onSettings && active && !dismissed;
   const copy = active ? updateToastCopy(status, t) : null;
+  const isDownloading = status?.state === "downloading";
 
   return (
     // Shell is window-drag so an empty fixed layer does not punch a no-drag hole over chrome.
@@ -96,23 +101,31 @@ export function UpdateToast() {
                 {copy.description}
               </div>
             </div>
-            {copy.actionLabel ? (
-              <button
-                type="button"
-                className="window-no-drag h-7 shrink-0 rounded-md bg-zinc-950 px-2.5 text-[12px] font-semibold text-white transition-colors hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
-                onClick={() => void window.api.updater.download()}
+            {copy.actionLabel || isDownloading ? (
+              <Button
+                size="sm"
+                className="window-no-drag h-7 min-w-14 shrink-0 rounded-md bg-zinc-950 px-2.5 text-[12px] font-semibold text-white hover:bg-zinc-800"
+                isDisabled={isDownloading}
+                onPress={() => {
+                  if (isDownloading) {
+                    return;
+                  }
+                  void requestUpdateDownload(setUpdateStatus, status.version);
+                }}
               >
-                {copy.actionLabel}
-              </button>
+                {isDownloading ? <Spinner size="sm" color="current" /> : copy.actionLabel}
+              </Button>
             ) : null}
-            <button
-              type="button"
+            <Button
+              isIconOnly
+              size="sm"
+              variant="ghost"
               aria-label={t("common.closeNotification")}
-              className="window-no-drag grid h-6 w-6 shrink-0 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/25"
-              onClick={() => setDismissedKey(versionKey)}
+              className="window-no-drag h-6 w-6 min-w-6 shrink-0 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+              onPress={() => setDismissedKey(versionKey)}
             >
               <X aria-hidden="true" size={13} />
-            </button>
+            </Button>
           </motion.div>
         ) : null}
       </AnimatePresence>
