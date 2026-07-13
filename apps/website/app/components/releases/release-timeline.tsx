@@ -20,10 +20,29 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.11",
+    date: "2026-07-13",
+    head: "Chrome extension download button on the website, and Desktop now wires itself up to talk to it automatically.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Website",
+        items: [
+          "Added a Get the Chrome Extension button next to Download Post in the hero and footer, linking to the Chrome Web Store listing.",
+        ],
+      },
+      {
+        title: "Desktop",
+        items: [
+          "Packaged installs now register the extension's native messaging bridge automatically on launch, so Desktop and the published Chrome extension can talk to each other without any manual setup.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.10",
     date: "2026-07-13",
     head: "Video card duration badges count down while hover preview plays.",
-    badge: "latest",
     groups: [
       {
         title: "Desktop",
