@@ -5,5 +5,6 @@
  *          tokens here. Button corner radius is set in app/components/ui.tsx (rounded-lg, matching
  *          the desktop product), not here — a global .button override loses to HeroUI's own layer. */
 @import "@post/ui/theme.css";
+@plugin "@tailwindcss/typography";
 
 @source "../../../packages/**/*.{ts,tsx}";

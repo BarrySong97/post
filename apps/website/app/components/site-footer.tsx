@@ -22,6 +22,7 @@ const FOOTER = [
     title: "[Resources]",
     links: [
       { label: "Docs", href: "#faq" },
+      { label: "Blog", href: "/blog" },
       { label: "Changelog", href: "/releases" },
       { label: "Guide", href: "#faq" },
     ],

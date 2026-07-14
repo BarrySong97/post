@@ -22,11 +22,9 @@ import { Link } from "./ui";
 import { DOWNLOAD_URL } from "../lib/seo";
 
 const NAV_LINKS = [
-  { label: "Features", href: "#features" },
-  { label: "Docs", href: "#faq" },
   { label: "Roadmap", href: "#roadmap" },
+  { label: "Blog", href: "/blog" },
   { label: "Changelog", href: "/releases" },
-  { label: "Download", href: DOWNLOAD_URL },
 ];
 
 const NAV_LINK = "text-xs text-foreground/60 transition-colors hover:text-foreground";

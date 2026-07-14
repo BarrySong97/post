@@ -2,6 +2,12 @@
 /.next/
 /out/
 
+# Velite (generated content)
+/.velite/
+
+# Local env (R2 credentials for the image pipeline)
+.env
+
 # TypeScript
 next-env.d.ts
 *.tsbuildinfo

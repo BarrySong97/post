@@ -9,6 +9,7 @@
     "dist_chrome_prod",
     "build",
     ".next",
+    ".velite",
     "out",
     "coverage",
     ".turbo",
