@@ -20,10 +20,36 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.12",
+    date: "2026-07-15",
+    head: "A new MDX blog, higher-fidelity X Post capture, and newest-added-first asset browsing.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Website",
+        items: [
+          "Added a statically generated MDX blog with article pages, table of contents, sitemap entries, and an image optimization pipeline for R2-hosted media.",
+        ],
+      },
+      {
+        title: "Desktop",
+        items: [
+          "The asset board, saved views, and live CLI filters now default to newest added first, with separate added, modified, and source-created date sorts.",
+          "X Post cards now show the captured author profile photo and retain the existing author-initial fallback when an image is missing or unavailable.",
+        ],
+      },
+      {
+        title: "Extension",
+        items: [
+          "X Post capture expands visible Show more text and resolves complete long-form Note content from provider metadata or server-rendered records, while preserving a partial warning when no complete source is available.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.11",
     date: "2026-07-13",
     head: "Chrome extension download button on the website, and Desktop now wires itself up to talk to it automatically.",
-    badge: "latest",
     groups: [
       {
         title: "Website",
