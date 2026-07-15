@@ -222,6 +222,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     platform: asset.post?.platform,
     authorName: asset.post?.authorName ?? undefined,
     authorHandle: asset.post?.authorHandle ?? undefined,
+    authorAvatarUrl: asset.post?.authorAvatarUrl ?? undefined,
     publishedTime: formatPostDate(asset.post?.publishedAt),
     url: asset.post?.canonicalUrl ?? asset.web?.url ?? undefined,
     domain:

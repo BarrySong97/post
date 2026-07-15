@@ -61,6 +61,7 @@ describe("mapIndexedAsset post attribution", () => {
           platform: "x",
           authorName: "Andrej Karpathy",
           authorHandle: "@karpathy",
+          authorAvatarUrl: "https://pbs.twimg.com/profile_images/123/karpathy_normal.jpg",
           canonicalUrl: "https://x.com/karpathy/status/123",
           publishedAt: "2026-03-12T08:00:00.000Z",
         },
@@ -70,6 +71,9 @@ describe("mapIndexedAsset post attribution", () => {
     expect(asset.platform).toBe("x");
     expect(asset.authorHandle).toBe("@karpathy");
     expect(asset.authorName).toBe("Andrej Karpathy");
+    expect(asset.authorAvatarUrl).toBe(
+      "https://pbs.twimg.com/profile_images/123/karpathy_normal.jpg",
+    );
     expect(asset.url).toBe("https://x.com/karpathy/status/123");
     expect(asset.domain).toBe("x.com");
     expect(asset.publishedTime).toBeTruthy();
@@ -80,6 +84,7 @@ describe("mapIndexedAsset post attribution", () => {
 
     expect(asset.platform).toBeUndefined();
     expect(asset.authorHandle).toBeUndefined();
+    expect(asset.authorAvatarUrl).toBeUndefined();
     expect(asset.domain).toBeUndefined();
     expect(asset.publishedTime).toBeUndefined();
   });

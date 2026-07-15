@@ -94,7 +94,9 @@ export const extensionVideoSaveMessageSchema = z.object({
 const twitterPostVisibleSnapshotSchema = z.object({
   authorName: z.string().optional(),
   authorHandle: z.string().optional(),
+  authorAvatarUrl: z.string().url().optional(),
   text: z.string().optional(),
+  textTruncated: z.boolean().optional(),
   publishedAt: z.string().optional(),
   language: z.string().optional(),
   mediaUrls: z.array(z.string().url()).optional(),

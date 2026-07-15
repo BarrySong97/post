@@ -17,6 +17,7 @@ const post: ResolvedTwitterPost = {
   text: "Updated post text",
   authorName: "Example",
   authorHandle: "example",
+  authorAvatarUrl: "https://pbs.twimg.com/profile_images/123/example_normal.jpg",
   publishedAt: new Date("2026-07-09T07:44:28.000Z"),
   capturedAt: new Date("2026-07-10T00:00:00.000Z"),
   media: [],
@@ -47,6 +48,9 @@ My private note.
     expect(result).not.toContain("Old generated text");
     expect(result).toContain("My private note.");
     expect(result).toContain("capture_status: complete");
+    expect(result).toContain(
+      "author_avatar_url: https://pbs.twimg.com/profile_images/123/example_normal.jpg",
+    );
   });
 
   it("records partial capture warnings in frontmatter and generated content", () => {

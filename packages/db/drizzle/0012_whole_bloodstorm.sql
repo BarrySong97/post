@@ -1,0 +1,1 @@
+ALTER TABLE `post_cache` ADD `author_avatar_url` text;

@@ -161,7 +161,9 @@ type TwitterPostContextResponse =
         visibleSnapshot: {
           authorName?: string;
           authorHandle?: string;
+          authorAvatarUrl?: string;
           text?: string;
+          textTruncated?: boolean;
           publishedAt?: string;
           language?: string;
           mediaUrls?: string[];

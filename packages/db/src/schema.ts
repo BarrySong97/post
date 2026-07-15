@@ -352,6 +352,7 @@ export const postCache = sqliteTable(
     text: text("text").notNull(),
     authorName: text("author_name"),
     authorHandle: text("author_handle"),
+    authorAvatarUrl: text("author_avatar_url"),
     publishedAt: integer("published_at", { mode: "timestamp_ms" }),
     capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull(),
     language: text("language"),

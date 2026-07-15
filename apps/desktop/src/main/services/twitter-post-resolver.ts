@@ -1,16 +1,20 @@
 /**
  * @purpose Resolve normalized X/Twitter post content for browser-extension imports.
  * @role    Metadata adapter that merges public syndication data with a visible-page fallback snapshot.
- * @deps    Global fetch and twitter-video-resolver variant parsing.
- * @gotcha  The syndication response is undocumented; keep parsing defensive and persist only normalized fields.
+ * @deps    Node Buffer, global fetch, and twitter-video-resolver variant parsing.
+ * @gotcha  Syndication can expose only a Note ID; resolve that exact note from the public page's server-rendered records before falling back.
  */
+
+import { Buffer } from "node:buffer";
 
 import { getTwitterSyndicationToken, parseTwitterVideoVariants } from "./twitter-video-resolver";
 
 export type TwitterPostVisibleSnapshot = {
   authorName?: string;
   authorHandle?: string;
+  authorAvatarUrl?: string;
   text?: string;
+  textTruncated?: boolean;
   publishedAt?: string;
   language?: string;
   mediaUrls?: string[];
@@ -51,6 +55,7 @@ export type ResolvedTwitterPost = {
   text: string;
   authorName?: string;
   authorHandle?: string;
+  authorAvatarUrl?: string;
   publishedAt?: Date;
   capturedAt: Date;
   language?: string;
@@ -111,14 +116,154 @@ function canonicalPostUrl(handle: string | undefined, postId: string, fallback: 
   }
 }
 
-function readDisplayText(payload: Record<string, unknown>) {
-  const text = readString(payload, "text", "full_text") ?? "";
+type ProviderText = {
+  text: string;
+  complete: boolean;
+};
+
+function applyDisplayTextRange(text: string, payload: Record<string, unknown>) {
   const range = payload.display_text_range;
   if (Array.isArray(range) && typeof range[0] === "number" && typeof range[1] === "number") {
     return text.slice(range[0], range[1]).trim();
   }
 
   return text.trim();
+}
+
+function recordAtPath(payload: Record<string, unknown>, keys: readonly string[]) {
+  let current = payload;
+  for (const key of keys) {
+    const next = current[key];
+    if (!isRecord(next)) {
+      return undefined;
+    }
+    current = next;
+  }
+  return current;
+}
+
+function readProviderText(payload: Record<string, unknown>): ProviderText {
+  const completeContainers = [
+    recordAtPath(payload, ["note_tweet", "note_tweet_results", "result"]),
+    recordAtPath(payload, ["note_tweet", "result"]),
+    recordAtPath(payload, ["note_tweet"]),
+    recordAtPath(payload, ["note_tweet_results", "result"]),
+    recordAtPath(payload, ["note_tweet_results"]),
+    recordAtPath(payload, ["extended_tweet"]),
+  ];
+  for (const container of completeContainers) {
+    if (!container) {
+      continue;
+    }
+    const text = readString(container, "full_text", "text");
+    if (text) {
+      return { text: applyDisplayTextRange(text, container), complete: true };
+    }
+  }
+
+  const fullText = readString(payload, "full_text");
+  if (fullText) {
+    return { text: applyDisplayTextRange(fullText, payload), complete: true };
+  }
+
+  const text = readString(payload, "text") ?? "";
+  return {
+    text: applyDisplayTextRange(text, payload),
+    complete: Boolean(text) && payload.truncated === false,
+  };
+}
+
+function choosePostText(providerText: ProviderText, snapshot?: TwitterPostVisibleSnapshot) {
+  const visibleText = snapshot?.text?.trim() ?? "";
+  if (!providerText.text) {
+    return visibleText;
+  }
+  if (!visibleText) {
+    return providerText.text;
+  }
+
+  const visibleTextIsComplete = snapshot?.textTruncated === false;
+  const visibleTextCanCompleteProvider = !providerText.complete && snapshot?.textTruncated !== true;
+  if (
+    visibleText.length > providerText.text.length &&
+    (visibleTextIsComplete || visibleTextCanCompleteProvider)
+  ) {
+    return visibleText;
+  }
+
+  return providerText.text;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readServerRenderedString(html: string, recordKey: string, field: string) {
+  const record = escapeRegExp(JSON.stringify(recordKey));
+  const fieldName = escapeRegExp(field);
+  const match = html.match(
+    new RegExp(`${record}:\\$R\\[\\d+\\]=\\{[\\s\\S]{0,8192}?${fieldName}:("(?:\\\\.|[^"\\\\])*")`),
+  );
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  try {
+    const value: unknown = JSON.parse(match[1]);
+    return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function noteTweetIdFromResultId(resultId: string | undefined) {
+  if (!resultId) {
+    return undefined;
+  }
+  try {
+    const decoded = Buffer.from(resultId, "base64").toString("utf8");
+    const prefix = "NoteTweetResults:";
+    return decoded.startsWith(prefix) ? decoded.slice(prefix.length) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function parseTwitterServerRenderedText(
+  html: string,
+  postId: string,
+  noteTweetResultId?: string,
+) {
+  const noteTweetId = noteTweetIdFromResultId(noteTweetResultId);
+  if (noteTweetId) {
+    const noteRecordKey = Buffer.from(`NoteTweet:${noteTweetId}`).toString("base64");
+    return readServerRenderedString(html, noteRecordKey, "text");
+  }
+
+  const tweetRecordKey = Buffer.from(`Tweet:${postId}`).toString("base64");
+  return readServerRenderedString(html, `client:${tweetRecordKey}:details`, "full_text");
+}
+
+function selectedPayload(rawPayload: unknown) {
+  const outer = isRecord(rawPayload) ? rawPayload : {};
+  return isRecord(outer.retweeted_status) ? outer.retweeted_status : outer;
+}
+
+function addServerRenderedText(rawPayload: unknown, text: string) {
+  if (!isRecord(rawPayload)) {
+    return rawPayload;
+  }
+
+  const addText = (payload: Record<string, unknown>) => ({
+    ...payload,
+    note_tweet: {
+      ...(isRecord(payload.note_tweet) ? payload.note_tweet : {}),
+      text,
+    },
+  });
+  return isRecord(rawPayload.retweeted_status)
+    ? { ...rawPayload, retweeted_status: addText(rawPayload.retweeted_status) }
+    : addText(rawPayload);
 }
 
 function normalizeImageUrl(rawUrl: string) {
@@ -215,7 +360,7 @@ function parseQuotedPost(payload: Record<string, unknown>, snapshot?: TwitterPos
     url: postId ? canonicalPostUrl(authorHandle, postId, snapshot?.quotedPostUrl ?? "") : undefined,
     authorName: readString(user, "name"),
     authorHandle,
-    text: readDisplayText(value),
+    text: readProviderText(value).text,
   } satisfies TwitterQuotedPost;
 }
 
@@ -306,7 +451,10 @@ export function parseTwitterPostPayload(
   const postId = readString(payload, "id_str", "rest_id") ?? input.postId;
   const authorName = readString(user, "name") ?? snapshot?.authorName;
   const authorHandle = readString(user, "screen_name") ?? snapshot?.authorHandle?.replace(/^@/, "");
-  const text = readDisplayText(payload) || snapshot?.text?.trim() || "";
+  const authorAvatarUrl =
+    readString(user, "profile_image_url_https", "profile_image_url") ?? snapshot?.authorAvatarUrl;
+  const providerText = readProviderText(payload);
+  const text = choosePostText(providerText, snapshot);
   const media = parseMedia(payload, snapshot);
   const quotedPost = parseQuotedPost(payload, snapshot);
   const replyToPostId =
@@ -320,6 +468,14 @@ export function parseTwitterPostPayload(
   if (!isRecord(rawPayload)) {
     warnings.push("Public X metadata was unavailable; saved from the visible page snapshot.");
   }
+  const noteTweet = recordAtPath(payload, ["note_tweet"]);
+  const hasUnresolvedNote = Boolean(noteTweet && readString(noteTweet, "id"));
+  if (
+    !providerText.complete &&
+    (payload.truncated === true || snapshot?.textTruncated === true || hasUnresolvedNote)
+  ) {
+    warnings.push("X post text may be truncated because the complete text was unavailable.");
+  }
   if (!text && media.length === 0 && !quotedPost) {
     throw new Error("No meaningful post content could be captured.");
   }
@@ -331,6 +487,7 @@ export function parseTwitterPostPayload(
     text,
     authorName,
     authorHandle,
+    authorAvatarUrl,
     publishedAt: asDate(readString(payload, "created_at") ?? snapshot?.publishedAt),
     capturedAt: new Date(input.capturedAt ?? Date.now()),
     language: readString(payload, "lang") ?? snapshot?.language,
@@ -374,6 +531,37 @@ export async function resolveTwitterPost(
     }
   } catch {
     payload = undefined;
+  }
+
+  const payloadRecord = selectedPayload(payload);
+  const providerText = readProviderText(payloadRecord);
+  const noteTweet = recordAtPath(payloadRecord, ["note_tweet"]);
+  const noteTweetResultId = noteTweet ? readString(noteTweet, "id") : undefined;
+  const needsPageText =
+    !providerText.complete && (Boolean(noteTweetResultId) || payloadRecord.truncated === true);
+  if (needsPageText) {
+    try {
+      const response = await fetchImpl(input.canonicalUrl, {
+        headers: {
+          Accept: "text/html,application/xhtml+xml",
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        },
+        redirect: "follow",
+      });
+      if (response.ok) {
+        const pageText = parseTwitterServerRenderedText(
+          await response.text(),
+          input.postId,
+          noteTweetResultId,
+        );
+        if (pageText && pageText.length > providerText.text.length) {
+          payload = addServerRenderedText(payload, pageText);
+        }
+      }
+    } catch {
+      // Keep the syndication and visible-page fallbacks below.
+    }
   }
 
   return parseTwitterPostPayload(payload, input);

@@ -28,7 +28,7 @@ const POST_DIR = "assets/web-clips/posts";
 const POST_MEDIA_DIR = "assets/web-clips/media";
 const GENERATED_START = "<!-- post:generated:start -->";
 const GENERATED_END = "<!-- post:generated:end -->";
-const POST_SCHEMA_VERSION = 1;
+const POST_SCHEMA_VERSION = 2;
 
 export type SaveExtensionPostInput = {
   postId: string;
@@ -241,6 +241,7 @@ export function mergePostMarkdown(
     source_url: post.canonicalUrl,
     author_name: post.authorName ?? null,
     author_handle: post.authorHandle ?? null,
+    author_avatar_url: post.authorAvatarUrl ?? null,
     published_at: post.publishedAt?.toISOString() ?? null,
     captured_at: post.capturedAt.toISOString(),
     language: post.language ?? null,
@@ -560,6 +561,7 @@ export async function saveExtensionPost(
         text: post.text,
         authorName: post.authorName ?? null,
         authorHandle: post.authorHandle ?? null,
+        authorAvatarUrl: post.authorAvatarUrl ?? null,
         publishedAt: post.publishedAt ?? null,
         capturedAt: post.capturedAt,
         language: post.language ?? null,

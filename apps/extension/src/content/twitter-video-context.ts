@@ -2,7 +2,7 @@
  * @purpose Capture Twitter/X post and video context near the user's right-click target.
  * @role    Content script that extracts visible post metadata and video candidates for the background worker.
  * @deps    DOM and Chrome runtime messaging APIs.
- * @gotcha  Twitter/X often renders videos as blob: URLs; only observed MP4/HLS candidates are saved.
+ * @gotcha  X can collapse long text and render videos as blob: URLs; post capture expands text first and video capture saves observed direct candidates.
  */
 
 type TwitterVideoContext = {
@@ -24,7 +24,9 @@ type TwitterPostContext = {
   visibleSnapshot: {
     authorName?: string;
     authorHandle?: string;
+    authorAvatarUrl?: string;
     text?: string;
+    textTruncated?: boolean;
     publishedAt?: string;
     language?: string;
     mediaUrls?: string[];
@@ -36,6 +38,12 @@ type TwitterPostContext = {
 const VIDEO_CANDIDATE_LIMIT = 12;
 const TWITTER_VIDEO_HOST_RE = /(^|\.)video\.twimg\.com$/i;
 const TWEET_PATH_RE = /\/[^/]+\/status\/(\d+)/;
+const TWEET_TEXT_SELECTOR = "[data-testid='tweetText']";
+const TWEET_TEXT_EXPANDER_SELECTOR = "[data-testid='tweet-text-show-more-link']";
+const TWEET_TEXT_EXPANSION_TIMEOUT_MS = 1_500;
+const TWEET_TEXT_EXPANSION_POLL_MS = 50;
+const SHOW_MORE_TEXT_RE =
+  /^(show more|显示更多|顯示更多|もっと見る|더 보기|afficher plus|mostrar más|mostrar mais|mehr anzeigen|mostra altro)$/i;
 
 let lastContext: TwitterVideoContext | null = null;
 let lastPostContext: TwitterPostContext | null = null;
@@ -113,6 +121,113 @@ function findCurrentTweetArticle(tweetId: string) {
   );
 }
 
+function tweetTextElement(article: Element) {
+  return article.querySelector<HTMLElement>(TWEET_TEXT_SELECTOR);
+}
+
+function tweetTextExpander(article: Element) {
+  const textElement = tweetTextElement(article);
+  const semanticExpander = Array.from(
+    article.querySelectorAll<HTMLElement>(TWEET_TEXT_EXPANDER_SELECTOR),
+  ).find((element) => {
+    const ownerText = element.closest(TWEET_TEXT_SELECTOR);
+    return !ownerText || ownerText === textElement;
+  });
+  if (semanticExpander) {
+    return semanticExpander;
+  }
+
+  return Array.from(article.querySelectorAll<HTMLElement>("button, [role='button'], a")).find(
+    (element) => {
+      const ownerText = element.closest(TWEET_TEXT_SELECTOR);
+      if (ownerText && ownerText !== textElement) {
+        return false;
+      }
+      return SHOW_MORE_TEXT_RE.test(
+        (element.getAttribute("aria-label") ?? element.textContent ?? "").trim(),
+      );
+    },
+  );
+}
+
+function readTweetText(article: Element) {
+  const textElement = tweetTextElement(article);
+  if (!textElement) {
+    return undefined;
+  }
+
+  const clone = textElement.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll(TWEET_TEXT_EXPANDER_SELECTOR).forEach((element) => element.remove());
+  for (const element of Array.from(
+    clone.querySelectorAll<HTMLElement>("button, [role='button'], a"),
+  )) {
+    const label = (element.getAttribute("aria-label") ?? element.textContent ?? "").trim();
+    if (SHOW_MORE_TEXT_RE.test(label)) {
+      element.remove();
+    }
+  }
+
+  return (clone.innerText || clone.textContent || "").trim() || undefined;
+}
+
+function authorAvatarUrl(article: Element) {
+  const semanticImage = article.querySelector<HTMLImageElement>(
+    "[data-testid='Tweet-User-Avatar'] img[src]",
+  );
+  const image =
+    semanticImage ??
+    Array.from(article.querySelectorAll<HTMLImageElement>("img[src]")).find((candidate) => {
+      try {
+        const url = new URL(candidate.currentSrc || candidate.src);
+        return (
+          (url.hostname === "pbs.twimg.com" || url.hostname.endsWith(".pbs.twimg.com")) &&
+          url.pathname.includes("/profile_images/")
+        );
+      } catch {
+        return false;
+      }
+    });
+
+  return image?.currentSrc || image?.src || undefined;
+}
+
+function waitForTweetTextExpansion(postId: string, previousText: string | undefined) {
+  return new Promise<boolean>((resolve) => {
+    const startedAt = Date.now();
+    const poll = () => {
+      const currentArticle = findCurrentTweetArticle(postId);
+      const currentText = currentArticle ? readTweetText(currentArticle) : undefined;
+      const expanded = Boolean(
+        currentArticle &&
+        (!tweetTextExpander(currentArticle) ||
+          (currentText?.length ?? 0) > (previousText?.length ?? 0)),
+      );
+      if (expanded || Date.now() - startedAt >= TWEET_TEXT_EXPANSION_TIMEOUT_MS) {
+        resolve(expanded);
+        return;
+      }
+      window.setTimeout(poll, TWEET_TEXT_EXPANSION_POLL_MS);
+    };
+    poll();
+  });
+}
+
+async function expandTweetText(postId: string) {
+  const article = findCurrentTweetArticle(postId);
+  if (!article) {
+    return false;
+  }
+
+  const expander = tweetTextExpander(article);
+  if (!expander) {
+    return true;
+  }
+
+  const previousText = readTweetText(article);
+  expander.click();
+  return waitForTweetTextExpansion(postId, previousText);
+}
+
 function buildPostContext(article: Element, tweetUrl: URL): TwitterPostContext | null {
   const match = tweetUrl.pathname.match(TWEET_PATH_RE);
   const postId = match?.[1];
@@ -120,13 +235,12 @@ function buildPostContext(article: Element, tweetUrl: URL): TwitterPostContext |
     return null;
   }
 
-  const text = article.querySelector<HTMLElement>("[data-testid='tweetText']")?.innerText.trim();
+  const text = readTweetText(article);
   const userName = article.querySelector<HTMLElement>("[data-testid='User-Name']");
   const authorName = userName?.querySelector<HTMLElement>("span")?.textContent?.trim();
   const authorHandle = match?.[0]?.split("/")[1];
   const publishedAt = article.querySelector<HTMLTimeElement>("time[datetime]")?.dateTime;
-  const language =
-    article.querySelector<HTMLElement>("[data-testid='tweetText']")?.lang || undefined;
+  const language = tweetTextElement(article)?.lang || undefined;
   const mediaUrls = unique(
     Array.from(article.querySelectorAll<HTMLImageElement>("img[src]"))
       .map((image) => image.currentSrc || image.src)
@@ -158,7 +272,9 @@ function buildPostContext(article: Element, tweetUrl: URL): TwitterPostContext |
     visibleSnapshot: {
       authorName,
       authorHandle,
+      authorAvatarUrl: authorAvatarUrl(article),
       text,
+      textTruncated: Boolean(tweetTextExpander(article)),
       publishedAt,
       language,
       mediaUrls,
@@ -185,6 +301,38 @@ function postContextFromEvent(event: MouseEvent) {
   const article = closestTweetArticle(target);
   const tweetUrl = article ? tweetLinkFromArticle(article) : null;
   return article && tweetUrl ? buildPostContext(article, tweetUrl) : postContextFromCurrentPage();
+}
+
+async function postContextForSave() {
+  const captured = lastPostContext ?? postContextFromCurrentPage();
+  if (!captured) {
+    return null;
+  }
+
+  const expanded = await expandTweetText(captured.postId);
+  const article = findCurrentTweetArticle(captured.postId);
+  if (!article) {
+    return {
+      ...captured,
+      visibleSnapshot: {
+        ...captured.visibleSnapshot,
+        textTruncated: captured.visibleSnapshot.textTruncated || !expanded,
+      },
+    };
+  }
+
+  const refreshed = buildPostContext(article, new URL(captured.canonicalUrl));
+  if (!refreshed) {
+    return captured;
+  }
+
+  return {
+    ...refreshed,
+    visibleSnapshot: {
+      ...refreshed.visibleSnapshot,
+      textTruncated: !expanded,
+    },
+  };
 }
 
 function findVideoForEvent(event: MouseEvent, target: Element) {
@@ -313,9 +461,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (type === "post.twitterPostContext.get") {
-    const context = lastPostContext ?? postContextFromCurrentPage();
-    sendResponse({ ok: Boolean(context), context });
-    return false;
+    void postContextForSave()
+      .then((context) => sendResponse({ ok: Boolean(context), context }))
+      .catch(() => sendResponse({ ok: false, context: null }));
+    return true;
   }
 
   return false;

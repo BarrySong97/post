@@ -895,9 +895,10 @@ function PostBrandGlyph({ platform, size = 13 }: { platform?: string; size?: num
   return <MessageSquareQuote size={size} aria-hidden />;
 }
 
-// Small round author avatar. Real profile photos are not captured yet, so this renders
-// an initial on an author-derived color. The platform marker lives at the card corner.
+// Small round author avatar. Remote profile photos fall back to an author-derived initial
+// when absent or unavailable. The platform marker lives at the card corner.
 function AssetCardAvatar({ asset }: { asset: Asset }) {
+  const [imageFailed, setImageFailed] = useState(false);
   const seed = asset.authorHandle ?? asset.authorName ?? asset.platform ?? "post";
   const initial =
     (asset.authorName ?? asset.authorHandle ?? "")
@@ -905,6 +906,22 @@ function AssetCardAvatar({ asset }: { asset: Asset }) {
       .trim()
       .charAt(0)
       .toUpperCase() || "·";
+
+  useEffect(() => setImageFailed(false), [asset.authorAvatarUrl]);
+
+  if (asset.authorAvatarUrl && !imageFailed) {
+    return (
+      <img
+        src={asset.authorAvatarUrl}
+        alt=""
+        className="h-5 w-5 shrink-0 rounded-full bg-zinc-100 object-cover"
+        loading="lazy"
+        draggable={false}
+        referrerPolicy="no-referrer"
+        onError={() => setImageFailed(true)}
+      />
+    );
+  }
 
   return (
     <span

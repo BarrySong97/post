@@ -69,6 +69,7 @@ export type Asset = {
   platform?: string;
   authorName?: string;
   authorHandle?: string;
+  authorAvatarUrl?: string;
   publishedTime?: string;
 };
 

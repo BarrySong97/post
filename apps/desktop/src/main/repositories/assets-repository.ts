@@ -267,6 +267,7 @@ export function attachRelations(rows: AssetJoinedRow[]) {
           platform: row.post.platform,
           authorName: row.post.authorName,
           authorHandle: row.post.authorHandle,
+          authorAvatarUrl: row.post.authorAvatarUrl,
           canonicalUrl: row.post.canonicalUrl,
           publishedAt: row.post.publishedAt,
         }
