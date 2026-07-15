@@ -5,7 +5,7 @@
  * @gotcha  Skip vault-internal sources and hidden path segments; refresh only copied relative paths.
  */
 
-import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
+import { copyFile, mkdir, readdir, stat, utimes } from "node:fs/promises";
 import path from "node:path";
 
 import { backgroundTaskManager } from "../background-tasks";
@@ -173,7 +173,11 @@ async function copyOneFile(
     );
     const absoluteDest = path.join(vaultRoot, relativePath);
     await mkdir(path.dirname(absoluteDest), { recursive: true });
+    const sourceStat = await stat(sourceAbsolute);
     await copyFile(sourceAbsolute, absoluteDest);
+    // Preserve the source file's mtime so "Date Modified" sort stays consistent whether
+    // a file was dropped onto the app window or picked up in place by the vault watcher.
+    await utimes(absoluteDest, sourceStat.atime, sourceStat.mtime);
     counters.imported += 1;
     counters.relativePaths.push(relativePath);
   } catch {

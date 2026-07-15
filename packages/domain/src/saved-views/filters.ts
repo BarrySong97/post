@@ -26,6 +26,8 @@ export const assetListStatusFilterValues = [
   "archived",
 ] as const;
 export const assetListSortValues = [
+  "added_desc",
+  "added_asc",
   "updated_desc",
   "updated_asc",
   "created_desc",
@@ -182,8 +184,8 @@ export function serializeSavedViewSort(sort: AssetListSort): string {
 export function parseSavedViewSort(sortJson: string): AssetListSort {
   try {
     const value = JSON.parse(sortJson) as { sort?: unknown };
-    return isAssetListSort(value.sort) ? value.sort : "updated_desc";
+    return isAssetListSort(value.sort) ? value.sort : "added_desc";
   } catch {
-    return "updated_desc";
+    return "added_desc";
   }
 }

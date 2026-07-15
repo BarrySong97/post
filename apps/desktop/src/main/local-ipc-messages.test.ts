@@ -25,7 +25,7 @@ describe("commandMessageSchema", () => {
       expect(result.filters.types).toEqual(["image"]);
       expect(result.filters.match).toBe("and");
       expect(result.filters.tagIds).toEqual([]);
-      expect(result.sort).toBe("updated_desc");
+      expect(result.sort).toBe("added_desc");
     }
   });
 

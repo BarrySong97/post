@@ -231,6 +231,8 @@
     "statusInbox": "Inbox",
     "statusDraft": "Draft",
     "statusPublished": "Published",
+    "sortAddedDesc": "Date added · newest",
+    "sortAddedAsc": "Date added · oldest",
     "sortUpdatedDesc": "Updated · newest",
     "sortUpdatedAsc": "Updated · oldest",
     "sortCreatedDesc": "Created · newest",

@@ -34,7 +34,7 @@ export const savedViewInputSchema = z.object({
   name: z.string().trim().min(1).max(SAVED_VIEW_NAME_MAX_LENGTH),
   icon: z.string().trim().max(SAVED_VIEW_ICON_MAX_LENGTH).optional(),
   filters: savedViewFiltersInputSchema,
-  sort: assetListSortInputSchema.default("updated_desc"),
+  sort: assetListSortInputSchema.default("added_desc"),
 });
 
 export const updateSavedViewInputSchema = savedViewInputSchema.extend({

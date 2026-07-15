@@ -31,6 +31,8 @@ export const assetListStatusFilterValues = [
   "archived",
 ] as const;
 export const assetListSortValues = [
+  "added_desc",
+  "added_asc",
   "updated_desc",
   "updated_asc",
   "created_desc",

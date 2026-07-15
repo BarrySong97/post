@@ -237,7 +237,7 @@ export function getActiveFilterCount(filters: AssetFilterState) {
     filters.sources.length +
     (filters.time !== "any" ? 1 : 0) +
     (filters.status !== "any" ? 1 : 0) +
-    (filters.sort !== "updated_desc" ? 1 : 0)
+    (filters.sort !== "added_desc" ? 1 : 0)
   );
 }
 

@@ -1356,7 +1356,7 @@ function getActiveFilterChips(
           },
         ]
       : []),
-    ...(filters.sort !== "updated_desc"
+    ...(filters.sort !== "added_desc"
       ? [
           {
             key: "sort",
@@ -1424,7 +1424,7 @@ function AssetActiveFilterSummary({
       }
 
       if (chip.group === "sort") {
-        return { ...accFilters, sort: "updated_desc" };
+        return { ...accFilters, sort: "added_desc" };
       }
 
       return { ...accFilters, status: "any" };

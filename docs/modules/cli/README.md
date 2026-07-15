@@ -59,6 +59,9 @@ runtime and installs its own `better-sqlite3` build.
   callers can see validation failures without committing data.
 - `view update` preserves existing filters unless filter flags are passed; use
   `--clear-filters` to reset filters to the default unfiltered view.
+- Saved views and live `filter apply` commands default to `added_desc`, matching
+  the Desktop asset board's newest-import-first order. Callers can still choose
+  added, modified, or source-created time in either direction with `--sort`.
 - Live commands (`filter *`, `asset open`) act on the running app immediately with no `--commit` and exit `3` when the app is unreachable; `asset open` reads SQLite only to validate the id.
 - The default database environment is `prod` so the global command targets the installed app; pass `--env dev` for development data.
 - The CLI never deletes, moves, renames, or rewrites original vault files.

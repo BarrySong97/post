@@ -25,7 +25,7 @@ export const filterApplyMessageSchema = z.object({
   type: z.literal("filter.apply"),
   ...baseFields,
   filters: savedViewFiltersInputSchema,
-  sort: assetListSortInputSchema.default("updated_desc"),
+  sort: assetListSortInputSchema.default("added_desc"),
 });
 
 export const filterActivateViewMessageSchema = z.object({

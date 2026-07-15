@@ -60,6 +60,8 @@ export const STATUS_FILTERS = [
 ] satisfies Array<{ value: AssetStatusFilter; labelKey: string }>;
 
 export const SORT_OPTIONS = [
+  { value: "added_desc", labelKey: "filters.sortAddedDesc" },
+  { value: "added_asc", labelKey: "filters.sortAddedAsc" },
   { value: "updated_desc", labelKey: "filters.sortUpdatedDesc" },
   { value: "updated_asc", labelKey: "filters.sortUpdatedAsc" },
   { value: "created_desc", labelKey: "filters.sortCreatedDesc" },
@@ -141,7 +143,7 @@ export function assetFiltersToSavedViewFilters(
 export function savedViewFiltersToAssetFilters(
   filters: SavedViewFiltersOutput,
   tagOptions: readonly SidebarTag[],
-  sort: AssetSortOrder = "updated_desc",
+  sort: AssetSortOrder = "added_desc",
 ): AssetFilterState {
   return {
     types: filters.types,

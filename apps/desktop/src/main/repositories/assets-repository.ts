@@ -32,7 +32,13 @@ export type AssetListTypeFilter = "markdown" | "post" | "image" | "video" | "lin
 export type AssetListTimeFilter = "any" | "today" | "week" | "m30";
 export type AssetListSourceType = "vault" | "external_file" | "url";
 export type AssetListTagMatch = "and" | "or";
-export type AssetListSort = "updated_desc" | "updated_asc" | "created_desc" | "created_asc";
+export type AssetListSort =
+  | "added_desc"
+  | "added_asc"
+  | "updated_desc"
+  | "updated_asc"
+  | "created_desc"
+  | "created_asc";
 export type AssetListStatusFilter = "inbox" | "organized" | "draft" | "published" | "archived";
 export type AssetListCursor = {
   valueMs: number;
@@ -108,6 +114,8 @@ const ASSET_LIST_STATUS_FILTERS = new Set<AssetListStatusFilter>([
   "archived",
 ]);
 const ASSET_LIST_SORTS = new Set<AssetListSort>([
+  "added_desc",
+  "added_asc",
   "updated_desc",
   "updated_asc",
   "created_desc",
@@ -455,7 +463,11 @@ function getAssetFilterConditions(filters: AssetListFilters) {
   ]);
 }
 
-function getSortValueExpression(sort: AssetListSort = "updated_desc") {
+function getSortValueExpression(sort: AssetListSort = "added_desc") {
+  if (sort.startsWith("added")) {
+    return sql<number>`${schema.assets.createdAt}`;
+  }
+
   return sort.startsWith("created")
     ? sql<number>`coalesce(${schema.assetFiles.ctimeMs}, ${schema.assetFiles.mtimeMs})`
     : sql<number>`${schema.assetFiles.mtimeMs}`;
@@ -490,7 +502,7 @@ export function getAssetCount(filters: AssetListFilters) {
 }
 
 export function getAssetPage(input: AssetListPageInput) {
-  const sort = input.sort ?? "updated_desc";
+  const sort = input.sort ?? "added_desc";
   const sortValue = getSortValueExpression(sort);
   const isDescending = sort.endsWith("desc");
   const whereConditions = compactConditions([
@@ -538,7 +550,7 @@ export function getAssetPage(input: AssetListPageInput) {
 }
 
 export function getAssetLayoutIndex(input: AssetLayoutIndexInput) {
-  const sort = input.sort ?? "updated_desc";
+  const sort = input.sort ?? "added_desc";
   const sortValue = getSortValueExpression(sort);
   const isDescending = sort.endsWith("desc");
   const rows = getDatabase()
@@ -718,9 +730,9 @@ export function serializeSavedViewSort(sort: AssetListSort) {
 export function parseSavedViewSort(sortJson: string): AssetListSort {
   try {
     const value = JSON.parse(sortJson) as { sort?: unknown };
-    return isAssetListSort(value.sort) ? value.sort : "updated_desc";
+    return isAssetListSort(value.sort) ? value.sort : "added_desc";
   } catch {
-    return "updated_desc";
+    return "added_desc";
   }
 }
 

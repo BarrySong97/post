@@ -231,6 +231,8 @@
     "statusInbox": "待整理",
     "statusDraft": "草稿",
     "statusPublished": "已发布",
+    "sortAddedDesc": "添加时间 · 降序",
+    "sortAddedAsc": "添加时间 · 升序",
     "sortUpdatedDesc": "更新时间 · 降序",
     "sortUpdatedAsc": "更新时间 · 升序",
     "sortCreatedDesc": "创建时间 · 降序",

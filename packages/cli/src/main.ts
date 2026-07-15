@@ -646,7 +646,7 @@ view
     [],
   )
   .option("--status <status>", "Status")
-  .option("--sort <sort>", "Sort order", "updated_desc")
+  .option("--sort <sort>", "Sort order", "added_desc")
   .option("--commit", "Write changes")
   .action(
     (
@@ -767,7 +767,7 @@ filter
           time: local.time ?? "any",
           status: local.status ?? "any",
         },
-        sort: local.sort ?? "updated_desc",
+        sort: local.sort ?? "added_desc",
       };
       return sendLiveCommand(resolveLiveDbPath(options), message).then((result) =>
         emitLiveResult(result, options),

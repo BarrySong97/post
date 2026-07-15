@@ -133,7 +133,7 @@ export function createSavedView(ctx: DomainContext, input: SavedViewInput): Save
       name: input.name,
       icon: normalizeSavedViewIcon(input.icon),
       filterJson: serializeSavedViewFilters(filters),
-      sortJson: serializeSavedViewSort(input.sort ?? "updated_desc"),
+      sortJson: serializeSavedViewSort(input.sort ?? "added_desc"),
       sortOrder: getNextSavedViewSortOrder(ctx, vault.id),
       createdAt: now,
       updatedAt: now,
