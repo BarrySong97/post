@@ -6,7 +6,7 @@
  */
 
 import { randomUUID, createHash } from "node:crypto";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { and, eq } from "drizzle-orm";
@@ -130,32 +130,58 @@ async function fetchImage(input: SaveExtensionImageInput) {
   return { bytes, extension, mimeType: contentType || `image/${extension}`, url };
 }
 
-async function pathExists(absolutePath: string): Promise<boolean> {
-  try {
-    await stat(absolutePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function chooseRelativePath(
+export async function writeImageFileToUniquePath(
   rootPath: string,
   destinationDir: string,
   stem: string,
   extension: string,
+  bytes: Buffer,
+  isReserved: (relativePath: string) => boolean = () => false,
 ): Promise<string> {
+  await mkdir(path.join(rootPath, destinationDir), { recursive: true });
+
   let index = 0;
   while (true) {
     const suffix = index === 0 ? "" : `-${index + 1}`;
     const relativePath = path.posix.join(destinationDir, `${stem}${suffix}.${extension}`);
     const absolutePath = path.join(rootPath, relativePath);
-    if (!(await pathExists(absolutePath))) {
+
+    // Soft-deleted/missing asset-file rows still own their vault-relative path. Reusing one
+    // lets the watcher restore the old asset around newly downloaded bytes, so skip it even
+    // when the physical file has already moved to Trash.
+    if (isReserved(relativePath)) {
+      index += 1;
+      continue;
+    }
+
+    try {
+      // Exclusive creation makes name allocation atomic. Parallel extension imports from the
+      // same page commonly share a title/stem; losers retry the next suffix instead of failing.
+      await writeFile(absolutePath, bytes, { flag: "wx" });
       return relativePath;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
     }
 
     index += 1;
   }
+}
+
+function isAssetFilePathReserved(vaultId: string, relativePath: string): boolean {
+  return Boolean(
+    getDatabase()
+      .select({ id: schema.assetFiles.id })
+      .from(schema.assetFiles)
+      .where(
+        and(
+          eq(schema.assetFiles.vaultId, vaultId),
+          eq(schema.assetFiles.relativePath, relativePath),
+        ),
+      )
+      .get(),
+  );
 }
 
 // Resolve an optional tag: null when none was chosen (asset lands untagged in Inbox);
@@ -239,16 +265,14 @@ export async function saveExtensionImage(
   const stem = input.fileStem
     ? normalizeFileStem(input.fileStem)
     : `${new Date().toISOString().slice(0, 10)}-${normalizeFileStem(title)}`;
-  const relativePath = await chooseRelativePath(
+  const relativePath = await writeImageFileToUniquePath(
     vault.rootPath,
     input.destinationDir ?? WEB_CLIP_DIR,
     stem,
     image.extension,
+    image.bytes,
+    (candidate) => isAssetFilePathReserved(vault.id, candidate),
   );
-  const absolutePath = path.join(vault.rootPath, relativePath);
-
-  await mkdir(path.dirname(absolutePath), { recursive: true });
-  await writeFile(absolutePath, image.bytes, { flag: "wx" });
 
   const assetId = randomUUID();
   const fileId = randomUUID();
