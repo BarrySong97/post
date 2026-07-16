@@ -20,10 +20,24 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.13",
+    date: "2026-07-16",
+    head: "More reliable multi-image capture and sharper asset previews.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Desktop",
+        items: [
+          "Saving several images rapidly from the extension now gives every file a unique reserved path, preventing later imports from replacing or reopening an older asset.",
+          "Small images now render from their original source without upscaling or recompression, AVIF and SVG covers display directly, and large PNG previews remain lossless for sharper text and transparency.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.12",
     date: "2026-07-15",
     head: "A new MDX blog, higher-fidelity X Post capture, and newest-added-first asset browsing.",
-    badge: "latest",
     groups: [
       {
         title: "Website",
