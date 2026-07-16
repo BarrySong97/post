@@ -56,11 +56,16 @@ function getThumbnailRows(vault: { id: string }, assetIds?: string[]) {
   const rows = getDatabase()
     .select({
       assetId: schema.assets.id,
+      kind: schema.assets.kind,
+      extension: schema.assetFiles.extension,
       sizeBytes: schema.assetFiles.sizeBytes,
       mtimeMs: schema.assetFiles.mtimeMs,
       quickFingerprint: schema.assetFiles.quickFingerprint,
       cacheStatus: schema.imageCache.status,
       thumbnailPath: schema.imageCache.thumbnailPath,
+      thumbnailFormat: schema.imageCache.thumbnailFormat,
+      imageWidth: schema.imageCache.width,
+      imageHeight: schema.imageCache.height,
       errorMessage: schema.imageCache.errorMessage,
       sourceSizeBytes: schema.imageCache.sourceSizeBytes,
       sourceMtimeMs: schema.imageCache.sourceMtimeMs,
@@ -99,7 +104,23 @@ function thumbnailRowNeedsWork(row: ThumbnailRow) {
     return !sourceMatches || isRetryableThumbnailFailure(row.errorMessage);
   }
 
-  return !sourceMatches || !row.thumbnailPath || !existsSync(row.thumbnailPath);
+  const shouldUseOriginal =
+    row.kind === "image" &&
+    row.imageWidth != null &&
+    row.imageHeight != null &&
+    Math.max(row.imageWidth, row.imageHeight) <= 720;
+  if (shouldUseOriginal) {
+    return !sourceMatches || row.thumbnailFormat !== "original";
+  }
+
+  const expectedFormat =
+    row.kind === "image" && row.extension?.toLowerCase() === "png" ? "png" : "jpeg";
+  return (
+    !sourceMatches ||
+    row.thumbnailFormat !== expectedFormat ||
+    !row.thumbnailPath ||
+    !existsSync(row.thumbnailPath)
+  );
 }
 
 function isRetryableThumbnailFailure(errorMessage: string | null) {

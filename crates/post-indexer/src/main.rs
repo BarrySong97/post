@@ -19,7 +19,9 @@ use std::{
 };
 
 use image::{
-    DynamicImage, GenericImageView, ImageReader, codecs::jpeg::JpegEncoder, imageops::FilterType,
+    DynamicImage, GenericImageView, ImageEncoder, ImageReader,
+    codecs::{jpeg::JpegEncoder, png::PngEncoder},
+    imageops::FilterType,
 };
 use notify::{Config as NotifyConfig, Event as NotifyEvent, PollWatcher, RecursiveMode, Watcher};
 
@@ -181,6 +183,9 @@ struct ThumbnailTarget {
     quick_fingerprint: String,
     cache_status: Option<String>,
     cached_thumbnail_path: Option<String>,
+    cached_thumbnail_format: Option<String>,
+    cached_source_width: Option<u32>,
+    cached_source_height: Option<u32>,
     cached_error_message: Option<String>,
     cached_source_size_bytes: Option<u64>,
     cached_source_mtime_ms: Option<i64>,
@@ -194,10 +199,11 @@ struct ThumbnailTarget {
 struct GeneratedThumbnail {
     source_width: u32,
     source_height: u32,
-    thumbnail_path: PathBuf,
+    thumbnail_path: Option<PathBuf>,
     thumbnail_width: u32,
     thumbnail_height: u32,
     thumbnail_size_bytes: u64,
+    thumbnail_format: &'static str,
     bottom_luma: u8,
     // Populated for video assets when ffprobe succeeds; None otherwise.
     video_duration_ms: Option<i64>,
@@ -1486,6 +1492,9 @@ SELECT
   COALESCE(af.quick_fingerprint, ''),
   COALESCE(ic.status, ''),
   COALESCE(ic.thumbnail_path, ''),
+  COALESCE(ic.thumbnail_format, ''),
+  COALESCE(ic.width, -1),
+  COALESCE(ic.height, -1),
   REPLACE(REPLACE(REPLACE(COALESCE(ic.error_message, ''), char(9), ' '), char(10), ' '), char(13), ' '),
   COALESCE(ic.source_size_bytes, -1),
   COALESCE(ic.source_mtime_ms, -1),
@@ -1508,7 +1517,7 @@ ORDER BY af.mtime_ms DESC
 
     for line in output.lines().filter(|line| !line.trim().is_empty()) {
         let columns: Vec<_> = line.split('\t').collect();
-        if columns.len() != 16 {
+        if columns.len() != 19 {
             return Err(format!(
                 "unexpected sqlite row while loading thumbnail targets: {line}"
             ));
@@ -1525,12 +1534,15 @@ ORDER BY af.mtime_ms DESC
             quick_fingerprint: columns[7].to_string(),
             cache_status: none_if_empty(columns[8]),
             cached_thumbnail_path: none_if_empty(columns[9]),
-            cached_error_message: none_if_empty(columns[10]),
-            cached_source_size_bytes: parse_optional_u64(columns[11])?,
-            cached_source_mtime_ms: parse_optional_i64(columns[12])?,
-            cached_source_quick_fingerprint: none_if_empty(columns[13]),
-            cached_thumbnail_luma: parse_optional_i64(columns[14])?,
-            cached_video_duration_ms: parse_optional_i64_allow_negative(columns[15])?,
+            cached_thumbnail_format: none_if_empty(columns[10]),
+            cached_source_width: parse_optional_u32(columns[11])?,
+            cached_source_height: parse_optional_u32(columns[12])?,
+            cached_error_message: none_if_empty(columns[13]),
+            cached_source_size_bytes: parse_optional_u64(columns[14])?,
+            cached_source_mtime_ms: parse_optional_i64(columns[15])?,
+            cached_source_quick_fingerprint: none_if_empty(columns[16]),
+            cached_thumbnail_luma: parse_optional_i64(columns[17])?,
+            cached_video_duration_ms: parse_optional_i64_allow_negative(columns[18])?,
         });
     }
 
@@ -1546,17 +1558,31 @@ fn thumbnail_cache_matches(target: &ThumbnailTarget) -> bool {
         return false;
     }
 
-    let Some(path) = target.cached_thumbnail_path.as_deref() else {
-        return false;
-    };
-
-    Path::new(path).is_file()
-        && target.cached_source_size_bytes == Some(target.size_bytes)
+    let source_matches = target.cached_source_size_bytes == Some(target.size_bytes)
         && target.cached_source_mtime_ms == Some(target.mtime_ms)
         && target.cached_source_quick_fingerprint.as_deref() == Some(&target.quick_fingerprint)
         // Regenerate ready thumbnails cached before thumbnail_luma existed, so the
         // overlay-text luma backfills once without touching unchanged sources otherwise.
-        && target.cached_thumbnail_luma.is_some()
+        && target.cached_thumbnail_luma.is_some();
+    if !source_matches {
+        return false;
+    }
+
+    let should_use_original = target.kind == "image"
+        && target
+            .cached_source_width
+            .zip(target.cached_source_height)
+            .is_some_and(|(width, height)| should_use_original_image(width, height));
+    if should_use_original {
+        return target.cached_thumbnail_format.as_deref() == Some("original")
+            && target.cached_thumbnail_path.is_none();
+    }
+
+    target.cached_thumbnail_format.as_deref() == Some(expected_thumbnail_format(target))
+        && target
+            .cached_thumbnail_path
+            .as_deref()
+            .is_some_and(|path| Path::new(path).is_file())
 }
 
 fn thumbnail_source_matches(target: &ThumbnailTarget) -> bool {
@@ -1613,7 +1639,39 @@ fn generate_image_thumbnail(
     }
 
     let image = decode_image_file(source_path, "image")?;
+    let (source_width, source_height) = image.dimensions();
+    if should_use_original_image(source_width, source_height) {
+        let rgb = image.to_rgb8();
+        return Ok(GeneratedThumbnail {
+            source_width,
+            source_height,
+            thumbnail_path: None,
+            thumbnail_width: source_width,
+            thumbnail_height: source_height,
+            thumbnail_size_bytes: target.size_bytes,
+            thumbnail_format: "original",
+            bottom_luma: average_bottom_luma(&rgb),
+            video_duration_ms: None,
+        });
+    }
     persist_thumbnail_from_image(config, target, thumbnail_root, image)
+}
+
+fn should_use_original_image(width: u32, height: u32) -> bool {
+    width.max(height) <= THUMBNAIL_LONG_EDGE
+}
+
+fn expected_thumbnail_format(target: &ThumbnailTarget) -> &'static str {
+    if target.kind == "image"
+        && target
+            .extension
+            .as_deref()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+    {
+        "png"
+    } else {
+        "jpeg"
+    }
 }
 
 fn generate_video_thumbnail(
@@ -1657,15 +1715,21 @@ fn persist_thumbnail_from_image(
         THUMBNAIL_LONG_EDGE,
         FilterType::Triangle,
     );
+    let (thumbnail_width, thumbnail_height) = thumbnail.dimensions();
     let rgb = thumbnail.to_rgb8();
-    let (thumbnail_width, thumbnail_height) = rgb.dimensions();
     let bottom_luma = average_bottom_luma(&rgb);
 
     let vault_dir = ensure_thumbnail_vault_dir(thumbnail_root, &config.vault_id)?;
+    let thumbnail_format = expected_thumbnail_format(target);
     let thumbnail_path = vault_dir.join(format!(
-        "{}-{:016x}.jpg",
+        "{}-{:016x}.{}",
         target.asset_id,
-        stable_hash(&target.quick_fingerprint)
+        stable_hash(&target.quick_fingerprint),
+        if thumbnail_format == "png" {
+            "png"
+        } else {
+            "jpg"
+        }
     ));
     let mut file = File::create(&thumbnail_path).map_err(|error| {
         format!(
@@ -1673,15 +1737,23 @@ fn persist_thumbnail_from_image(
             thumbnail_path.display()
         )
     })?;
-    let mut encoder = JpegEncoder::new_with_quality(&mut file, THUMBNAIL_JPEG_QUALITY);
-    encoder
-        .encode(
+    let encode_result = if thumbnail_format == "png" {
+        let rgba = thumbnail.to_rgba8();
+        PngEncoder::new(&mut file).write_image(
+            &rgba,
+            thumbnail_width,
+            thumbnail_height,
+            image::ExtendedColorType::Rgba8,
+        )
+    } else {
+        JpegEncoder::new_with_quality(&mut file, THUMBNAIL_JPEG_QUALITY).encode(
             &rgb,
             thumbnail_width,
             thumbnail_height,
             image::ExtendedColorType::Rgb8,
         )
-        .map_err(|error| {
+    };
+    encode_result.map_err(|error| {
             format!(
                 "failed to encode thumbnail {}: {error}",
                 thumbnail_path.display()
@@ -1699,10 +1771,11 @@ fn persist_thumbnail_from_image(
     Ok(GeneratedThumbnail {
         source_width,
         source_height,
-        thumbnail_path,
+        thumbnail_path: Some(thumbnail_path),
         thumbnail_width,
         thumbnail_height,
         thumbnail_size_bytes,
+        thumbnail_format,
         bottom_luma,
         video_duration_ms: None,
     })
@@ -2925,7 +2998,7 @@ INSERT INTO image_cache (
   source_size_bytes, source_mtime_ms, source_quick_fingerprint, status, error_message,
   generated_at, updated_at
 ) VALUES (
-  {}, {}, {}, {}, {}, {}, {}, {}, {}, 'jpeg', {}, {}, {}, {}, {}, 'ready', NULL, {now}, {now}
+  {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 'ready', NULL, {now}, {now}
 )
 ON CONFLICT(asset_id) DO UPDATE SET
   vault_id = excluded.vault_id,
@@ -2951,10 +3024,17 @@ ON CONFLICT(asset_id) DO UPDATE SET
         sql_text(&target.file_id),
         generated.source_width,
         generated.source_height,
-        sql_text(&generated.thumbnail_path.display().to_string()),
+        sql_nullable(
+            generated
+                .thumbnail_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .as_deref(),
+        ),
         generated.thumbnail_width,
         generated.thumbnail_height,
         generated.thumbnail_size_bytes,
+        sql_text(generated.thumbnail_format),
         generated.bottom_luma,
         // Videos with a failed duration probe store -1 so cache hits do not retry forever.
         sql_nullable_i64(match (target.kind.as_str(), generated.video_duration_ms) {
@@ -3878,6 +3958,16 @@ fn parse_optional_u64(value: &str) -> Result<Option<u64>, String> {
     Ok((parsed >= 0).then_some(parsed as u64))
 }
 
+fn parse_optional_u32(value: &str) -> Result<Option<u32>, String> {
+    let parsed = parse_optional_u64(value)?;
+    parsed
+        .map(|value| {
+            u32::try_from(value)
+                .map_err(|error| format!("optional integer exceeds u32: {value}: {error}"))
+        })
+        .transpose()
+}
+
 fn truncate_error(value: &str) -> String {
     value.chars().take(500).collect()
 }
@@ -3956,6 +4046,14 @@ mod tests {
             }
         }
         assert!(average_bottom_luma(&split) > 200);
+    }
+
+    #[test]
+    fn uses_original_image_at_or_below_thumbnail_bounds() {
+        assert!(should_use_original_image(320, 240));
+        assert!(should_use_original_image(720, 720));
+        assert!(should_use_original_image(400, 720));
+        assert!(!should_use_original_image(721, 480));
     }
 
     #[test]

@@ -186,6 +186,38 @@ describe("mapIndexedAsset cover luma", () => {
   });
 });
 
+describe("mapIndexedAsset original image fallback", () => {
+  it.each(["svg", "avif"])("uses the original %s file when no thumbnail exists", (extension) => {
+    const asset = mapIndexedAsset(
+      buildIndexedAsset({
+        extension,
+        fileName: `cover.${extension}`,
+        relativePath: `media/cover.${extension}`,
+        image: null,
+      }),
+    );
+
+    expect(asset.thumbnailUrl).toBe(asset.mediaUrl);
+    expect(asset.thumbnailStatus).toBe("ready");
+  });
+
+  it("uses a small raster source when the indexer marks it as original", () => {
+    const image = {
+      ...buildImageCache(180),
+      width: 480,
+      height: 320,
+      thumbnailPath: null,
+      thumbnailWidth: 480,
+      thumbnailHeight: 320,
+      thumbnailFormat: "original",
+    };
+    const asset = mapIndexedAsset(buildIndexedAsset({ image }));
+
+    expect(asset.thumbnailUrl).toBe(asset.mediaUrl);
+    expect(asset.thumbnailStatus).toBe("ready");
+  });
+});
+
 describe("mapIndexedAsset web OG cover", () => {
   it("renders a web asset with a cached OG image as a cover with domain", () => {
     const asset = mapIndexedAsset(

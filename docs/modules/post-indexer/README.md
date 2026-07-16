@@ -18,6 +18,8 @@ Markdown files whose frontmatter declares `type: x-post` are indexed with asset 
 
 Video thumbnail generation still uses ffmpeg for a representative frame. In the same pass the indexer best-effort probes duration — preferring `ffprobe` (`format=duration`), then falling back to parsing `Duration:` from `ffmpeg -i` stderr because the desktop app only ships ffmpeg — and stores milliseconds in `image_cache.video_duration_ms`. On a ready thumbnail cache hit, videos whose `video_duration_ms` is still null get a duration-only backfill (no frame regen); a failed probe stores `-1` so prewarm does not retry forever. The renderer formats positive values as the card's duration badge (`m:ss` / `h:mm:ss`) and ignores negatives.
 
+Image thumbnail generation never enlarges small raster sources. When an image's long edge is at most 720px, the indexer records its dimensions, source fingerprint, bottom-strip luma, and `thumbnail_format = original` without writing or recompressing a cache file; the renderer uses the vault source directly. Larger PNG sources produce lossless 720px PNG thumbnails to preserve screenshot text and transparency, while other supported large rasters produce JPEG thumbnails. Existing small JPEG thumbnails and large PNG-to-JPEG thumbnails are invalidated once and replaced with the appropriate representation. Video frames always remain generated JPEG posters.
+
 ## Commands
 
 - `scan` - initial import style scan.
@@ -41,6 +43,7 @@ pnpm indexer:build
 - Keep parser and indexer version constants meaningful when behavior changes.
 - Thumbnail output must remain under the configured thumbnail root.
 - Thumbnail generation also records `image_cache.thumbnail_luma`, the average Rec. 601 luma of the thumbnail's bottom strip (`average_bottom_luma`), which the renderer uses to flip card overlay text between dark and light. Ready thumbnails cached before this column existed are treated as stale by `thumbnail_cache_matches` so the value backfills once.
+- A ready `image_cache` row with `thumbnail_format = original` intentionally has no `thumbnail_path`; cache validation must treat a matching source fingerprint plus recorded luma as complete so small images do not requeue forever.
 - Thumbnail target loading normalizes cached error text before parsing sqlite CLI output so previous ffmpeg failures cannot corrupt tab-delimited rows.
 - Thumbnail retry logic uses the explicit `ffmpeg executable unavailable` error marker. A missing candidate path mixed with a real ffmpeg media error must not make a corrupt or non-video source retryable.
 - Path handling must preserve vault-relative paths.

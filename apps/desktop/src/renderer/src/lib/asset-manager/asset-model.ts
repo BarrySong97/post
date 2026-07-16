@@ -138,7 +138,12 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
   const extension = asset.extension ?? asset.fileName.split(".").pop() ?? "file";
   const mediaUrl =
     kind === "image" || kind === "video" ? buildAssetFileUrl(asset.id, asset.fileName) : undefined;
-  const usesOriginalAsThumbnail = kind === "image" && extension.toLowerCase() === "svg";
+  // Chromium can render SVG and AVIF directly. Small raster images are also marked as
+  // `original` by the indexer so cards avoid upscaling and recompressing already-soft sources.
+  const usesOriginalAsThumbnail =
+    kind === "image" &&
+    (["svg", "avif"].includes(extension.toLowerCase()) ||
+      (asset.image?.status === "ready" && asset.image.thumbnailFormat === "original"));
   // Web assets carry their OG cover image on the shared imageCache thumbnail.
   const hasCachedThumbnail =
     (kind === "image" || kind === "video" || kind === "web") &&
