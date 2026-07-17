@@ -37,6 +37,7 @@
     "syncClickTitle": "Click to sync again",
     "syncDone": "Synced",
     "upToDate": "Up to date",
+    "dragRegionsRefreshed": "Drag regions refreshed",
     "recentDone": "Recently finished",
     "task": "Task",
     "taskRunning": "{{label}}…",

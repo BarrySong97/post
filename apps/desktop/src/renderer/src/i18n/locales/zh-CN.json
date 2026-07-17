@@ -37,6 +37,7 @@
     "syncClickTitle": "点击重新同步",
     "syncDone": "已同步完成",
     "upToDate": "已是最新",
+    "dragRegionsRefreshed": "已刷新窗口拖拽区域",
     "recentDone": "近期完成",
     "task": "任务",
     "taskRunning": "正在{{label}}",

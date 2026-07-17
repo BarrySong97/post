@@ -8,6 +8,8 @@
  *          punches a dead zone through the top-center chrome even when empty/pointer-events-none.
  *          Toast enter/exit avoids motion `layout` so paint stays cheap next to vault invalidation.
  *          FileDropZone wraps the shell chrome for OS file drops into assets/imports/.
+ *          Installs the drag-region refresh workaround (stale macOS drag snapshot after
+ *          resize/app-switch); double-clicking the footer version manually re-triggers it.
  */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -26,6 +28,7 @@ import {
 } from "@/lib/toast";
 
 import { trpc, trpcClient, type RouterOutputs } from "@/lib/trpc";
+import { installDragRegionRefresh, refreshDragRegions } from "@/lib/drag-region-refresh";
 import { applyFilterCommand } from "@/lib/asset-manager/apply-filter-command";
 import { openAssetDetail } from "@/lib/asset-manager/open-asset-detail";
 import { formatRelativeTime } from "@/lib/relative-time";
@@ -70,6 +73,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Mounted at the root shell (not AppLayout) so back/forward works on every route —
   // including /settings, which renders outside the /_app layout.
   useHistoryNavigationShortcuts();
+
+  // Re-sync native drag regions after window resizes / app switches — the macOS snapshot
+  // goes stale and top-chrome dragging dies otherwise. See lib/drag-region-refresh.ts.
+  useEffect(() => installDragRegionRefresh(), []);
 
   return (
     <ConfirmModalProvider>
@@ -481,7 +488,15 @@ function GlobalStatusLine() {
           <Settings2 size={13} />
         </Button>
         <span className="pf-sep" />
-        <div className="pf-appmeta">
+        {/* Double-click = manual drag-region refresh: the deterministic probe for the stale
+            drag-region bug — if top-chrome drag is dead and this revives it, diagnosis holds. */}
+        <div
+          className="pf-appmeta"
+          onDoubleClick={() => {
+            refreshDragRegions();
+            toast.info(t("shell.dragRegionsRefreshed"));
+          }}
+        >
           <span className="pf-appname">Post</span>
           <span className="pf-ver">v{appVersion}</span>
         </div>
