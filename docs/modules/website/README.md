@@ -16,13 +16,13 @@ Canvas colors come from the shared [ui](../ui/README.md) package (`@post/ui/them
 - `apps/website/app/components/blog/` - blog cards, covers, MDX renderer, image blur-up, and table-of-contents UI.
 - `apps/website/app/lib/blog.ts` - published-post lookup, ordering, and deterministic date formatting over generated Velite data.
 - `apps/website/app/components/ui.tsx` - `"use client"` re-export of HeroUI primitives, so `page.tsx` can stay a Server Component.
-- `apps/website/app/components/site-header.tsx` - landing-page brand header and top navigation; the header download link uses the same HeroUI primary button styling as the hero CTA at the compact header size.
+- `apps/website/app/components/site-header.tsx` - site-wide brand header with changelog, GitHub, npm CLI, and download navigation; the header download link uses the same HeroUI primary button styling as the hero CTA at the compact header size.
 - `apps/website/app/components/hero-section.tsx` - compact hero copy and primary CTA.
 - `apps/website/app/components/product-preview.tsx` - client-side interactive Post desktop preview composition; owns demo-only history, sidebar resize/collapse, filter values, editor target selection, footer popovers, and mock sidebar reorder state.
 - `apps/website/app/components/how-it-works-section.tsx` - Post desktop workflow steps.
 - `apps/website/app/components/faq-section.tsx` - Post FAQ copy.
 - `apps/website/app/components/closing-cta.tsx` - final landing-page CTA.
-- `apps/website/app/components/site-footer.tsx` - footer navigation groups and copyright.
+- `apps/website/app/components/site-footer.tsx` - footer navigation groups for shipped product resources, GitHub, npm CLI, and copyright.
 - `apps/website/app/releases/page.tsx` - public changelog and latest Mac / Chrome extension download entry (assets live on GitHub Releases).
 - `apps/website/app/components/releases/release-timeline.tsx` - release note data rendered by the changelog and validated before release.
 - `apps/website/app/lib/seo.ts` - shared site, GitHub, release, and download URLs.
@@ -42,6 +42,8 @@ Canvas colors come from the shared [ui](../ui/README.md) package (`@post/ui/them
 - Development command from the repo root: `pnpm dev:website` (runs `pnpm -F website dev`).
 - Workspace commands: `pnpm -F website dev | build | start | check-types`.
 - Public download URL: `https://github.com/BarrySong97/post/releases/latest` (Mac desktop artifacts plus `Post-<version>-chrome-extension.zip`).
+- Source repository URL: `https://github.com/BarrySong97/post`.
+- npm CLI URL: `https://www.npmjs.com/package/@barrysongdev4real/post-cli`.
 - Changelog route: `/releases`.
 - Blog routes: `/blog` and `/blog/<slug>`.
 - Blog image command: `pnpm -F website img <slug|mdx-path> [--dry-run]`.

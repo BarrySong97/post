@@ -4,7 +4,7 @@
  * @purpose Render the site-wide fixed navigation header shared by every route.
  * @role    Client component rendered once from the root layout, not per-page — needs "use client"
  *          for the scroll listener that toggles its glass background.
- * @deps    ./ui (HeroUI Link behind a client boundary), HeroUI button class tokens.
+ * @deps    ./ui (HeroUI Link behind a client boundary), ../lib/seo, HeroUI button class tokens.
  * @gotcha  Stays `fixed` and fully transparent at the top on purpose: it floats over each page's top
  *          content (e.g. the hero's full-bleed background image), so at scrollY 0 it must never gain
  *          an opaque/blurred background or it will hide the image. Past SCROLL_THRESHOLD_PX it swaps
@@ -19,12 +19,12 @@
 import { useEffect, useState } from "react";
 
 import { Link } from "./ui";
-import { DOWNLOAD_URL } from "../lib/seo";
+import { DOWNLOAD_URL, GITHUB_URL, NPM_CLI_URL } from "../lib/seo";
 
 const NAV_LINKS = [
-  { label: "Roadmap", href: "#roadmap" },
-  { label: "Blog", href: "/blog" },
   { label: "Changelog", href: "/releases" },
+  { label: "GitHub", href: GITHUB_URL },
+  { label: "npm CLI", href: NPM_CLI_URL },
 ];
 
 const NAV_LINK = "text-xs text-foreground/60 transition-colors hover:text-foreground";
@@ -50,7 +50,7 @@ export function SiteHeader() {
       }`}
     >
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-6">
-        <Link href="#" className="flex items-center gap-2 text-sm font-semibold text-foreground">
+        <Link href="/" className="flex items-center gap-2 text-sm font-semibold text-foreground">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/post-icon.png" alt="Post" width={24} height={24} className="rounded-md" />
           <span>Post</span>

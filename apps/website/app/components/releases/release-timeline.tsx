@@ -3,6 +3,9 @@
  * @role    Website changelog source validated before cutting GitHub release tags.
  * @deps    React server components only.
  * @gotcha  Before running `pnpm release <version>`, add the new entry first and move `badge: "latest"`.
+ *          Layout is a two-column ledger, not cards: hairline rules and whitespace carry the rhythm, so
+ *          resist re-adding borders/shadows/surface fills around each entry. The left rail is sticky at
+ *          top-20 to clear the layout's fixed h-14 SiteHeader while a long entry scrolls past.
  */
 
 export type ReleaseGroup = {
@@ -225,42 +228,71 @@ export const RELEASES: ReleaseNote[] = [
   },
 ];
 
+/** Anchor slug for a release, so a single version can be linked and shared: 0.1.13 -> v0-1-13. */
+function anchorId(version: string): string {
+  return `v${version.replaceAll(".", "-")}`;
+}
+
 export function ReleaseTimeline() {
   return (
-    <div className="flex flex-col gap-4">
-      {RELEASES.map((release) => (
-        <article
-          key={release.version}
-          className="rounded-lg border border-border bg-surface p-5 shadow-sm"
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="font-mono text-[22px] font-semibold text-foreground">
-              v{release.version}
-            </h2>
-            {release.badge ? (
-              <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-                {release.badge}
-              </span>
-            ) : null}
-            <time className="ml-auto font-mono text-xs text-foreground/50" dateTime={release.date}>
-              {release.date}
-            </time>
-          </div>
-          <p className="mt-3 text-[14px] leading-6 text-foreground/70">{release.head}</p>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            {release.groups.map((group) => (
-              <section key={group.title}>
-                <h3 className="text-[13px] font-semibold text-foreground">{group.title}</h3>
-                <ul className="mt-2 space-y-1.5 text-[13px] leading-6 text-foreground/65">
-                  {group.items.map((item) => (
-                    <li key={item}>- {item}</li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </div>
-        </article>
-      ))}
+    <div className="border-t border-border-subtle">
+      {RELEASES.map((release) => {
+        const anchor = anchorId(release.version);
+
+        return (
+          <article
+            key={release.version}
+            id={anchor}
+            className="grid scroll-mt-20 gap-4 border-b border-border-subtle py-11 md:grid-cols-[9rem_1fr] md:gap-8"
+          >
+            <div className="flex items-baseline gap-3 md:sticky md:top-20 md:block md:self-start">
+              <h2 className="font-mono text-[15px] font-semibold text-foreground">
+                <a href={`#${anchor}`} className="hover:underline hover:underline-offset-4">
+                  v{release.version}
+                </a>
+              </h2>
+              <time
+                className="font-mono text-xs tabular-nums text-foreground/45 md:mt-1.5 md:block"
+                dateTime={release.date}
+              >
+                {release.date}
+              </time>
+              {release.badge ? (
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-emerald-600 md:mt-2.5">
+                  <span aria-hidden className="size-1.5 rounded-full bg-current" />
+                  {release.badge}
+                </span>
+              ) : null}
+            </div>
+            <div className="min-w-0">
+              <p className="text-balance text-[17px] font-semibold leading-snug text-foreground">
+                {release.head}
+              </p>
+              {release.groups.map((group) => (
+                <section key={group.title} className="mt-7">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground/45">
+                    {group.title}
+                  </h3>
+                  <ul className="mt-2.5 flex flex-col gap-1.5">
+                    {group.items.map((item) => (
+                      <li
+                        key={item}
+                        className="relative pl-[1.1rem] text-[14px] leading-[1.65] text-foreground/65"
+                      >
+                        <span
+                          aria-hidden
+                          className="absolute left-0 top-[0.72em] h-px w-[0.45rem] bg-foreground/45"
+                        />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          </article>
+        );
+      })}
     </div>
   );
 }
