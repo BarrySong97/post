@@ -3,6 +3,8 @@
  * @role    Layout navigation component for vault, tag, saved view, and status sections.
  * @deps    React, HeroUI/local UI primitives, asset manager atoms and renderer types.
  * @gotcha  Sidebar item IDs must stay compatible with asset filter and active selection state.
+ *          Home soft detail (`/?asset=`) must be cleared via ensureAssetBoardVisible on item click;
+ *          pathname-only checks miss the overlay and leave the board change hidden.
  */
 
 import { useEffect, useMemo, useState, type ComponentType, type ReactNode } from "react";
@@ -37,6 +39,7 @@ import {
   getDefaultAssetFilters,
 } from "@/store/asset-manager-atoms";
 import { getTagHue } from "@/lib/asset-manager/asset-model";
+import { ensureAssetBoardVisible } from "@/lib/asset-manager/open-asset-detail";
 import { savedViewFiltersToAssetFilters } from "@/components/asset-manager/asset-filter-controls";
 import { SIDEBAR_ORDER_STORAGE_KEY } from "@/lib/asset-manager/storage";
 import { ViewIconRenderer } from "@/components/asset-manager/view-icon-picker";
@@ -584,7 +587,8 @@ export function Sidebar({
   const handleMgmtItemClick = (item: "all" | "inbox") => {
     setActiveSidebarItem({ kind: "mgmt", id: item });
     setFilters(getDefaultAssetFilters());
-    if (isNonHomeRoute) void navigate({ to: "/" });
+    // Clears soft detail (`/?asset=`) and returns from non-home routes.
+    ensureAssetBoardVisible();
   };
 
   const handleViewClick = (viewId: string) => {
@@ -595,14 +599,14 @@ export function Sidebar({
     } else {
       setFilters(getDefaultAssetFilters());
     }
-    if (isNonHomeRoute) void navigate({ to: "/" });
+    ensureAssetBoardVisible();
   };
 
   const handleTagClick = (tagId: string) => {
     const tagName = tagItems.find((t) => t.id === tagId)?.name;
     setActiveSidebarItem({ kind: "tag", id: tagId });
     setFilters((prev) => ({ ...prev, tags: tagName ? [tagName] : [] }));
-    if (isNonHomeRoute) void navigate({ to: "/" });
+    ensureAssetBoardVisible();
   };
 
   const defaultSidebarOrder = useMemo(

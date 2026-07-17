@@ -1,8 +1,9 @@
 /**
  * @purpose Apply CLI-driven live filter commands to the asset manager Jotai atoms.
  * @role    Renderer bridge from main-process asset-filter.* events into filter/sidebar state.
- * @deps    jotai default store, asset filter atoms/codecs, tRPC vanilla client.
+ * @deps    jotai default store, asset filter atoms/codecs, tRPC vanilla client, open-asset-detail.
  * @gotcha  Wire payloads are id-based; resolve ids to tag names via sidebarMeta before setting atoms.
+ *          Always call ensureAssetBoardVisible so soft detail does not hide the filter change.
  */
 
 import { getDefaultStore } from "jotai";
@@ -18,6 +19,7 @@ import {
   savedViewFiltersToAssetFilters,
   type SavedViewFiltersOutput,
 } from "@/components/asset-manager/asset-filter-controls";
+import { ensureAssetBoardVisible } from "@/lib/asset-manager/open-asset-detail";
 import type { SidebarTag } from "@/lib/asset-manager/types";
 import { trpcClient } from "@/lib/trpc";
 
@@ -78,6 +80,9 @@ export async function applyFilterCommand(event: ApplyFilterEvent): Promise<void>
       store.set(assetFiltersAtom, getDefaultAssetFilters());
       break;
   }
+
+  // Mirror sidebar: filter/sidebar changes must leave soft detail so the board is visible.
+  ensureAssetBoardVisible();
 
   await reportCurrentFilterSnapshot(tags);
 }
