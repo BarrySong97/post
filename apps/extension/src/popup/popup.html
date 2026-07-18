@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>收藏到 Post</title>
+    <style>
+      :root {
+        color: #1c1b19;
+        background: #fbfaf8;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        width: 360px;
+        min-height: 240px;
+        margin: 0;
+        font-size: 12px;
+      }
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 42px;
+        padding: 0 13px;
+        border-bottom: 1px solid #e8e6e0;
+      }
+      .mark {
+        display: grid;
+        width: 21px;
+        height: 21px;
+        place-items: center;
+        border-radius: 6px;
+        background: #1c1b19;
+        color: white;
+        font-size: 11px;
+        font-weight: 760;
+      }
+      .header-title {
+        font-size: 12.5px;
+        font-weight: 680;
+      }
+      .vault {
+        min-width: 0;
+        margin-left: auto;
+        overflow: hidden;
+        color: #77736b;
+        font-size: 10.5px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .preview {
+        display: grid;
+        grid-template-columns: 112px minmax(0, 1fr);
+        gap: 10px;
+        padding: 12px 13px;
+        border-bottom: 1px solid #eceae5;
+        background: #f6f5f2;
+      }
+      .cover {
+        position: relative;
+        overflow: hidden;
+        aspect-ratio: 16 / 9;
+        border-radius: 8px;
+        background: linear-gradient(145deg, #dedbd5, #bdb8af);
+      }
+      .cover img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .youtube-play {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 28px;
+        height: 20px;
+        transform: translate(-50%, -50%);
+        border-radius: 6px;
+        background: #ff0033;
+        box-shadow: 0 3px 10px rgb(0 0 0 / 25%);
+      }
+      .youtube-play::after {
+        position: absolute;
+        top: 6px;
+        left: 11px;
+        width: 0;
+        height: 0;
+        border-top: 4px solid transparent;
+        border-bottom: 4px solid transparent;
+        border-left: 7px solid white;
+        content: "";
+      }
+      .duration {
+        position: absolute;
+        top: 5px;
+        right: 5px;
+        padding: 1px 4px;
+        border-radius: 4px;
+        background: rgb(0 0 0 / 72%);
+        color: white;
+        font:
+          9px ui-monospace,
+          monospace;
+      }
+      .preview-copy {
+        min-width: 0;
+      }
+      .preview-title {
+        display: -webkit-box;
+        overflow: hidden;
+        margin: 0;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        font-size: 12px;
+        font-weight: 680;
+        line-height: 1.35;
+      }
+      .preview-byline {
+        overflow: hidden;
+        margin: 5px 0 0;
+        color: #77736b;
+        font-size: 10.5px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .source {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: 6px;
+        color: #77736b;
+        font-size: 10px;
+        font-weight: 680;
+      }
+      .source.youtube {
+        color: #d5002f;
+      }
+      .form {
+        padding: 13px;
+      }
+      .field {
+        margin-bottom: 11px;
+      }
+      .field:last-child {
+        margin-bottom: 0;
+      }
+      label {
+        display: block;
+        margin-bottom: 4px;
+        color: #6c6a64;
+        font-size: 10.5px;
+        font-weight: 650;
+      }
+      .control {
+        width: 100%;
+        border: 1px solid #dcd9d2;
+        border-radius: 8px;
+        outline: none;
+        background: white;
+        padding: 7px 8px;
+        color: #1c1b19;
+        font-size: 11.5px;
+      }
+      .control:focus {
+        border-color: #9c9890;
+        box-shadow: 0 0 0 2px rgb(28 27 25 / 6%);
+      }
+      textarea.control {
+        min-height: 58px;
+        resize: vertical;
+      }
+      .tags {
+        display: flex;
+        max-height: 76px;
+        gap: 5px;
+        overflow-y: auto;
+        flex-wrap: wrap;
+      }
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        background: #ebe9e3;
+        padding: 4px 7px;
+        color: #514e48;
+        font-size: 10.5px;
+      }
+      .tag[aria-pressed="true"] {
+        border-color: #bdb8ae;
+        background: #ddd9d1;
+        color: #1c1b19;
+      }
+      .tag-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--tag-color, #a1a1aa);
+      }
+      .empty-tags {
+        color: #8a8478;
+        font-size: 10.5px;
+      }
+      .duplicate {
+        margin: 12px 13px 0;
+        border: 1px solid #ead7ae;
+        border-radius: 9px;
+        background: #fff9eb;
+        padding: 10px;
+      }
+      .duplicate strong {
+        font-size: 11px;
+      }
+      .duplicate p {
+        margin: 3px 0 0;
+        color: #7c6840;
+        font-size: 10.5px;
+      }
+      .duplicate-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 7px;
+        margin-top: 9px;
+      }
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-top: 1px solid #eceae5;
+        padding: 10px 13px 12px;
+      }
+      .hint {
+        min-width: 0;
+        flex: 1;
+        color: #8a8478;
+        font-size: 10px;
+      }
+      .button {
+        border: 0;
+        border-radius: 8px;
+        padding: 7px 11px;
+        font-size: 11px;
+        font-weight: 650;
+      }
+      .button:disabled {
+        cursor: default;
+        opacity: 0.55;
+      }
+      .primary {
+        background: #1c1b19;
+        color: white;
+      }
+      .secondary {
+        background: #edeae4;
+        color: #3f3d39;
+      }
+      .state {
+        display: grid;
+        min-height: 210px;
+        place-items: center;
+        padding: 26px;
+        text-align: center;
+      }
+      .state strong {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 13px;
+      }
+      .state p {
+        max-width: 280px;
+        margin: 0;
+        color: #77736b;
+        line-height: 1.5;
+      }
+      .spinner {
+        width: 20px;
+        height: 20px;
+        margin: 0 auto 10px;
+        animation: spin 0.8s linear infinite;
+        border: 2px solid #dedbd5;
+        border-top-color: #1c1b19;
+        border-radius: 50%;
+      }
+      .status {
+        margin: 0 13px 10px;
+        border-radius: 8px;
+        padding: 8px 10px;
+        color: #6c4f15;
+        background: #fff4d6;
+        font-size: 10.5px;
+      }
+      .status.error {
+        color: #8f2d24;
+        background: #fee9e5;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <section id="loading" class="state">
+      <div>
+        <div class="spinner"></div>
+        <strong>正在读取当前页面</strong>
+        <p>同时连接 Post Desktop 和活动 Vault…</p>
+      </div>
+    </section>
+
+    <section id="error" class="state" hidden>
+      <div>
+        <strong>暂时无法收藏</strong>
+        <p id="error-message"></p>
+      </div>
+    </section>
+
+    <main id="content" hidden>
+      <header class="header">
+        <span class="mark">P</span><span id="header-title" class="header-title">收藏到 Post</span
+        ><span id="vault" class="vault"></span>
+      </header>
+      <section class="preview">
+        <div class="cover">
+          <img id="cover" alt="" hidden /><span id="youtube-play" class="youtube-play" hidden></span
+          ><span id="duration" class="duration" hidden></span>
+        </div>
+        <div class="preview-copy">
+          <p id="preview-title" class="preview-title"></p>
+          <p id="preview-byline" class="preview-byline"></p>
+          <span id="source" class="source"></span>
+        </div>
+      </section>
+      <section id="duplicate" class="duplicate" hidden>
+        <strong id="duplicate-title"></strong>
+        <p>更新会刷新来源信息、保留原备注和标题，并合并本次 Tags。</p>
+        <div class="duplicate-actions">
+          <button id="update" class="button primary" type="button">更新原收藏</button
+          ><button id="copy" class="button secondary" type="button">另存一份</button>
+        </div>
+      </section>
+      <form id="form">
+        <div class="form">
+          <div class="field">
+            <label for="title">标题</label><input id="title" class="control" maxlength="300" />
+          </div>
+          <div class="field">
+            <label>Tags</label>
+            <div id="tags" class="tags"></div>
+          </div>
+          <div class="field">
+            <label for="note">备注</label
+            ><textarea
+              id="note"
+              class="control"
+              maxlength="10000"
+              placeholder="记下为什么要收藏，方便之后检索…"
+            ></textarea>
+          </div>
+        </div>
+        <p id="status" class="status" hidden></p>
+        <footer id="normal-actions" class="actions">
+          <span class="hint">不选 Tag 会进入 Inbox</span
+          ><button id="save" class="button primary" type="submit">收藏</button>
+        </footer>
+      </form>
+    </main>
+    <script type="module" src="./index.ts"></script>
+  </body>
+</html>

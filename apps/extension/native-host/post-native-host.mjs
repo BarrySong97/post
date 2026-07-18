@@ -15,6 +15,8 @@ const CONTEXT_IPC_TIMEOUT_MS = 1500;
 const IMAGE_IPC_TIMEOUT_MS = 60_000;
 const VIDEO_IPC_TIMEOUT_MS = 3 * 60_000;
 const POST_IPC_TIMEOUT_MS = 5 * 60_000;
+const BOOKMARK_LOOKUP_IPC_TIMEOUT_MS = 2000;
+const BOOKMARK_SAVE_IPC_TIMEOUT_MS = 60_000;
 const HOST_TIMEOUT_MS = 5000;
 const HOST_NAME = "com.post.desktop";
 
@@ -169,11 +171,15 @@ async function sendLocalIpc(dbPath, message) {
   const timeoutMs =
     message.type === "extension.context.get"
       ? CONTEXT_IPC_TIMEOUT_MS
-      : message.type === "extension.image.save"
-        ? IMAGE_IPC_TIMEOUT_MS
-        : message.type === "extension.video.save"
-          ? VIDEO_IPC_TIMEOUT_MS
-          : POST_IPC_TIMEOUT_MS;
+      : message.type === "extension.bookmark.lookup"
+        ? BOOKMARK_LOOKUP_IPC_TIMEOUT_MS
+        : message.type === "extension.bookmark.save"
+          ? BOOKMARK_SAVE_IPC_TIMEOUT_MS
+          : message.type === "extension.image.save"
+            ? IMAGE_IPC_TIMEOUT_MS
+            : message.type === "extension.video.save"
+              ? VIDEO_IPC_TIMEOUT_MS
+              : POST_IPC_TIMEOUT_MS;
   let lastResult = null;
 
   for (const address of addresses) {
@@ -206,7 +212,9 @@ async function handleMessage(message) {
     message.type !== "post.context.get" &&
     message.type !== "post.image.save" &&
     message.type !== "post.video.save" &&
-    message.type !== "post.post.save"
+    message.type !== "post.post.save" &&
+    message.type !== "post.bookmark.lookup" &&
+    message.type !== "post.bookmark.save"
   ) {
     return { ok: false, message: `Unsupported native host message for ${HOST_NAME}.` };
   }
@@ -245,7 +253,7 @@ async function handleMessage(message) {
       tweetUrl: message.tweetUrl,
       tagId: message.tagId,
     };
-  } else {
+  } else if (message.type === "post.post.save") {
     localMessage = {
       type: "extension.post.save",
       source: "post-extension",
@@ -258,6 +266,26 @@ async function handleMessage(message) {
       capturedAt: message.capturedAt,
       visibleSnapshot: message.visibleSnapshot,
       tagId: message.tagId,
+    };
+  } else if (message.type === "post.bookmark.lookup") {
+    localMessage = {
+      type: "extension.bookmark.lookup",
+      source: "post-extension",
+      dbPath,
+      emittedAt: Date.now(),
+      capture: message.capture,
+    };
+  } else {
+    localMessage = {
+      type: "extension.bookmark.save",
+      source: "post-extension",
+      dbPath,
+      emittedAt: Date.now(),
+      capture: message.capture,
+      titleOverride: message.titleOverride,
+      note: message.note,
+      tagIds: message.tagIds,
+      action: message.action,
     };
   }
   const ack = await sendLocalIpc(dbPath, localMessage);
@@ -278,12 +306,24 @@ async function handleMessage(message) {
     return { ok: false, message: ack.message ?? "Post Desktop rejected the context request." };
   }
 
+  if (message.type === "post.bookmark.lookup") {
+    if (ack.type !== "extension.bookmark.lookup.ack") {
+      return { ok: false, message: "Post Desktop returned an unsupported lookup response." };
+    }
+    if (ack.ok && Array.isArray(ack.duplicates)) {
+      return { ok: true, duplicates: ack.duplicates };
+    }
+    return { ok: false, message: ack.message ?? "Post Desktop rejected the bookmark lookup." };
+  }
+
   const expectedAckType =
     message.type === "post.image.save"
       ? "extension.image.save.ack"
       : message.type === "post.video.save"
         ? "extension.video.save.ack"
-        : "extension.post.save.ack";
+        : message.type === "post.post.save"
+          ? "extension.post.save.ack"
+          : "extension.bookmark.save.ack";
 
   if (ack.type !== expectedAckType) {
     return { ok: false, message: "Post Desktop returned an unsupported save response." };

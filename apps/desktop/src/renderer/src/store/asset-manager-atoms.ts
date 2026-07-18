@@ -7,7 +7,7 @@
 
 import { atom } from "jotai";
 
-export type AssetTypeFilter = "markdown" | "post" | "image" | "video" | "link" | "file";
+export type AssetTypeFilter = "markdown" | "post" | "image" | "video" | "youtube" | "link" | "file";
 export type AssetFilterMatch = "and" | "or";
 export type AssetTimeFilter = "any" | "today" | "week" | "m30" | "custom";
 export type AssetStatusFilter = "any" | "inbox" | "draft" | "published";

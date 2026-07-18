@@ -56,6 +56,7 @@ function mapIndexedAssetKind(kind: IndexedAsset["kind"], extension?: string | nu
     kind === "post" ||
     kind === "image" ||
     kind === "video" ||
+    kind === "youtube" ||
     kind === "web"
   ) {
     return kind;
@@ -146,7 +147,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
       (asset.image?.status === "ready" && asset.image.thumbnailFormat === "original"));
   // Web assets carry their OG cover image on the shared imageCache thumbnail.
   const hasCachedThumbnail =
-    (kind === "image" || kind === "video" || kind === "web") &&
+    (kind === "image" || kind === "video" || kind === "youtube" || kind === "web") &&
     asset.image?.status === "ready" &&
     Boolean(asset.image.thumbnailPath);
   const thumbnailUrl = usesOriginalAsThumbnail
@@ -160,6 +161,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     post: "X Post",
     image: i18n.t("assets.kind.image"),
     video: i18n.t("assets.kind.video"),
+    youtube: i18n.t("assets.kind.youtube"),
     link: i18n.t("assets.kind.link"),
     web: i18n.t("assets.kind.web"),
     file: extension.toUpperCase(),
@@ -177,9 +179,12 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
       : coverMode
         ? noteImagesRaw.slice(0, 1)
         : noteImagesRaw.slice(0, 3);
-  const rawDurationMs = asset.image?.videoDurationMs;
+  const rawDurationMs =
+    kind === "youtube" ? asset.youtube?.durationMs : asset.image?.videoDurationMs;
   const durationMs =
-    kind === "video" && typeof rawDurationMs === "number" && rawDurationMs >= 0
+    (kind === "video" || kind === "youtube") &&
+    typeof rawDurationMs === "number" &&
+    rawDurationMs >= 0
       ? rawDurationMs
       : undefined;
   const duration = durationMs !== undefined ? formatVideoDuration(durationMs) : undefined;
@@ -202,7 +207,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     tagIds: tags.map((tagItem) => tagItem.id),
     meta: `${metaPrefix[kind]} · ${formatBytes(asset.sizeBytes)}`,
     accent: getTagHue(tag),
-    height: kind === "image" || kind === "video" ? "medium" : "short",
+    height: kind === "image" || kind === "video" || kind === "youtube" ? "medium" : "short",
     duration,
     durationMs,
     mediaUrl,
@@ -229,9 +234,13 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     authorHandle: asset.post?.authorHandle ?? undefined,
     authorAvatarUrl: asset.post?.authorAvatarUrl ?? undefined,
     publishedTime: formatPostDate(asset.post?.publishedAt),
-    url: asset.post?.canonicalUrl ?? asset.web?.url ?? undefined,
+    url: asset.youtube?.canonicalUrl ?? asset.post?.canonicalUrl ?? asset.web?.url ?? undefined,
     domain:
-      extractDomain(asset.post?.canonicalUrl) ?? asset.web?.domain ?? extractDomain(asset.web?.url),
+      kind === "youtube"
+        ? "YouTube"
+        : (extractDomain(asset.post?.canonicalUrl) ??
+          asset.web?.domain ??
+          extractDomain(asset.web?.url)),
   };
 }
 

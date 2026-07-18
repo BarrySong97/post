@@ -203,6 +203,7 @@
       "post": "Post",
       "image": "Image",
       "video": "Video",
+      "youtube": "YouTube",
       "link": "Link",
       "web": "Web",
       "file": "File"

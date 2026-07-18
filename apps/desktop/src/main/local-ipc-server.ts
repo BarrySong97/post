@@ -1,6 +1,6 @@
 /**
- * @purpose Receive same-machine CLI notifications after external Post data writes.
- * @role    Local IPC bridge from post-cli commits into the main-process app event bus.
+ * @purpose Receive same-machine CLI notifications and browser-extension collection requests.
+ * @role    Local IPC bridge for live commands, invalidations, and extension imports.
  * @deps    Electron app paths, Node net sockets, app event bus, database path resolver.
  * @gotcha  Socket messages are invalidation hints only; ack means the app published the refresh event.
  */
@@ -21,6 +21,8 @@ import { getDatabase } from "./db";
 import { getRequestedOrActiveVault } from "./repositories/vaults-repository";
 import {
   commandMessageSchema,
+  extensionBookmarkLookupMessageSchema,
+  extensionBookmarkSaveMessageSchema,
   extensionContextGetMessageSchema,
   extensionImageSaveMessageSchema,
   extensionPostSaveMessageSchema,
@@ -28,6 +30,10 @@ import {
   type CommandMessage,
   type CommandOp,
 } from "./local-ipc-messages";
+import {
+  lookupExtensionBookmarks,
+  saveExtensionBookmark,
+} from "./services/extension-bookmark-import-service";
 import { saveExtensionImage } from "./services/extension-image-import-service";
 import { saveExtensionPost } from "./services/extension-post-import-service";
 import { saveExtensionVideo } from "./services/extension-video-import-service";
@@ -109,6 +115,26 @@ type ExtensionPostSaveAck = {
     tagId: string | null;
     status: "created" | "updated";
     childAssetIds: string[];
+    warnings: string[];
+  };
+};
+
+type ExtensionBookmarkLookupAck = {
+  type: "extension.bookmark.lookup.ack";
+  ok: boolean;
+  message?: string;
+  duplicates?: Array<{ assetId: string; title: string; copyIndex: number }>;
+};
+
+type ExtensionBookmarkSaveAck = {
+  type: "extension.bookmark.save.ack";
+  ok: boolean;
+  message?: string;
+  asset?: {
+    id: string;
+    title: string;
+    relativePath: string;
+    status: "created" | "updated";
     warnings: string[];
   };
 };
@@ -200,6 +226,14 @@ function sendExtensionPostSaveAck(socket: Socket, ack: ExtensionPostSaveAck): vo
   });
 }
 
+function sendExtensionBookmarkLookupAck(socket: Socket, ack: ExtensionBookmarkLookupAck): void {
+  socket.write(`${JSON.stringify(ack)}\n`, () => socket.end());
+}
+
+function sendExtensionBookmarkSaveAck(socket: Socket, ack: ExtensionBookmarkSaveAck): void {
+  socket.write(`${JSON.stringify(ack)}\n`, () => socket.end());
+}
+
 function isCommandEnvelope(value: unknown): value is { type: string } {
   if (!value || typeof value !== "object") {
     return false;
@@ -219,7 +253,9 @@ function isExtensionEnvelope(value: unknown): value is { type: string } {
     type === "extension.context.get" ||
     type === "extension.image.save" ||
     type === "extension.video.save" ||
-    type === "extension.post.save"
+    type === "extension.post.save" ||
+    type === "extension.bookmark.lookup" ||
+    type === "extension.bookmark.save"
   );
 }
 
@@ -559,6 +595,105 @@ async function handleExtensionPostSaveMessage(socket: Socket, raw: unknown): Pro
   }
 }
 
+function handleExtensionBookmarkLookupMessage(socket: Socket, raw: unknown): void {
+  const parsed = extensionBookmarkLookupMessageSchema.safeParse(raw);
+  if (!parsed.success) {
+    sendExtensionBookmarkLookupAck(socket, {
+      type: "extension.bookmark.lookup.ack",
+      ok: false,
+      message: "Invalid extension bookmark lookup message.",
+    });
+    return;
+  }
+  const message = parsed.data;
+  if (path.resolve(message.dbPath) !== path.resolve(getDatabasePath())) {
+    sendExtensionBookmarkLookupAck(socket, {
+      type: "extension.bookmark.lookup.ack",
+      ok: false,
+      message: "Extension bookmark database path did not match the running app.",
+    });
+    return;
+  }
+  try {
+    sendExtensionBookmarkLookupAck(socket, {
+      type: "extension.bookmark.lookup.ack",
+      ok: true,
+      duplicates: lookupExtensionBookmarks({
+        capture: message.capture,
+        vaultId: message.vaultId,
+      }),
+    });
+  } catch (error) {
+    sendExtensionBookmarkLookupAck(socket, {
+      type: "extension.bookmark.lookup.ack",
+      ok: false,
+      message: error instanceof Error ? error.message : "Bookmark lookup failed.",
+    });
+  }
+}
+
+async function handleExtensionBookmarkSaveMessage(socket: Socket, raw: unknown): Promise<void> {
+  const parsed = extensionBookmarkSaveMessageSchema.safeParse(raw);
+  if (!parsed.success) {
+    sendExtensionBookmarkSaveAck(socket, {
+      type: "extension.bookmark.save.ack",
+      ok: false,
+      message: "Invalid extension bookmark save message.",
+    });
+    return;
+  }
+  const message = parsed.data;
+  if (path.resolve(message.dbPath) !== path.resolve(getDatabasePath())) {
+    sendExtensionBookmarkSaveAck(socket, {
+      type: "extension.bookmark.save.ack",
+      ok: false,
+      message: "Extension bookmark database path did not match the running app.",
+    });
+    return;
+  }
+  try {
+    const saved = await saveExtensionBookmark({
+      capture: message.capture,
+      titleOverride: message.titleOverride,
+      note: message.note,
+      tagIds: message.tagIds,
+      action: message.action,
+      vaultId: message.vaultId,
+    });
+    appEventBus.publish({
+      type: "ledger.changed",
+      emittedAt: Date.now(),
+      source: "post-extension",
+      dbPath: message.dbPath,
+      changed: [
+        "assets",
+        "assetFiles",
+        "assetTags",
+        message.capture.kind === "youtube" ? "youtubeCache" : "webCache",
+        "imageCache",
+      ],
+      operationCount: 1,
+    });
+    sendExtensionBookmarkSaveAck(socket, {
+      type: "extension.bookmark.save.ack",
+      ok: true,
+      asset: {
+        id: saved.assetId,
+        title: saved.title,
+        relativePath: saved.relativePath,
+        status: saved.status,
+        warnings: saved.warnings,
+      },
+    });
+  } catch (error) {
+    sendExtensionBookmarkSaveAck(socket, {
+      type: "extension.bookmark.save.ack",
+      ok: false,
+      message: error instanceof Error ? error.message : "Bookmark import failed.",
+    });
+  }
+}
+
 function handleSocket(socket: Socket): void {
   let buffer = "";
 
@@ -592,8 +727,12 @@ function handleSocket(socket: Socket): void {
               void handleExtensionImageSaveMessage(socket, message);
             } else if (message.type === "extension.video.save") {
               void handleExtensionVideoSaveMessage(socket, message);
-            } else {
+            } else if (message.type === "extension.post.save") {
               void handleExtensionPostSaveMessage(socket, message);
+            } else if (message.type === "extension.bookmark.lookup") {
+              handleExtensionBookmarkLookupMessage(socket, message);
+            } else {
+              void handleExtensionBookmarkSaveMessage(socket, message);
             }
           } else {
             sendAck(socket, {

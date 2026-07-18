@@ -2,12 +2,13 @@
 
 ## Responsibility
 
-`apps/extension` is the standalone browser extension surface for Post. It is separate from the Electron desktop app and provides Chrome Manifest V3 collection workflows that hand browser assets to Post Desktop.
+`apps/extension` is the standalone browser extension surface for Post. It is separate from the Electron desktop app and provides Chrome Manifest V3 collection workflows that hand browser assets to Post Desktop. Its toolbar Popup saves general pages and YouTube videos; context menus remain the fast path for images, X media/posts, and YouTube videos.
 
 The first implemented browser event is a right-click context menu for images. The top-level "Add image to Post" item asks the Post Desktop native messaging host for the active vault's tags. Each submenu leads with a "直接保存（进 Inbox）" item that saves with no tag (the asset lands untagged in Inbox), followed by the tags ordered recent-first — recently-used tag IDs are remembered in `chrome.storage.local` and a separator divides them from the rest. Clicking a tag sends the selected image URL and tag ID to Desktop; the direct-save item sends no tag ID. Either way Desktop downloads the image into the active vault and creates the asset (plus the tag record only when a tag was chosen). An empty vault no longer disables the menu — direct-save is always available.
 Twitter/X pages also get a video content script. The "Add video to Post" context menu is shown only when the current hovered or right-clicked Post contains a video, asks the content script for the current post/video context, and sends the post ID plus observed `video.twimg.com` requests to Desktop. Desktop uses the post ID to resolve complete playback variants from X public embed metadata; observed MP4/HLS requests remain a fallback because they may be DASH audio or initialization fragments rather than complete videos.
 The same content script identifies the X post under the context-menu pointer. When the selected post has a semantic "Show more" text control inside or alongside its text node, the save request clicks it and waits briefly for the selected post's text to expand before taking the DOM snapshot. The "Add post to Post" submenu sends the post ID, canonical URL, selected tag, snapshot (including the visible author-avatar URL), and whether its text is still truncated through Native Messaging. Desktop resolves normalized post metadata, including a server-rendered page fallback for long-form Note posts, writes a `type: x-post` Markdown asset, imports direct media as related child assets, and updates the same Post on repeated saves.
 The background service worker suppresses duplicate save requests for the same asset/tag while a save is already in flight.
+The toolbar Popup inspects the active page with `activeTab` + `scripting`, loads the active Vault and existing tags through Native Messaging, and offers an editable title, existing-tag multi-select, and note. Generic pages become `web` `.url` assets. Recognized YouTube Watch/Shorts/Live/Embed pages become first-class `youtube` `.url` assets with normalized database metadata and a cached cover. A duplicate can update the earliest active copy (preserving its custom title/note and merging tags) or create an independent copy. The YouTube context menu always uses the update behavior and never opens the Popup.
 
 ### Dev and prod channels
 
@@ -16,7 +17,8 @@ The extension builds as two separate installs so a test browser and a release br
 ## File Map
 
 - `apps/extension/manifest.json` - Chrome MV3 manifest with the background service worker, `contextMenus` permission, native messaging, and Twitter/X content script registration.
-- `apps/extension/src/background/index.ts` - background service worker that registers image, Twitter/X video, and X Post context menus and forwards save requests to the native host.
+- `apps/extension/src/background/index.ts` - background service worker that registers collection menus, prepares the Popup, and forwards save requests to the native host.
+- `apps/extension/src/popup/` and `src/page-inspector.ts` - dense bookmark form plus active-page generic/YouTube metadata extraction.
 - `apps/extension/src/content/twitter-video-context.ts` - Twitter/X content script that captures the right-clicked Post plus current-post video and visible media context.
 - `apps/extension/native-host/post-native-host.mjs` - Chrome Native Messaging stdio host that forwards extension requests to Desktop local IPC.
 - `apps/extension/native-host/install-native-host.mjs` - dev helper that writes the browser-specific native messaging host manifest for an extension ID.
@@ -39,6 +41,7 @@ The extension builds as two separate installs so a test browser and a release br
 ## Notes
 
 - The extension does not use the desktop tRPC IPC bridge. Browser-to-Desktop calls go through Chrome Native Messaging, then Desktop's existing local IPC socket.
+- Bookmark lookup/save uses `post.bookmark.lookup` and `post.bookmark.save`; see [browser bookmark capture](../../topics/browser-bookmark-capture.md).
 - Native host context calls fail quickly, while image/video/Post save calls use import-sized timeouts so long downloads do not report a false failure.
 - X Post context responses are asynchronous because long text expansion may wait up to a short bounded timeout. Failed expansion does not block capture; Desktop records a partial-capture warning when no complete metadata text is available either.
 - Native Messaging host manifests must list exact extension origins; install the host again if the unpacked extension ID changes.

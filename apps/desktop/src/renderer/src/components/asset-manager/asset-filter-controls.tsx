@@ -16,6 +16,7 @@ import {
   MessageSquareQuote,
   Plus,
   Video,
+  Youtube,
 } from "lucide-react";
 
 import {
@@ -35,6 +36,7 @@ export const ASSET_TYPE_FILTERS = [
   { value: "post", labelKey: "assets.kind.post", icon: MessageSquareQuote },
   { value: "image", labelKey: "assets.kind.image", icon: ImageIcon },
   { value: "video", labelKey: "assets.kind.video", icon: Video },
+  { value: "youtube", labelKey: "assets.kind.youtube", icon: Youtube },
   { value: "link", labelKey: "assets.kind.link", icon: LinkIcon },
   { value: "file", labelKey: "assets.kind.file", icon: FileText },
 ] satisfies Array<{ value: AssetTypeFilter; labelKey: string; icon: typeof FileText }>;

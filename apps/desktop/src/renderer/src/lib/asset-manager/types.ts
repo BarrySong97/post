@@ -7,7 +7,15 @@
 
 import type { RouterOutputs } from "@/lib/trpc";
 
-export type AssetKind = "markdown" | "post" | "image" | "video" | "link" | "web" | "file";
+export type AssetKind =
+  | "markdown"
+  | "post"
+  | "image"
+  | "video"
+  | "youtube"
+  | "link"
+  | "web"
+  | "file";
 export type AssetStatus = "inbox" | "organized" | "draft" | "published";
 export type AssetPrivacy = "normal" | "private";
 

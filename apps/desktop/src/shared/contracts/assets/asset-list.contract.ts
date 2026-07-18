@@ -17,6 +17,7 @@ export const assetListTypeFilterValues = [
   "post",
   "image",
   "video",
+  "youtube",
   "link",
   "file",
 ] as const;

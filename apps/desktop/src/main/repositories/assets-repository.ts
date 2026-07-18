@@ -28,7 +28,14 @@ import {
 import { schema } from "@post/db";
 import { getDatabase } from "../db";
 
-export type AssetListTypeFilter = "markdown" | "post" | "image" | "video" | "link" | "file";
+export type AssetListTypeFilter =
+  | "markdown"
+  | "post"
+  | "image"
+  | "video"
+  | "youtube"
+  | "link"
+  | "file";
 export type AssetListTimeFilter = "any" | "today" | "week" | "m30";
 export type AssetListSourceType = "vault" | "external_file" | "url";
 export type AssetListTagMatch = "and" | "or";
@@ -65,7 +72,7 @@ export type AssetListPageInput = AssetListFilters & {
 export type AssetLayoutIndexInput = AssetListFilters;
 
 const URL_FILE_EXTENSIONS = ["url", "webloc"] as const;
-const NON_FILE_ASSET_KINDS = ["markdown", "post", "image", "video", "web"] as const;
+const NON_FILE_ASSET_KINDS = ["markdown", "post", "image", "video", "youtube", "web"] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const EMPTY_ASSET_SUMMARY = {
@@ -101,6 +108,7 @@ const ASSET_LIST_TYPE_FILTERS = new Set<AssetListTypeFilter>([
   "post",
   "image",
   "video",
+  "youtube",
   "link",
   "file",
 ]);
@@ -130,6 +138,7 @@ type AssetJoinedRow = {
   image: typeof schema.imageCache.$inferSelect | null;
   post: typeof schema.postCache.$inferSelect | null;
   web: typeof schema.webCache.$inferSelect | null;
+  youtube: typeof schema.youtubeCache.$inferSelect | null;
 };
 
 export function getAssetRows(vaultId?: string, assetId?: string) {
@@ -149,6 +158,7 @@ export function getAssetRows(vaultId?: string, assetId?: string) {
       image: schema.imageCache,
       post: schema.postCache,
       web: schema.webCache,
+      youtube: schema.youtubeCache,
     })
     .from(schema.assets)
     .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
@@ -157,6 +167,7 @@ export function getAssetRows(vaultId?: string, assetId?: string) {
     .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
     .leftJoin(schema.postCache, eq(schema.postCache.assetId, schema.assets.id))
     .leftJoin(schema.webCache, eq(schema.webCache.assetId, schema.assets.id))
+    .leftJoin(schema.youtubeCache, eq(schema.youtubeCache.assetId, schema.assets.id))
     .where(and(...filters))
     .orderBy(desc(schema.assets.updatedAt))
     .all();
@@ -287,6 +298,18 @@ export function attachRelations(rows: AssetJoinedRow[]) {
           siteName: row.web.siteName,
         }
       : null,
+    youtube: row.youtube
+      ? {
+          videoId: row.youtube.videoId,
+          canonicalUrl: row.youtube.canonicalUrl,
+          channelId: row.youtube.channelId,
+          channelName: row.youtube.channelName,
+          channelUrl: row.youtube.channelUrl,
+          publishedAt: row.youtube.publishedAt,
+          durationMs: row.youtube.durationMs,
+          liveStatus: row.youtube.liveStatus,
+        }
+      : null,
     tags: tagsByAsset.get(row.asset.id) ?? [],
     relatedIds: Array.from(relatedByAsset.get(row.asset.id) ?? []),
     noteImages: noteImagesByAsset.get(row.asset.id) ?? [],
@@ -310,6 +333,7 @@ export function getAssetRowsByIds(assetIds: readonly string[]) {
       image: schema.imageCache,
       post: schema.postCache,
       web: schema.webCache,
+      youtube: schema.youtubeCache,
     })
     .from(schema.assets)
     .innerJoin(schema.assetFiles, eq(schema.assetFiles.assetId, schema.assets.id))
@@ -318,6 +342,7 @@ export function getAssetRowsByIds(assetIds: readonly string[]) {
     .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
     .leftJoin(schema.postCache, eq(schema.postCache.assetId, schema.assets.id))
     .leftJoin(schema.webCache, eq(schema.webCache.assetId, schema.assets.id))
+    .leftJoin(schema.youtubeCache, eq(schema.youtubeCache.assetId, schema.assets.id))
     .where(
       and(
         inArray(schema.assets.id, uniqueAssetIds),
@@ -401,7 +426,13 @@ function getTypeFilterCondition(typeFilters: readonly AssetListTypeFilter[] | un
   }
 
   const conditions = typeFilters.flatMap((type): SQL[] => {
-    if (type === "markdown" || type === "post" || type === "image" || type === "video") {
+    if (
+      type === "markdown" ||
+      type === "post" ||
+      type === "image" ||
+      type === "video" ||
+      type === "youtube"
+    ) {
       return [eq(schema.assets.kind, type)];
     }
 
@@ -409,7 +440,10 @@ function getTypeFilterCondition(typeFilters: readonly AssetListTypeFilter[] | un
       return [
         or(
           eq(schema.assets.kind, "web"),
-          inArray(schema.assetFiles.extension, [...URL_FILE_EXTENSIONS]),
+          and(
+            notInArray(schema.assets.kind, ["youtube"]),
+            inArray(schema.assetFiles.extension, [...URL_FILE_EXTENSIONS]),
+          ),
         )!,
       ];
     }
@@ -518,6 +552,7 @@ export function getAssetPage(input: AssetListPageInput) {
       image: schema.imageCache,
       post: schema.postCache,
       web: schema.webCache,
+      youtube: schema.youtubeCache,
       sortValue,
     })
     .from(schema.assets)
@@ -527,6 +562,7 @@ export function getAssetPage(input: AssetListPageInput) {
     .leftJoin(schema.imageCache, eq(schema.imageCache.assetId, schema.assets.id))
     .leftJoin(schema.postCache, eq(schema.postCache.assetId, schema.assets.id))
     .leftJoin(schema.webCache, eq(schema.webCache.assetId, schema.assets.id))
+    .leftJoin(schema.youtubeCache, eq(schema.youtubeCache.assetId, schema.assets.id))
     .where(and(...whereConditions))
     .orderBy(
       isDescending ? desc(sortValue) : asc(sortValue),

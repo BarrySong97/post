@@ -34,6 +34,7 @@ function buildIndexedAsset(overrides: Partial<IndexedAsset> = {}): IndexedAsset 
     image: null,
     post: null,
     web: null,
+    youtube: null,
     tags: [],
     relatedIds: [],
   };
@@ -250,5 +251,36 @@ describe("mapIndexedAsset web OG cover", () => {
     expect(asset.ogImage).toBe(false);
     expect(asset.thumbnailUrl).toBeUndefined();
     expect(asset.domain).toBe("example.com");
+  });
+});
+
+describe("mapIndexedAsset YouTube cover", () => {
+  it("maps cached cover, duration, canonical URL, and YouTube source label", () => {
+    const asset = mapIndexedAsset(
+      buildIndexedAsset({
+        kind: "youtube",
+        fileName: "video123.url",
+        extension: "url",
+        image: buildImageCache(80),
+        youtube: {
+          videoId: "video123",
+          canonicalUrl: "https://www.youtube.com/watch?v=video123",
+          channelId: "channel123",
+          channelName: "Post Studio",
+          channelUrl: "https://www.youtube.com/channel/channel123",
+          publishedAt: "2026-07-17T00:00:00.000Z",
+          durationMs: 125_000,
+          liveStatus: "none",
+        },
+      }),
+    );
+
+    expect(asset.kind).toBe("youtube");
+    expect(asset.thumbnailUrl).toBeTruthy();
+    expect(asset.mediaUrl).toBeUndefined();
+    expect(asset.duration).toBe("2:05");
+    expect(asset.durationMs).toBe(125_000);
+    expect(asset.url).toBe("https://www.youtube.com/watch?v=video123");
+    expect(asset.domain).toBe("YouTube");
   });
 });

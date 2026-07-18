@@ -13,11 +13,11 @@ Mental model: **files on disk in the vault; organization in SQLite**.
 | **Asset↔Tag** | Many-to-many binding |
 | **Saved view** | Named filter/sort (`filterJson`, `sortJson`, `sortOrder`) |
 | **Asset link** | Relations (wiki/embed/post_media/…) between assets |
-| **Caches** | Kind-specific metadata: `image_cache`, `markdown_cache`, `post_cache`, `web_cache` |
+| **Caches** | Kind-specific metadata: `image_cache`, `markdown_cache`, `post_cache`, `web_cache`, `youtube_cache` |
 
 ## Asset kinds (typical)
 
-`markdown`, `post`, `image`, `video`, `link`, `web`, `file`
+`markdown`, `post`, `image`, `video`, `youtube`, `link`, `web`, `file`
 
 - **Inbox / 待整理**: assets with no tags (CLI often uses status/inbox filters — prefer `ledger-info` / `asset list --help` for exact flags).
 - **X posts**: kind `post` + Markdown on disk + `post_cache`; related media via `asset_links`.

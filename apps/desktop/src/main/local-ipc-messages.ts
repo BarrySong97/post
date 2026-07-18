@@ -1,6 +1,6 @@
 /**
  * @purpose Validate inbound local-IPC messages sent by the Post CLI and extension native host.
- * @role    Zod schema boundary for the socket server's filter, asset, and extension command families.
+ * @role    Zod boundary for CLI commands and extension asset/bookmark messages.
  * @deps    zod and shared saved-view/asset-list contracts.
  * @gotcha  Wire payloads are canonical/id-based; the renderer resolves ids to names and labels.
  */
@@ -117,6 +117,51 @@ export const extensionPostSaveMessageSchema = z.object({
   vaultId: z.string().min(1).optional(),
 });
 
+const bookmarkBaseCaptureSchema = z.object({
+  canonicalUrl: z.string().url(),
+  pageUrl: z.string().url(),
+  sourceTitle: z.string().max(1000).optional(),
+  description: z.string().max(50_000).optional(),
+  thumbnailUrl: z.string().url().optional(),
+  language: z.string().max(100).optional(),
+  capturedAt: z.number(),
+});
+
+export const extensionBookmarkCaptureSchema = z.discriminatedUnion("kind", [
+  bookmarkBaseCaptureSchema.extend({
+    kind: z.literal("web"),
+    siteName: z.string().max(500).optional(),
+  }),
+  bookmarkBaseCaptureSchema.extend({
+    kind: z.literal("youtube"),
+    videoId: z.string().min(1).max(100),
+    channelId: z.string().max(200).optional(),
+    channelName: z.string().max(500).optional(),
+    channelUrl: z.string().url().optional(),
+    publishedAt: z.string().max(100).optional(),
+    durationMs: z.number().int().nonnegative().optional(),
+    liveStatus: z.enum(["live", "ended", "none", "unknown"]).optional(),
+  }),
+]);
+
+export const extensionBookmarkLookupMessageSchema = z.object({
+  type: z.literal("extension.bookmark.lookup"),
+  ...extensionBaseFields,
+  capture: extensionBookmarkCaptureSchema,
+  vaultId: z.string().min(1).optional(),
+});
+
+export const extensionBookmarkSaveMessageSchema = z.object({
+  type: z.literal("extension.bookmark.save"),
+  ...extensionBaseFields,
+  capture: extensionBookmarkCaptureSchema,
+  titleOverride: z.string().max(300).optional(),
+  note: z.string().max(10_000).optional(),
+  tagIds: z.array(z.string().min(1)).max(100).default([]),
+  action: z.enum(["create", "update", "copy"]),
+  vaultId: z.string().min(1).optional(),
+});
+
 export const commandMessageSchema = z.discriminatedUnion("type", [
   filterApplyMessageSchema,
   filterActivateViewMessageSchema,
@@ -132,3 +177,6 @@ export type ExtensionContextGetMessage = z.infer<typeof extensionContextGetMessa
 export type ExtensionImageSaveMessage = z.infer<typeof extensionImageSaveMessageSchema>;
 export type ExtensionVideoSaveMessage = z.infer<typeof extensionVideoSaveMessageSchema>;
 export type ExtensionPostSaveMessage = z.infer<typeof extensionPostSaveMessageSchema>;
+export type ExtensionBookmarkCapture = z.infer<typeof extensionBookmarkCaptureSchema>;
+export type ExtensionBookmarkLookupMessage = z.infer<typeof extensionBookmarkLookupMessageSchema>;
+export type ExtensionBookmarkSaveMessage = z.infer<typeof extensionBookmarkSaveMessageSchema>;

@@ -14,14 +14,14 @@ describe("assetListInputSchema", () => {
     expect(assetListInputSchema.parse(undefined)).toBeUndefined();
   });
 
-  it("accepts image filters with the default paging contract", () => {
+  it("accepts image and YouTube filters with the default paging contract", () => {
     const result = assetListInputSchema.parse({
-      typeFilters: ["image"],
+      typeFilters: ["image", "youtube"],
       limit: ASSET_LIST_DEFAULT_LIMIT,
       sort: "updated_desc",
     });
 
-    expect(result?.typeFilters).toEqual(["image"]);
+    expect(result?.typeFilters).toEqual(["image", "youtube"]);
     expect(result?.limit).toBe(ASSET_LIST_DEFAULT_LIMIT);
   });
 

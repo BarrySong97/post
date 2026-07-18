@@ -59,6 +59,8 @@ runtime and installs its own `better-sqlite3` build.
   callers can see validation failures without committing data.
 - `view update` preserves existing filters unless filter flags are passed; use
   `--clear-filters` to reset filters to the default unfiltered view.
+- Saved-view and live-filter `--kind` options include `youtube`, matching the
+  Desktop board's first-class YouTube bookmark filter.
 - Saved views and live `filter apply` commands default to `added_desc`, matching
   the Desktop asset board's newest-import-first order. Callers can still choose
   added, modified, or source-created time in either direction with `--sort`.

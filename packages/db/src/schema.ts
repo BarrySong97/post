@@ -20,6 +20,7 @@ export const assetKinds = [
   "post",
   "image",
   "video",
+  "youtube",
   "audio",
   "pdf",
   "document",
@@ -62,6 +63,12 @@ export type MarkdownParseStatus = (typeof markdownParseStatuses)[number];
 
 export const postCaptureStatuses = ["complete", "partial"] as const;
 export type PostCaptureStatus = (typeof postCaptureStatuses)[number];
+
+export const bookmarkCaptureStatuses = ["complete", "partial"] as const;
+export type BookmarkCaptureStatus = (typeof bookmarkCaptureStatuses)[number];
+
+export const youtubeLiveStatuses = ["live", "ended", "none", "unknown"] as const;
+export type YouTubeLiveStatus = (typeof youtubeLiveStatuses)[number];
 
 export const imageCacheStatuses = ["pending", "ready", "failed"] as const;
 export type ImageCacheStatus = (typeof imageCacheStatuses)[number];
@@ -395,11 +402,70 @@ export const webCache = sqliteTable(
     url: text("url").notNull(),
     domain: text("domain"),
     siteName: text("site_name"),
+    sourceTitle: text("source_title"),
+    titleOverride: text("title_override"),
     description: text("description"),
+    thumbnailUrl: text("thumbnail_url"),
+    language: text("language"),
+    note: text("note"),
+    copyIndex: integer("copy_index").notNull().default(0),
+    captureStatus: text("capture_status")
+      .$type<BookmarkCaptureStatus>()
+      .notNull()
+      .default("complete"),
+    warningsJson: text("warnings_json").notNull().default("[]"),
+    schemaVersion: integer("schema_version").notNull().default(1),
     capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
-  (table) => [index("web_cache_vault_id_idx").on(table.vaultId)],
+  (table) => [
+    uniqueIndex("web_cache_vault_url_copy_unique").on(table.vaultId, table.url, table.copyIndex),
+    index("web_cache_vault_id_idx").on(table.vaultId),
+  ],
+);
+
+export const youtubeCache = sqliteTable(
+  "youtube_cache",
+  {
+    assetId: text("asset_id")
+      .primaryKey()
+      .references(() => assets.id, { onDelete: "cascade" }),
+    vaultId: text("vault_id")
+      .notNull()
+      .references(() => vaults.id, { onDelete: "cascade" }),
+    videoId: text("video_id").notNull(),
+    canonicalUrl: text("canonical_url").notNull(),
+    sourceTitle: text("source_title"),
+    titleOverride: text("title_override"),
+    description: text("description"),
+    channelId: text("channel_id"),
+    channelName: text("channel_name"),
+    channelUrl: text("channel_url"),
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    durationMs: integer("duration_ms"),
+    thumbnailUrl: text("thumbnail_url"),
+    language: text("language"),
+    liveStatus: text("live_status").$type<YouTubeLiveStatus>().notNull().default("unknown"),
+    note: text("note"),
+    copyIndex: integer("copy_index").notNull().default(0),
+    captureStatus: text("capture_status")
+      .$type<BookmarkCaptureStatus>()
+      .notNull()
+      .default("complete"),
+    warningsJson: text("warnings_json").notNull().default("[]"),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    capturedAt: integer("captured_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("youtube_cache_vault_video_copy_unique").on(
+      table.vaultId,
+      table.videoId,
+      table.copyIndex,
+    ),
+    index("youtube_cache_vault_id_idx").on(table.vaultId),
+    index("youtube_cache_channel_id_idx").on(table.channelId),
+  ],
 );
 
 export const syncRuns = sqliteTable(
@@ -476,6 +542,8 @@ export type MarkdownCacheRecord = typeof markdownCache.$inferSelect;
 export type NewMarkdownCacheRecord = typeof markdownCache.$inferInsert;
 export type PostCacheRecord = typeof postCache.$inferSelect;
 export type NewPostCacheRecord = typeof postCache.$inferInsert;
+export type YouTubeCacheRecord = typeof youtubeCache.$inferSelect;
+export type NewYouTubeCacheRecord = typeof youtubeCache.$inferInsert;
 export type SyncRunRecord = typeof syncRuns.$inferSelect;
 export type NewSyncRunRecord = typeof syncRuns.$inferInsert;
 export type SyncEventRecord = typeof syncEvents.$inferSelect;

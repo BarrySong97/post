@@ -276,7 +276,7 @@ function filtersFromOptions(options: {
   return {
     tagIds: optionArray(options.tag),
     types: optionArray(options.kind).filter((kind) =>
-      ["markdown", "post", "image", "video", "link", "file"].includes(kind),
+      ["markdown", "post", "image", "video", "youtube", "link", "file"].includes(kind),
     ) as SavedViewFilters["types"],
     status: options.status ?? "any",
   };

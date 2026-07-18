@@ -19,8 +19,11 @@ Same local IPC family the CLI uses for live UI / `ledger.changed`.
 | Add image to Post | Download into vault; create image asset; optional tag, or Inbox (no tag) |
 | Add video to Post (X) | Resolve playback variants; import video asset |
 | Add post to Post (X) | Idempotent Markdown `type: x-post` asset + related media children |
+| Toolbar Popup | Save a general web page or YouTube video with title, existing tags, and note |
+| Add YouTube video to Post | Fast Inbox/single-tag `.url` bookmark; updates the earliest active copy |
 
 Recent tags appear first in the image/post menus; direct-save skips tagging.
+YouTube bookmarks are first-class `youtube` assets with database metadata and a locally cached cover. The Vault `.url` file preserves the source URL only; full metadata and notes stay in SQLite.
 
 ## Dev vs prod channels
 

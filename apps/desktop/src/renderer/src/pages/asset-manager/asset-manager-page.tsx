@@ -276,6 +276,7 @@ function getKindMeta(kind: AssetKind) {
     post: { label: "POST", icon: MessageSquareQuote },
     image: { label: "IMG", icon: ImageIcon },
     video: { label: "VIDEO", icon: Video },
+    youtube: { label: "YOUTUBE", icon: Play },
     link: { label: "LINK", icon: LinkIcon },
     web: { label: "WEB", icon: Globe },
     file: { label: "FILE", icon: FileText },
@@ -535,8 +536,12 @@ function VisualBlock({ asset }: { asset: Asset }) {
 function AssetCardMedia({ asset }: { asset: Asset }) {
   const heightCls = { short: "h-32", medium: "h-44", tall: "h-72" }[asset.height ?? "medium"];
   const isVideo = asset.kind === "video";
+  const isYouTube = asset.kind === "youtube";
   const hasMediaThumbnail =
-    (asset.kind === "image" || asset.kind === "video" || asset.kind === "web") &&
+    (asset.kind === "image" ||
+      asset.kind === "video" ||
+      asset.kind === "youtube" ||
+      asset.kind === "web") &&
     asset.thumbnailUrl;
   const imageAspectRatio =
     hasMediaThumbnail && asset.imageWidth && asset.imageHeight
@@ -639,15 +644,21 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
         />
       ) : null}
 
-      {isVideo ? (
+      {isVideo || isYouTube ? (
         <>
-          <span
-            className={`absolute left-1/2 top-1/2 grid h-11 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[#1c1916]/45 text-white shadow-sm backdrop-blur-sm transition-opacity duration-200 ${
-              previewing ? "opacity-0" : "opacity-100"
-            }`}
-          >
-            <Play size={17} fill="currentColor" />
-          </span>
+          {isYouTube ? (
+            <span className="pointer-events-none absolute left-1/2 top-1/2 grid h-8 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-[9px] bg-[#ff0033] text-white shadow-[0_3px_12px_rgba(0,0,0,0.28)]">
+              <Play size={15} fill="currentColor" strokeWidth={0} />
+            </span>
+          ) : (
+            <span
+              className={`absolute left-1/2 top-1/2 grid h-11 w-11 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[#1c1916]/45 text-white shadow-sm backdrop-blur-sm transition-opacity duration-200 ${
+                previewing ? "opacity-0" : "opacity-100"
+              }`}
+            >
+              <Play size={17} fill="currentColor" />
+            </span>
+          )}
           {durationLabel ? (
             <span className="absolute right-2.5 top-2.5 rounded-md bg-[#1c1916]/55 px-1.5 py-0.5 font-mono text-[10.5px] text-white tabular-nums">
               {durationLabel}
@@ -968,7 +979,10 @@ const AssetCard = React.memo(function AssetCard({
 }) {
   const { t } = useTranslation();
   const hasCover =
-    asset.kind === "image" || asset.kind === "video" || (asset.kind === "web" && asset.ogImage);
+    asset.kind === "image" ||
+    asset.kind === "video" ||
+    asset.kind === "youtube" ||
+    (asset.kind === "web" && asset.ogImage);
   const showUrlRow = asset.kind === "link" || (asset.kind === "web" && !asset.ogImage);
   const selectable = asset.kind === "image" && onToggleSelected;
 
@@ -1058,7 +1072,7 @@ const AssetCard = React.memo(function AssetCard({
 });
 
 function getLayoutIndexMediaHeight(item: AssetLayoutIndexItem) {
-  if (item.kind !== "image" && item.kind !== "video") {
+  if (item.kind !== "image" && item.kind !== "video" && item.kind !== "youtube") {
     return 0;
   }
 
@@ -3149,7 +3163,7 @@ function AssetDetail({
         )}
         {asset.kind === "image" && <ImageDetailBody asset={asset} />}
         {asset.kind === "video" && <VideoDetailBody asset={asset} />}
-        {(asset.kind === "web" || asset.kind === "link") && (
+        {(asset.kind === "web" || asset.kind === "link" || asset.kind === "youtube") && (
           <LinkDetailBody asset={asset} onOpen={() => openFileMutation.mutate({ id: asset.id })} />
         )}
         {asset.kind === "file" && (

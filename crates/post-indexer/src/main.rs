@@ -2,7 +2,7 @@
  * @purpose Scan, watch, reconcile, parse, and thumbnail vault files for the Electron app.
  * @role    Rust sidecar CLI that owns indexing commands and structured progress events.
  * @deps    SQLite, notify, image crate, filesystem paths, stdout JSON event contract.
- * @gotcha  Keep CLI arguments, vault-relative paths, and emitted event shapes stable for Electron callers.
+ * @gotcha  Keep CLI/event shapes stable and preserve x-post Markdown / YouTube .url classification.
  */
 
 use std::{
@@ -2924,7 +2924,12 @@ INSERT INTO assets (
 )
 ON CONFLICT(id) DO UPDATE SET
   kind = excluded.kind,
-  title = excluded.title,
+  title = CASE
+    WHEN assets.kind IN ('web', 'youtube')
+      AND excluded.kind IN ('web', 'youtube')
+    THEN assets.title
+    ELSE excluded.title
+  END,
   updated_at = excluded.updated_at,
   indexed_at = excluded.indexed_at,
   deleted_at = NULL;\n",
@@ -3800,6 +3805,9 @@ fn kind_for_path(path: &Path, extension: Option<&str>) -> &'static str {
     if kind == "markdown" && markdown_declares_x_post(path) {
         return "post";
     }
+    if kind == "web" && extension == Some("url") && internet_shortcut_is_youtube_video(path) {
+        return "youtube";
+    }
 
     kind
 }
@@ -3810,6 +3818,72 @@ fn is_markdown_kind(kind: &str) -> bool {
 
 fn markdown_declares_x_post(path: &Path) -> bool {
     markdown_frontmatter_value(path, "type").as_deref() == Some("x-post")
+}
+
+fn internet_shortcut_is_youtube_video(path: &Path) -> bool {
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    let reader = io::BufReader::new(file);
+    reader
+        .lines()
+        .take(40)
+        .filter_map(Result::ok)
+        .find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            key.trim()
+                .eq_ignore_ascii_case("url")
+                .then(|| value.trim().to_string())
+        })
+        .is_some_and(|url| is_youtube_video_url(&url))
+}
+
+fn is_youtube_video_url(raw_url: &str) -> bool {
+    let normalized = raw_url.trim().to_ascii_lowercase();
+    let without_scheme = normalized
+        .strip_prefix("https://")
+        .or_else(|| normalized.strip_prefix("http://"))
+        .unwrap_or(&normalized);
+    let authority_end = without_scheme
+        .find(['/', '?', '#'])
+        .unwrap_or(without_scheme.len());
+    let host = without_scheme[..authority_end]
+        .split('@')
+        .next_back()
+        .unwrap_or("")
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .trim_start_matches("www.")
+        .trim_start_matches("m.");
+    let remainder = &without_scheme[authority_end..];
+
+    if host == "youtu.be" {
+        return remainder
+            .trim_start_matches('/')
+            .split(['?', '#', '/'])
+            .next()
+            .is_some_and(|value| !value.is_empty());
+    }
+    if host != "youtube.com" && host != "youtube-nocookie.com" {
+        return false;
+    }
+
+    let path = remainder.split(['?', '#']).next().unwrap_or("");
+    if ["/shorts/", "/live/", "/embed/"]
+        .iter()
+        .any(|prefix| path.strip_prefix(prefix).is_some_and(|id| !id.is_empty()))
+    {
+        return true;
+    }
+
+    remainder
+        .split_once('?')
+        .map(|(_, query)| query)
+        .unwrap_or("")
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .any(|(key, value)| key == "v" && !value.is_empty())
 }
 
 fn markdown_frontmatter_value(path: &Path, key: &str) -> Option<String> {
@@ -4167,6 +4241,94 @@ mod tests {
             Some("Captured title")
         );
         fs::remove_file(path).expect("remove x post fixture");
+    }
+
+    #[test]
+    fn detects_youtube_internet_shortcuts() {
+        for url in [
+            "https://www.youtube.com/watch?v=abc_123",
+            "https://youtu.be/abc_123?t=12",
+            "https://www.youtube.com/shorts/abc_123",
+            "https://www.youtube-nocookie.com/embed/abc_123",
+        ] {
+            let path = env::temp_dir().join(format!(
+                "post-indexer-youtube-{}-{}.url",
+                now_ms(),
+                stable_hash(url)
+            ));
+            fs::write(&path, format!("[InternetShortcut]\nURL={url}\n"))
+                .expect("write YouTube shortcut fixture");
+            assert_eq!(kind_for_path(&path, Some("url")), "youtube");
+            fs::remove_file(path).expect("remove YouTube shortcut fixture");
+        }
+
+        assert!(!is_youtube_video_url("https://www.youtube.com/@post"));
+        assert!(!is_youtube_video_url(
+            "https://www.youtube.com/playlist?list=PL123"
+        ));
+    }
+
+    #[test]
+    fn preserves_bookmark_titles_when_refreshing_url_files() {
+        let db_path = env::temp_dir().join(format!(
+            "post-indexer-bookmark-title-{}-{}.sqlite",
+            now_ms(),
+            std::process::id()
+        ));
+        let config = Config {
+            command: CommandKind::Refresh,
+            vault_id: "vault-1".to_string(),
+            root_path: env::temp_dir(),
+            db_path: db_path.clone(),
+            thumbnail_root: None,
+            asset_ids: Vec::new(),
+            paths: Vec::new(),
+            limit: None,
+            daemon: false,
+        };
+        let entry = FileEntry {
+            asset_id: "asset-1".to_string(),
+            file_id: "file-1".to_string(),
+            moved_from: None,
+            conflict_candidates: Vec::new(),
+            relative_path: "assets/web-clips/youtube/abc.url".to_string(),
+            file_name: "abc.url".to_string(),
+            extension: Some("url".to_string()),
+            kind: "youtube".to_string(),
+            title: "abc".to_string(),
+            size_bytes: 64,
+            mtime_ms: 1,
+            ctime_ms: Some(1),
+            quick_fingerprint: "fingerprint".to_string(),
+        };
+        let mut sql = "\
+CREATE TABLE assets (
+  id TEXT PRIMARY KEY,
+  vault_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  privacy TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  indexed_at INTEGER,
+  deleted_at INTEGER
+);
+INSERT INTO assets (
+  id, vault_id, kind, status, privacy, title, created_at, updated_at, indexed_at
+) VALUES (
+  'asset-1', 'vault-1', 'youtube', 'inbox', 'normal', 'Custom title', 1, 1, 1
+);
+"
+        .to_string();
+        push_asset_sql(&mut sql, &config, &entry, 2);
+
+        run_sqlite(&db_path, &sql).expect("refresh bookmark asset");
+        let title = query_sqlite(&db_path, "SELECT title FROM assets WHERE id = 'asset-1';")
+            .expect("query refreshed bookmark title");
+        assert_eq!(title.trim(), "Custom title");
+        fs::remove_file(db_path).expect("remove bookmark title fixture");
     }
 
     #[test]

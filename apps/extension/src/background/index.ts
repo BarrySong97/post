@@ -1,9 +1,19 @@
 /**
- * @purpose Register Post browser collection context menu entries.
- * @role    Chrome MV3 background service worker for image/video/post save events and native host handoff.
- * @deps    chrome.contextMenus, chrome.tabs, and chrome.runtime extension APIs.
+ * @purpose Register Post browser collection menus, popup preparation, and save handoffs.
+ * @role    Chrome MV3 background worker for image/video/post/web/YouTube collection workflows.
+ * @deps    chrome.contextMenus, tabs, scripting, runtime, storage, and native messaging APIs.
  * @gotcha  Twitter/X videos often expose blob: URLs; only direct MP4 candidates can be imported.
  */
+
+import { inspectBookmarkDocument } from "../page-inspector";
+import type {
+  BookmarkCapture,
+  BookmarkDuplicate,
+  BookmarkPopupPrepareResponse,
+  BookmarkPopupSaveRequest,
+  BookmarkSaveAction,
+  BookmarkSaveResponse,
+} from "../shared/bookmark";
 
 // Build-time channel injected by vite `define` (see vite.config.chrome.ts). Stamped onto every
 // native message as `appEnv`, which the native host maps to post-<appEnv>.sqlite — so the dev
@@ -17,9 +27,12 @@ const VIDEO_PARENT_MENU_ID = "post.collect-video";
 const VIDEO_TAG_MENU_PREFIX = `${VIDEO_PARENT_MENU_ID}.tag.`;
 const POST_PARENT_MENU_ID = "post.collect-post";
 const POST_TAG_MENU_PREFIX = `${POST_PARENT_MENU_ID}.tag.`;
+const YOUTUBE_PARENT_MENU_ID = "post.collect-youtube";
+const YOUTUBE_TAG_MENU_PREFIX = `${YOUTUBE_PARENT_MENU_ID}.tag.`;
 const IMAGE_SAVE_UNTAGGED_ID = `${IMAGE_PARENT_MENU_ID}.untagged`;
 const VIDEO_SAVE_UNTAGGED_ID = `${VIDEO_PARENT_MENU_ID}.untagged`;
 const POST_SAVE_UNTAGGED_ID = `${POST_PARENT_MENU_ID}.untagged`;
+const YOUTUBE_SAVE_UNTAGGED_ID = `${YOUTUBE_PARENT_MENU_ID}.untagged`;
 const UNTAGGED_MENU_TITLE = "直接保存（进 Inbox）";
 const RECENT_TAGS_STORAGE_KEY = "post.recentTagIds";
 const MAX_RECENT_TAGS = 6;
@@ -76,6 +89,7 @@ type ContextMenuContexts = [
 const IMAGE_CONTEXTS = ["image"] satisfies ContextMenuContexts;
 const VIDEO_CONTEXTS = ["page", "video"] satisfies ContextMenuContexts;
 const POST_CONTEXTS = ["page"] satisfies ContextMenuContexts;
+const YOUTUBE_CONTEXTS = ["page", "video"] satisfies ContextMenuContexts;
 
 type ExtensionContextResponse =
   | {
@@ -129,6 +143,10 @@ type ExtensionPostSaveResponse =
         warnings: string[];
       };
     }
+  | { ok: false; message: string };
+
+type ExtensionBookmarkLookupResponse =
+  | { ok: true; duplicates: BookmarkDuplicate[] }
   | { ok: false; message: string };
 
 type TwitterVideoContextResponse =
@@ -264,6 +282,15 @@ function queueContextMenuRegistration() {
 }
 
 const X_URL_PATTERNS = ["https://x.com/*", "https://twitter.com/*"];
+const YOUTUBE_URL_PATTERNS = [
+  "https://www.youtube.com/watch*",
+  "https://www.youtube.com/shorts/*",
+  "https://www.youtube.com/live/*",
+  "https://m.youtube.com/watch*",
+  "https://m.youtube.com/shorts/*",
+  "https://youtu.be/*",
+  "https://www.youtube-nocookie.com/embed/*",
+];
 
 // Build one parent's submenu: "直接保存" first, then a separator, then tags ordered
 // recent-first (with a separator between recent and the rest). Works with zero tags —
@@ -363,6 +390,13 @@ async function registerContextMenus() {
     documentUrlPatterns: X_URL_PATTERNS,
   });
 
+  chrome.contextMenus.create({
+    id: YOUTUBE_PARENT_MENU_ID,
+    title: "Add YouTube video to Post",
+    contexts: YOUTUBE_CONTEXTS,
+    documentUrlPatterns: YOUTUBE_URL_PATTERNS,
+  });
+
   if (!context.ok) {
     createDisabledChild(
       IMAGE_PARENT_MENU_ID,
@@ -378,6 +412,11 @@ async function registerContextMenus() {
       POST_PARENT_MENU_ID,
       formatMenuMessage("Post unavailable", context.message),
       POST_CONTEXTS,
+    );
+    createDisabledChild(
+      YOUTUBE_PARENT_MENU_ID,
+      formatMenuMessage("Post unavailable", context.message),
+      YOUTUBE_CONTEXTS,
     );
     return;
   }
@@ -409,6 +448,15 @@ async function registerContextMenus() {
     tags,
     recentIds,
   });
+  buildSaveSubmenu({
+    parentId: YOUTUBE_PARENT_MENU_ID,
+    tagPrefix: YOUTUBE_TAG_MENU_PREFIX,
+    untaggedId: YOUTUBE_SAVE_UNTAGGED_ID,
+    contexts: YOUTUBE_CONTEXTS,
+    documentUrlPatterns: YOUTUBE_URL_PATTERNS,
+    tags,
+    recentIds,
+  });
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -428,12 +476,111 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
   void setVideoMenuVisibility(tabVideoAvailability.get(tabId) ?? false);
 });
 
-chrome.runtime.onMessage.addListener((message, sender) => {
-  if (
-    !message ||
-    typeof message !== "object" ||
-    (message as { type?: unknown }).type !== "post.twitterVideoAvailability.set"
-  ) {
+async function inspectBookmarkInTab(tabId: number): Promise<BookmarkCapture> {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: inspectBookmarkDocument,
+  });
+  const capture = results[0]?.result;
+  if (!capture) {
+    throw new Error("当前页面不支持收藏。请打开普通网页或 YouTube 视频页面。");
+  }
+  return capture;
+}
+
+async function lookupBookmark(capture: BookmarkCapture): Promise<ExtensionBookmarkLookupResponse> {
+  try {
+    return await sendNativeMessage<ExtensionBookmarkLookupResponse>({
+      type: "post.bookmark.lookup",
+      appEnv: APP_ENV,
+      capture,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Bookmark lookup failed.",
+    };
+  }
+}
+
+async function saveBookmark(input: {
+  capture: BookmarkCapture;
+  titleOverride?: string;
+  note?: string;
+  tagIds: string[];
+  action: BookmarkSaveAction;
+}): Promise<BookmarkSaveResponse> {
+  try {
+    return await sendNativeMessage<BookmarkSaveResponse>({
+      type: "post.bookmark.save",
+      appEnv: APP_ENV,
+      ...input,
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Bookmark save failed.",
+    };
+  }
+}
+
+async function prepareBookmarkPopup(): Promise<BookmarkPopupPrepareResponse> {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab?.id) {
+    return { ok: false, message: "没有可读取的活动标签页。" };
+  }
+  try {
+    const [context, capture] = await Promise.all([
+      getDesktopContext(),
+      inspectBookmarkInTab(tab.id),
+    ]);
+    if (!context.ok) {
+      return { ok: false, message: context.message };
+    }
+    const lookup = await lookupBookmark(capture);
+    if (!lookup.ok) {
+      return { ok: false, message: lookup.message };
+    }
+    return {
+      ok: true,
+      vault: { id: context.context.vault.id, name: context.context.vault.name },
+      tags: context.context.tags,
+      capture,
+      duplicates: lookup.duplicates,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : "无法读取当前页面。Chrome 内部页面不允许 Extension 收藏。",
+    };
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+
+  const type = (message as { type?: unknown }).type;
+  if (type === "post.bookmarkPopup.prepare") {
+    void prepareBookmarkPopup().then(sendResponse);
+    return true;
+  }
+  if (type === "post.bookmarkPopup.save") {
+    const request = message as BookmarkPopupSaveRequest;
+    void saveBookmark({
+      capture: request.capture,
+      titleOverride: request.titleOverride,
+      note: request.note,
+      tagIds: request.tagIds,
+      action: request.action,
+    }).then(sendResponse);
+    return true;
+  }
+  if (type !== "post.twitterVideoAvailability.set") {
     return false;
   }
 
@@ -491,6 +638,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
     void savePostFromContextMenu(undefined, tab);
   } else if (id.startsWith(POST_TAG_MENU_PREFIX)) {
     void savePostFromContextMenu(id.slice(POST_TAG_MENU_PREFIX.length), tab);
+  } else if (id === YOUTUBE_SAVE_UNTAGGED_ID) {
+    void saveYouTubeBookmarkFromContextMenu(undefined, tab);
+  } else if (id.startsWith(YOUTUBE_TAG_MENU_PREFIX)) {
+    void saveYouTubeBookmarkFromContextMenu(id.slice(YOUTUBE_TAG_MENU_PREFIX.length), tab);
   }
 });
 
@@ -681,6 +832,55 @@ async function savePostFromContextMenu(tagId: string | undefined, tab?: chrome.t
     }
   } catch (error) {
     console.warn("[Post extension] native post save failed", error);
+  } finally {
+    pendingSaves.delete(dedupKey);
+  }
+}
+
+async function saveYouTubeBookmarkFromContextMenu(
+  tagId: string | undefined,
+  tab?: chrome.tabs.Tab,
+) {
+  if (!tab?.id) {
+    console.warn("[Post extension] YouTube bookmark menu click had no tab id");
+    return;
+  }
+  let capture: BookmarkCapture;
+  try {
+    capture = await inspectBookmarkInTab(tab.id);
+  } catch (error) {
+    console.warn("[Post extension] YouTube page inspection failed", error);
+    return;
+  }
+  if (capture.kind !== "youtube") {
+    console.warn("[Post extension] context-menu page was not a YouTube video", capture.pageUrl);
+    return;
+  }
+
+  const dedupKey = `youtube:${tagId ?? "inbox"}:${capture.videoId}`;
+  const now = Date.now();
+  const pendingSince = pendingSaves.get(dedupKey);
+  if (pendingSince && now - pendingSince < SAVE_DEDUP_WINDOW_MS) {
+    console.log("[Post extension] skipped duplicate YouTube save request", {
+      tagId,
+      videoId: capture.videoId,
+    });
+    return;
+  }
+
+  pendingSaves.set(dedupKey, now);
+  try {
+    const result = await saveBookmark({
+      capture,
+      tagIds: tagId ? [tagId] : [],
+      action: "update",
+    });
+    if (result.ok) {
+      console.log("[Post extension] YouTube bookmark saved", result.asset);
+      afterTaggedSave(tagId);
+    } else {
+      console.warn("[Post extension] YouTube bookmark save failed", result.message);
+    }
   } finally {
     pendingSaves.delete(dedupKey);
   }
