@@ -34,7 +34,7 @@ The extension builds as two separate installs so a test browser and a release br
 - Workspace commands: `pnpm -F extension dev | build | check-types`.
 - Channel builds: `pnpm -F extension build` (dev → `dist_chrome`) and `pnpm -F extension build:prod` (release → `dist_chrome_prod`).
 - Prod zip: `pnpm -F extension package:prod` → `apps/extension/post-extension.zip` (includes `INSTALL.md`). GitHub Releases attach the same package as `Post-<version>-chrome-extension.zip` on each `v*` tag.
-- Native host registration: `pnpm -F extension native-host:install -- --extension-id <id>[,<id2>,...]`. Pass both the dev and prod extension IDs (comma-separated) so the one native host allows both channels.
+- Native host registration: `pnpm -F extension native-host:install -- --extension-id <id>[,<id2>,...]`. The current fixed IDs are Post Dev `odafghdnmoniilcgnopfphmbodgojaoo` and Post release `mdpiamelfbcdfglbodgnfdkilamgllae`; pass both comma-separated so the shared host allows both channels. Packaged Desktop startup writes both origins as well, preventing a release-app launch from disconnecting Post Dev.
 - Custom Chromium host directory: add `--manifest-dir "<NativeMessagingHosts directory>"` when the target browser is not one of `chrome`, `chromium`, `chrome-for-testing`, `edge`, or `brave`.
 - Build output: `apps/extension/dist_chrome` (dev) and `dist_chrome_prod` (release), each loaded as an unpacked/packed Chrome extension.
 

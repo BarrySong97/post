@@ -6,9 +6,9 @@
  *          electron-builder.yml extraResources.
  * @gotcha  The manifest's "path" points at a wrapper script that re-execs this app's own binary with
  *          ELECTRON_RUN_AS_NODE=1, not a system `node` — end users are not expected to have Node.js
- *          installed, and Electron's bundled runtime can run plain scripts in that mode. Never runs in
- *          dev (isDevRuntime()) so it can't clobber a developer's manually-installed unpacked-extension
- *          id from apps/extension/native-host/install-native-host.mjs.
+ *          installed, and Electron's bundled runtime can run plain scripts in that mode. The shared host
+ *          must allow both fixed Chrome extension channels so opening the release app cannot disconnect
+ *          the unpacked Post Dev extension.
  */
 
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
@@ -18,6 +18,19 @@ import path from "node:path";
 const HOST_NAME = "com.post.desktop";
 const HOST_DESCRIPTION = "Post Desktop native messaging bridge";
 const PROD_EXTENSION_ID = "mdpiamelfbcdfglbodgnfdkilamgllae";
+const DEV_EXTENSION_ID = "odafghdnmoniilcgnopfphmbodgojaoo";
+
+export function createNativeMessagingHostManifest(wrapperPath: string) {
+  return {
+    name: HOST_NAME,
+    description: HOST_DESCRIPTION,
+    path: wrapperPath,
+    type: "stdio",
+    allowed_origins: [PROD_EXTENSION_ID, DEV_EXTENSION_ID].map(
+      (extensionId) => `chrome-extension://${extensionId}/`,
+    ),
+  };
+}
 
 function getChromeNativeMessagingHostsDir(): string | null {
   if (process.platform !== "darwin") {
@@ -58,13 +71,7 @@ export function installNativeMessagingHost(): void {
   );
   chmodSync(wrapperPath, 0o755);
 
-  const manifest = {
-    name: HOST_NAME,
-    description: HOST_DESCRIPTION,
-    path: wrapperPath,
-    type: "stdio",
-    allowed_origins: [`chrome-extension://${PROD_EXTENSION_ID}/`],
-  };
+  const manifest = createNativeMessagingHostManifest(wrapperPath);
   writeFileSync(
     path.join(targetDir, `${HOST_NAME}.json`),
     `${JSON.stringify(manifest, null, 2)}\n`,
