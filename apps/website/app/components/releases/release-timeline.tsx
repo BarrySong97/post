@@ -23,10 +23,31 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.14",
+    date: "2026-07-21",
+    head: "Animated image previews and more reliable, higher-quality X capture.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Desktop",
+        items: [
+          "Animated GIF, WebP, and AVIF assets now use a still first frame until hovered on the asset board or in detail, with format badges and reduced-motion support.",
+          "HEIC images now receive a browser-compatible preview while keeping the original vault file unchanged.",
+        ],
+      },
+      {
+        title: "Extension",
+        items: [
+          "X Post and right-click image capture now save original-resolution media instead of displayed thumbnail variants, and capture-time tags are applied to the Post and its imported media.",
+          "When Post is closed, user-triggered Chrome save actions can open Desktop through a confirmed post:// prompt and continue the original save after the app becomes available.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.13",
     date: "2026-07-16",
     head: "More reliable multi-image capture and sharper asset previews.",
-    badge: "latest",
     groups: [
       {
         title: "Desktop",
