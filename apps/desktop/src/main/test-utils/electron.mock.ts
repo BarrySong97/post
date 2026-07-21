@@ -17,6 +17,7 @@ export const clipboard = {
 export const shell = {
   openPath: async () => "",
   openExternal: async () => undefined,
+  trashItem: async () => undefined,
 };
 
 export const ipcMain = {
