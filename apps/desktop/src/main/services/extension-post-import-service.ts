@@ -2,7 +2,7 @@
  * @purpose Import an X/Twitter post as a Markdown asset with related local media.
  * @role    Main-process workflow for resolution, idempotent Vault writes, and database relationships.
  * @deps    Twitter resolver, extension image/video import services, js-yaml, Drizzle, and background tasks.
- * @gotcha  Repeated saves replace only generated Markdown while preserving user frontmatter and notes.
+ * @gotcha  The capture tag must remain attached to the Post and every successfully imported media child.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -316,7 +316,7 @@ function findRelatedPostAssetId(vaultId: string, postId: string | undefined) {
 
 async function importPostMedia(
   post: ResolvedTwitterPost,
-  input: SaveExtensionPostInput,
+  tagId: string | undefined,
   vaultId: string,
   taskId: string,
 ) {
@@ -340,7 +340,7 @@ async function importPostMedia(
               srcUrl: media.url,
               pageUrl: post.canonicalUrl,
               pageTitle: title,
-              tagId: input.tagId,
+              tagId,
               vaultId,
               destinationDir: POST_MEDIA_DIR,
               fileStem,
@@ -350,7 +350,7 @@ async function importPostMedia(
               candidateUrls: media.candidateUrls,
               pageUrl: post.canonicalUrl,
               pageTitle: title,
-              tagId: input.tagId,
+              tagId,
               vaultId,
               destinationDir: POST_MEDIA_DIR,
               fileStem,
@@ -368,7 +368,10 @@ async function importPostMedia(
     }
   }
 
-  return { imported, warnings };
+  return {
+    imported: Array.from(new Map(imported.map((item) => [item.assetId, item])).values()),
+    warnings,
+  };
 }
 
 async function writePostFile(absolutePath: string, content: string) {
@@ -418,7 +421,7 @@ export async function saveExtensionPost(
         ? await readFile(absolutePath, "utf8")
         : undefined;
 
-    const mediaResult = await importPostMedia(post, input, vault.id, task.id);
+    const mediaResult = await importPostMedia(post, tag?.id, vault.id, task.id);
     const warnings = [...post.warnings, ...mediaResult.warnings];
     const content = mergePostMarkdown(
       existingRaw,
@@ -526,6 +529,19 @@ export async function saveExtensionPost(
           .values({ assetId, tagId: tag.id, createdAt: now })
           .onConflictDoNothing()
           .run();
+
+        if (mediaResult.imported.length > 0) {
+          tx.insert(schema.assetTags)
+            .values(
+              mediaResult.imported.map((item) => ({
+                assetId: item.assetId,
+                tagId: tag.id,
+                createdAt: now,
+              })),
+            )
+            .onConflictDoNothing()
+            .run();
+        }
       }
 
       tx.insert(schema.markdownCache)

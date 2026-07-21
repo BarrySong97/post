@@ -2,7 +2,7 @@
  * @purpose Resolve normalized X/Twitter post content for browser-extension imports.
  * @role    Metadata adapter that merges public syndication data with a visible-page fallback snapshot.
  * @deps    Node Buffer, global fetch, and twitter-video-resolver variant parsing.
- * @gotcha  Syndication can expose only a Note ID; resolve that exact note from the public page's server-rendered records before falling back.
+ * @gotcha  Canonicalize pbs media IDs to one name=orig URL before merging provider and DOM fallbacks.
  */
 
 import { Buffer } from "node:buffer";
@@ -269,8 +269,34 @@ function addServerRenderedText(rawPayload: unknown, text: string) {
 function normalizeImageUrl(rawUrl: string) {
   try {
     const url = new URL(rawUrl);
-    if (url.hostname === "pbs.twimg.com" || url.hostname.endsWith(".pbs.twimg.com")) {
+    if (
+      (url.hostname === "pbs.twimg.com" || url.hostname.endsWith(".pbs.twimg.com")) &&
+      url.pathname.startsWith("/media/")
+    ) {
+      const extensionMatch = url.pathname.match(/\.([a-z0-9]+)$/i);
+      const format = url.searchParams.get("format") ?? extensionMatch?.[1]?.toLowerCase();
+      if (extensionMatch) {
+        url.pathname = url.pathname.slice(0, -extensionMatch[0].length);
+      }
+      if (format) {
+        url.searchParams.set("format", format);
+      }
       url.searchParams.set("name", "orig");
+    }
+    return url.href;
+  } catch {
+    return rawUrl;
+  }
+}
+
+function imageIdentityKey(rawUrl: string) {
+  try {
+    const url = new URL(rawUrl);
+    if (
+      (url.hostname === "pbs.twimg.com" || url.hostname.endsWith(".pbs.twimg.com")) &&
+      url.pathname.startsWith("/media/")
+    ) {
+      return `${url.hostname}${url.pathname.replace(/\.[a-z0-9]+$/i, "")}`;
     }
     return url.href;
   } catch {
@@ -328,8 +354,9 @@ function parseMedia(payload: Record<string, unknown>, snapshot?: TwitterPostVisi
 
   const unique = new Map<string, TwitterPostMedia>();
   for (const item of media) {
-    if (!unique.has(item.url)) {
-      unique.set(item.url, item);
+    const key = item.kind === "image" ? imageIdentityKey(item.url) : item.url;
+    if (!unique.has(key)) {
+      unique.set(key, item);
     }
   }
   return Array.from(unique.values());

@@ -99,6 +99,38 @@ describe("twitter post resolver", () => {
     expect(result.media[1]?.candidateUrls).toEqual(["https://video.twimg.com/example/high.mp4"]);
   });
 
+  it("collapses X image URL variants into one original-resolution media item", () => {
+    const result = parseTwitterPostPayload(
+      {
+        id_str: input.postId,
+        text: "One image",
+        mediaDetails: [
+          {
+            type: "photo",
+            media_url_https: "https://pbs.twimg.com/media/Example123.jpg?name=small",
+          },
+        ],
+        photos: [
+          {
+            url: "https://pbs.twimg.com/media/Example123?format=jpg&name=medium",
+          },
+        ],
+      },
+      {
+        ...input,
+        visibleSnapshot: {
+          mediaUrls: ["https://pbs.twimg.com/media/Example123.jpg?name=360x360"],
+        },
+      },
+    );
+
+    expect(result.media).toHaveLength(1);
+    const mediaUrl = new URL(result.media[0]?.url ?? "");
+    expect(mediaUrl.pathname).toBe("/media/Example123");
+    expect(mediaUrl.searchParams.get("format")).toBe("jpg");
+    expect(mediaUrl.searchParams.get("name")).toBe("orig");
+  });
+
   it("uses the original post identity for repost payloads", () => {
     const result = parseTwitterPostPayload(
       {
