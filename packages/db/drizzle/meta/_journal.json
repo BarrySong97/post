@@ -99,6 +99,13 @@
       "when": 1784341623578,
       "tag": "0013_massive_amazoness",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1784598947718,
+      "tag": "0014_gigantic_kitty_pryde",
+      "breakpoints": true
     }
   ]
 }

@@ -52,3 +52,10 @@ export function getDefaultAssetFilters(): AssetFilterState {
 
 export const assetFiltersAtom = atom<AssetFilterState>(getDefaultAssetFilters());
 export const activeSidebarItemAtom = atom<ActiveSidebarItem>({ kind: "mgmt", id: "all" });
+
+/**
+ * True while the asset detail overlay is open. AppLayout reads it to suppress the top window-drag
+ * strip (it renders when the sidebar is collapsed), which otherwise wins `-webkit-app-region` by
+ * DOM order over the detail inspector's top controls and makes them unclickable.
+ */
+export const assetDetailOpenAtom = atom(false);

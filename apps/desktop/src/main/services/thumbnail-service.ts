@@ -2,7 +2,7 @@
  * @purpose Implement main-process thumbnail service behavior for desktop workflows.
  * @role    Native capability service called by tRPC routers, tasks, or Electron lifecycle code.
  * @deps    Electron main process APIs, filesystem/process utilities, repositories as needed.
- * @gotcha  Keep native side effects out of renderer code and return preload-safe data shapes.
+ * @gotcha  Animation metadata and HEIC preview proxies participate in cache validity.
  */
 
 import { existsSync } from "node:fs";
@@ -15,6 +15,7 @@ import { getDatabase } from "../db";
 import { runThumbnailTask } from "../thumbnail-tasks";
 
 const THUMBNAIL_AUTO_PREWARM_COOLDOWN_MS = 5 * 60 * 1000;
+const MEDIA_METADATA_VERSION = 1;
 
 export function startThumbnailPrewarm(vault: VaultRecord, options: { force?: boolean } = {}) {
   if (backgroundTaskManager.hasActiveTask("thumbnails", vault.id)) {
@@ -64,6 +65,9 @@ function getThumbnailRows(vault: { id: string }, assetIds?: string[]) {
       cacheStatus: schema.imageCache.status,
       thumbnailPath: schema.imageCache.thumbnailPath,
       thumbnailFormat: schema.imageCache.thumbnailFormat,
+      isAnimated: schema.imageCache.isAnimated,
+      mediaMetadataVersion: schema.imageCache.mediaMetadataVersion,
+      previewPath: schema.imageCache.previewPath,
       imageWidth: schema.imageCache.width,
       imageHeight: schema.imageCache.height,
       errorMessage: schema.imageCache.errorMessage,
@@ -98,7 +102,9 @@ function thumbnailRowNeedsWork(row: ThumbnailRow) {
   const sourceMatches =
     row.sourceSizeBytes === row.sizeBytes &&
     getTimestampMs(row.sourceMtimeMs) === getTimestampMs(row.mtimeMs) &&
-    row.sourceQuickFingerprint === row.quickFingerprint;
+    row.sourceQuickFingerprint === row.quickFingerprint &&
+    row.mediaMetadataVersion === MEDIA_METADATA_VERSION &&
+    row.isAnimated != null;
 
   if (row.cacheStatus === "failed") {
     return !sourceMatches || isRetryableThumbnailFailure(row.errorMessage);
@@ -106,6 +112,8 @@ function thumbnailRowNeedsWork(row: ThumbnailRow) {
 
   const shouldUseOriginal =
     row.kind === "image" &&
+    row.isAnimated !== true &&
+    row.extension?.toLowerCase() !== "heic" &&
     row.imageWidth != null &&
     row.imageHeight != null &&
     Math.max(row.imageWidth, row.imageHeight) <= 720;
@@ -119,7 +127,10 @@ function thumbnailRowNeedsWork(row: ThumbnailRow) {
     !sourceMatches ||
     row.thumbnailFormat !== expectedFormat ||
     !row.thumbnailPath ||
-    !existsSync(row.thumbnailPath)
+    !existsSync(row.thumbnailPath) ||
+    (process.platform === "darwin" &&
+      row.extension?.toLowerCase() === "heic" &&
+      (!row.previewPath || !existsSync(row.previewPath)))
   );
 }
 

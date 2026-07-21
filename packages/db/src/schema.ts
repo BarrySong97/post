@@ -206,6 +206,14 @@ export const imageCache = sqliteTable(
     thumbnailHeight: integer("thumbnail_height"),
     thumbnailSizeBytes: integer("thumbnail_size_bytes"),
     thumbnailFormat: text("thumbnail_format"),
+    // True only when the source contains multiple image frames. Null means the
+    // source predates the current media-analysis pass and still needs probing.
+    isAnimated: integer("is_animated", { mode: "boolean" }),
+    // Bumped when animation metadata extraction changes. Metadata can be
+    // backfilled independently from an otherwise valid thumbnail.
+    mediaMetadataVersion: integer("media_metadata_version"),
+    // Browser-compatible full-size proxy for sources Chromium cannot render (HEIC).
+    previewPath: text("preview_path"),
     // Average luma (0-255) of the thumbnail's bottom strip, used to flip the card's
     // overlay text between dark-on-light and light-on-dark. Null for pre-existing
     // thumbnails until they regenerate.

@@ -6,7 +6,11 @@
  */
 
 import type { Asset, AssetKind, AssetStatus, IndexedAsset } from "@/lib/asset-manager/types";
-import { buildAssetFileUrl, buildAssetThumbnailUrl } from "@/lib/asset-manager/asset-url";
+import {
+  buildAssetFileUrl,
+  buildAssetPreviewUrl,
+  buildAssetThumbnailUrl,
+} from "@/lib/asset-manager/asset-url";
 import type {
   AssetFilterState,
   AssetSortOrder,
@@ -139,10 +143,16 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
   const extension = asset.extension ?? asset.fileName.split(".").pop() ?? "file";
   const mediaUrl =
     kind === "image" || kind === "video" ? buildAssetFileUrl(asset.id, asset.fileName) : undefined;
+  const displayUrl =
+    kind === "image" && asset.image?.previewPath
+      ? buildAssetPreviewUrl(asset.id, asset.fileName)
+      : mediaUrl;
+  const isAnimated = kind === "image" && asset.image?.isAnimated === true;
   // Chromium can render SVG and AVIF directly. Small raster images are also marked as
   // `original` by the indexer so cards avoid upscaling and recompressing already-soft sources.
   const usesOriginalAsThumbnail =
     kind === "image" &&
+    !isAnimated &&
     (["svg", "avif"].includes(extension.toLowerCase()) ||
       (asset.image?.status === "ready" && asset.image.thumbnailFormat === "original"));
   // Web assets carry their OG cover image on the shared imageCache thumbnail.
@@ -151,7 +161,7 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     asset.image?.status === "ready" &&
     Boolean(asset.image.thumbnailPath);
   const thumbnailUrl = usesOriginalAsThumbnail
-    ? mediaUrl
+    ? displayUrl
     : hasCachedThumbnail
       ? buildAssetThumbnailUrl(asset.id, asset.fileName)
       : undefined;
@@ -211,12 +221,14 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     duration,
     durationMs,
     mediaUrl,
+    displayUrl,
     thumbnailUrl,
     thumbnailStatus: asset.image?.status ?? (usesOriginalAsThumbnail ? "ready" : null),
     imageWidth: asset.image?.width,
     imageHeight: asset.image?.height,
     thumbnailWidth: asset.image?.thumbnailWidth,
     thumbnailHeight: asset.image?.thumbnailHeight,
+    isAnimated: isAnimated || undefined,
     related: asset.relatedIds,
     fileExt: kind === "file" || kind === "image" || kind === "video" ? extension : undefined,
     imageCount: kind === "image" ? 1 : undefined,
@@ -235,6 +247,8 @@ export function mapIndexedAsset(asset: IndexedAsset): Asset {
     authorAvatarUrl: asset.post?.authorAvatarUrl ?? undefined,
     publishedTime: formatPostDate(asset.post?.publishedAt),
     url: asset.youtube?.canonicalUrl ?? asset.post?.canonicalUrl ?? asset.web?.url ?? undefined,
+    videoId: asset.youtube?.videoId ?? undefined,
+    channelName: asset.youtube?.channelName ?? undefined,
     domain:
       kind === "youtube"
         ? "YouTube"

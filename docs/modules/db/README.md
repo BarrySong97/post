@@ -31,6 +31,7 @@ X Post captures use normal `assets`, `asset_files`, `asset_tags`, `asset_links`,
 - Treat string union arrays such as `assetKinds` and `assetStatuses` as public contracts for renderer code and indexer behavior.
 - `image_cache.thumbnail_luma` (nullable) holds the average luma of the thumbnail's bottom strip, written by the Rust indexer and read by the renderer for adaptive card overlay text; null means the thumbnail predates the column and will backfill on regeneration.
 - `image_cache.video_duration_ms` (nullable) holds video duration in milliseconds from ffprobe during thumbnail generation; null for non-video assets or when ffprobe is unavailable.
+- `image_cache.is_animated` and `media_metadata_version` hold rebuildable animation-analysis results. `preview_path` points to a browser-compatible HEIC detail proxy.
 - `web_cache` holds normalized fields for bookmarked web pages (`kind === "web"`): page url, display domain, site name, description. The OG cover image itself reuses the shared `image_cache` thumbnail rather than a dedicated column.
 - `youtube_cache` holds first-class YouTube bookmark metadata (`kind === "youtube"`), including normalized video/channel identity, source/custom titles, description, publication/duration/live fields, notes, warnings, and duplicate `copy_index`. Both bookmark caches are paired with Vault `.url` files; metadata is database-owned and is not rebuildable from the pointer alone.
 - TypeScript source files in this package have AI file headers. Update them when schema or connection responsibilities move.

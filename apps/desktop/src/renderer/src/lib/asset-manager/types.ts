@@ -51,13 +51,20 @@ export type Asset = {
   /** Raw video duration in ms; used for hover-preview remaining-time countdown. */
   durationMs?: number;
   mediaUrl?: string;
+  /** Browser-compatible image source (HEIC preview proxy when needed). */
+  displayUrl?: string;
   thumbnailUrl?: string;
   thumbnailStatus?: "pending" | "ready" | "failed" | null;
   imageWidth?: number | null;
   imageHeight?: number | null;
   thumbnailWidth?: number | null;
   thumbnailHeight?: number | null;
+  isAnimated?: boolean;
   url?: string;
+  /** YouTube video id (from youtubeCache); powers the Plyr youtube provider in detail. */
+  videoId?: string;
+  /** YouTube channel display name; shown in the detail inspector. */
+  channelName?: string;
   related: string[];
   ogImage?: boolean;
   fileExt?: string;

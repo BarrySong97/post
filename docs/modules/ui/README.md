@@ -9,7 +9,7 @@
 - `packages/ui/src/index.ts` - public package entry point.
 - `packages/ui/src/post-preview.tsx` - pure React presentation components for the interactive Post desktop product preview, including the desktop shell frame, resizable/collapsible sidebar, asset board, filter panel, editor split menu, asset detail, settings, status line, and knowledge-graph display.
 - `packages/ui/src/styles/theme.css` - shared Tailwind v4 + HeroUI + color-token + base-reset layer. Free of Electron-specific rules; safe for any React app to import.
-- `packages/ui/src/styles/styles.css` - desktop-only Electron window chrome and status-line styles. Imports `./theme.css` and adds window-drag rules, default `user-select: none` (with editable/copy opt-ins), panel-animation, and the global status line CSS (including `.pf-tretry` / `.pf-trow-time` for footer task rows).
+- `packages/ui/src/styles/styles.css` - desktop-only Electron window chrome and status-line styles. Imports `./theme.css` and adds window-drag rules, default `user-select: none` (with editable/copy opt-ins), sidebar/detail-panel animation, app-themed Plyr controls, and the global status line CSS (including `.pf-tretry` / `.pf-trow-time` for footer task rows).
 - `packages/ui/package.json` - package metadata and exports (`./styles.css`, `./theme.css`).
 
 ## Data Flow

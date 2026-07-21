@@ -7,9 +7,11 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useAtomValue } from "jotai";
 import { motion } from "motion/react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 
+import { assetDetailOpenAtom } from "@/store/asset-manager-atoms";
 import { trpc } from "@/lib/trpc";
 import {
   SIDEBAR_COLLAPSED_STORAGE_KEY,
@@ -96,6 +98,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     () => localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true",
   );
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false);
+  const detailOpen = useAtomValue(assetDetailOpenAtom);
   // True only for the duration of an intentional collapse/expand toggle. Drives the
   // `panel-animating` class that enables the flex-grow transition. It must stay off
   // during window resizes, otherwise the transition animates the panel's per-tick
@@ -229,7 +232,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     <AppLayoutContext.Provider value={contextValue}>
       <>
         <div className="relative h-full min-h-0 overflow-hidden text-zinc-950">
-          {sidebarCollapsed && !sidebarPreviewOpen ? (
+          {sidebarCollapsed && !sidebarPreviewOpen && !detailOpen ? (
             <div
               aria-hidden="true"
               className="window-drag pointer-events-none absolute left-6 right-48 top-0 z-[74] h-14"

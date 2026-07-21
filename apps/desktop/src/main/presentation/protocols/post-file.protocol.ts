@@ -1,5 +1,5 @@
 /**
- * @purpose Register and serve the post-file:// protocol for safe vault and thumbnail access.
+ * @purpose Register and serve post-file:// vault, thumbnail, and HEIC preview access.
  * @role    Presentation-layer Electron protocol adapter for renderer preview URLs.
  * @deps    Electron protocol APIs, database reads, thumbnail cache path helpers.
  * @gotcha  Always resolve paths under their owning vault/cache root before serving files.
@@ -46,6 +46,33 @@ export function registerAssetProtocol(): void {
 
         const thumbnailRoot = path.resolve(getThumbnailCacheRoot());
         const absolutePath = path.resolve(row.thumbnailPath);
+        if (
+          absolutePath !== thumbnailRoot &&
+          !absolutePath.startsWith(`${thumbnailRoot}${path.sep}`)
+        ) {
+          callback({ error: -10 });
+          return;
+        }
+
+        callback({ path: absolutePath });
+        return;
+      }
+
+      if (url.hostname === "preview") {
+        const assetId = decodeURIComponent(url.pathname.replace(/^\/+/, "").split("/")[0] ?? "");
+        const row = getDatabase()
+          .select({ previewPath: schema.imageCache.previewPath })
+          .from(schema.imageCache)
+          .where(and(eq(schema.imageCache.assetId, assetId), eq(schema.imageCache.status, "ready")))
+          .get();
+
+        if (!row?.previewPath) {
+          callback({ error: -6 });
+          return;
+        }
+
+        const thumbnailRoot = path.resolve(getThumbnailCacheRoot());
+        const absolutePath = path.resolve(row.previewPath);
         if (
           absolutePath !== thumbnailRoot &&
           !absolutePath.startsWith(`${thumbnailRoot}${path.sep}`)

@@ -67,6 +67,40 @@
   transition: flex-grow 0.25s ease-in-out;
 }
 
+/* Same collapse/expand animation for the asset-detail inspector (right rail). */
+.detail-panel-layout.panel-animating #asset-detail-inspector {
+  transition: flex-grow 0.25s ease-in-out;
+}
+
+/* Plyr: match the app's dark translucent play button (StagePoster / board cards), not Plyr's
+   default cyan — so the poster→player swap is seamless. Retint the control bar off cyan too. */
+.plyr {
+  --plyr-color-main: #2563eb;
+}
+.plyr__control.plyr__control--overlaid {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(28, 25, 22, 0.45);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.2),
+    0 4px 6px -4px rgba(0, 0, 0, 0.2);
+}
+.plyr__control.plyr__control--overlaid:hover,
+.plyr__control.plyr__control--overlaid:focus-visible {
+  background: rgba(28, 25, 22, 0.6);
+}
+.plyr__control.plyr__control--overlaid svg {
+  width: 22px;
+  height: 22px;
+  left: auto;
+}
+
 .window-drag {
   -webkit-app-region: drag;
   -webkit-user-select: none;

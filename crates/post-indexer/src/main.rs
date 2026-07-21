@@ -1,16 +1,15 @@
 /**
  * @purpose Scan, watch, reconcile, parse, and thumbnail vault files for the Electron app.
  * @role    Rust sidecar CLI that owns indexing commands and structured progress events.
- * @deps    SQLite, notify, image crate, filesystem paths, stdout JSON event contract.
- * @gotcha  Keep CLI/event shapes stable and preserve x-post Markdown / YouTube .url classification.
+ * @deps    SQLite, notify/image crates, ffmpeg, macOS sips, filesystem paths, stdout JSON events.
+ * @gotcha  Keep CLI/event shapes stable; animated-image metadata is versioned.
  */
-
 use std::{
     collections::{HashMap, HashSet},
     env,
     ffi::OsStr,
     fs::{self, File},
-    io::{self, BufRead, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::mpsc,
@@ -19,8 +18,8 @@ use std::{
 };
 
 use image::{
-    DynamicImage, GenericImageView, ImageEncoder, ImageReader,
-    codecs::{jpeg::JpegEncoder, png::PngEncoder},
+    AnimationDecoder, DynamicImage, GenericImageView, ImageEncoder, ImageReader,
+    codecs::{gif::GifDecoder, jpeg::JpegEncoder, png::PngEncoder, webp::WebPDecoder},
     imageops::FilterType,
 };
 use notify::{Config as NotifyConfig, Event as NotifyEvent, PollWatcher, RecursiveMode, Watcher};
@@ -30,6 +29,8 @@ const PARSER_VERSION: &str = "markdown-links/0.3.0";
 const THUMBNAIL_LONG_EDGE: u32 = 720;
 const THUMBNAIL_JPEG_QUALITY: u8 = 82;
 const THUMBNAIL_DB_FLUSH_BATCH: usize = 8;
+const MEDIA_METADATA_VERSION: i64 = 1;
+const HEIC_PREVIEW_LONG_EDGE: u32 = 4096;
 const WATCH_DEBOUNCE_MS: u64 = 250;
 const WATCH_NOTIFY_POLL_MS: u64 = 1_000;
 
@@ -191,6 +192,9 @@ struct ThumbnailTarget {
     cached_source_mtime_ms: Option<i64>,
     cached_source_quick_fingerprint: Option<String>,
     cached_thumbnail_luma: Option<i64>,
+    cached_is_animated: Option<bool>,
+    cached_media_metadata_version: Option<i64>,
+    cached_preview_path: Option<String>,
     // None = never written (needs backfill for videos). Some(-1) = probed, unavailable.
     // Some(ms >= 0) = known duration.
     cached_video_duration_ms: Option<i64>,
@@ -207,6 +211,8 @@ struct GeneratedThumbnail {
     bottom_luma: u8,
     // Populated for video assets when ffprobe succeeds; None otherwise.
     video_duration_ms: Option<i64>,
+    is_animated: bool,
+    preview_path: Option<PathBuf>,
 }
 
 struct MarkdownLink {
@@ -1500,7 +1506,10 @@ SELECT
   COALESCE(ic.source_mtime_ms, -1),
   COALESCE(ic.source_quick_fingerprint, ''),
   COALESCE(ic.thumbnail_luma, -1),
-  CASE WHEN ic.video_duration_ms IS NULL THEN '' ELSE CAST(ic.video_duration_ms AS TEXT) END
+  CASE WHEN ic.video_duration_ms IS NULL THEN '' ELSE CAST(ic.video_duration_ms AS TEXT) END,
+  COALESCE(ic.is_animated, -1),
+  COALESCE(ic.media_metadata_version, -1),
+  COALESCE(ic.preview_path, '')
 FROM asset_files af
 INNER JOIN assets a ON a.id = af.asset_id
 LEFT JOIN image_cache ic ON ic.asset_id = af.asset_id
@@ -1517,7 +1526,7 @@ ORDER BY af.mtime_ms DESC
 
     for line in output.lines().filter(|line| !line.trim().is_empty()) {
         let columns: Vec<_> = line.split('\t').collect();
-        if columns.len() != 19 {
+        if columns.len() != 22 {
             return Err(format!(
                 "unexpected sqlite row while loading thumbnail targets: {line}"
             ));
@@ -1543,6 +1552,9 @@ ORDER BY af.mtime_ms DESC
             cached_source_quick_fingerprint: none_if_empty(columns[16]),
             cached_thumbnail_luma: parse_optional_i64(columns[17])?,
             cached_video_duration_ms: parse_optional_i64_allow_negative(columns[18])?,
+            cached_is_animated: parse_optional_i64(columns[19])?.map(|value| value != 0),
+            cached_media_metadata_version: parse_optional_i64(columns[20])?,
+            cached_preview_path: none_if_empty(columns[21]),
         });
     }
 
@@ -1563,16 +1575,35 @@ fn thumbnail_cache_matches(target: &ThumbnailTarget) -> bool {
         && target.cached_source_quick_fingerprint.as_deref() == Some(&target.quick_fingerprint)
         // Regenerate ready thumbnails cached before thumbnail_luma existed, so the
         // overlay-text luma backfills once without touching unchanged sources otherwise.
-        && target.cached_thumbnail_luma.is_some();
+        && target.cached_thumbnail_luma.is_some()
+        && target.cached_media_metadata_version == Some(MEDIA_METADATA_VERSION)
+        && target.cached_is_animated.is_some();
     if !source_matches {
         return false;
+    }
+    if target
+        .extension
+        .as_deref()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("heic"))
+    {
+        return target.cached_thumbnail_format.as_deref() == Some("jpeg")
+            && target
+                .cached_thumbnail_path
+                .as_deref()
+                .is_some_and(|path| Path::new(path).is_file())
+            && target
+                .cached_preview_path
+                .as_deref()
+                .is_some_and(|path| Path::new(path).is_file());
     }
 
     let should_use_original = target.kind == "image"
         && target
             .cached_source_width
             .zip(target.cached_source_height)
-            .is_some_and(|(width, height)| should_use_original_image(width, height));
+            .is_some_and(|(width, height)| {
+                should_use_original_image(width, height) && target.cached_is_animated != Some(true)
+            });
     if should_use_original {
         return target.cached_thumbnail_format.as_deref() == Some("original")
             && target.cached_thumbnail_path.is_none();
@@ -1589,6 +1620,8 @@ fn thumbnail_source_matches(target: &ThumbnailTarget) -> bool {
     target.cached_source_size_bytes == Some(target.size_bytes)
         && target.cached_source_mtime_ms == Some(target.mtime_ms)
         && target.cached_source_quick_fingerprint.as_deref() == Some(&target.quick_fingerprint)
+        && target.cached_media_metadata_version == Some(MEDIA_METADATA_VERSION)
+        && target.cached_is_animated.is_some()
 }
 
 fn thumbnail_generation_needed(target: &ThumbnailTarget) -> bool {
@@ -1631,6 +1664,21 @@ fn generate_image_thumbnail(
     thumbnail_root: &Path,
     source_path: &Path,
 ) -> Result<GeneratedThumbnail, String> {
+    let is_animated = detect_animated_image(source_path, target.extension.as_deref())?;
+
+    if target
+        .extension
+        .as_deref()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("heic"))
+    {
+        let (image, preview_path) =
+            decode_heic_preview_with_sips(config, target, thumbnail_root, source_path)?;
+        let mut generated = persist_thumbnail_from_image(config, target, thumbnail_root, image)?;
+        generated.is_animated = false;
+        generated.preview_path = Some(preview_path);
+        return Ok(generated);
+    }
+
     if !is_supported_image_thumbnail_extension(target.extension.as_deref()) {
         return Err(format!(
             "unsupported image format for thumbnail: {}",
@@ -1640,7 +1688,7 @@ fn generate_image_thumbnail(
 
     let image = decode_image_file(source_path, "image")?;
     let (source_width, source_height) = image.dimensions();
-    if should_use_original_image(source_width, source_height) {
+    if should_use_original_image(source_width, source_height) && !is_animated {
         let rgb = image.to_rgb8();
         return Ok(GeneratedThumbnail {
             source_width,
@@ -1652,9 +1700,13 @@ fn generate_image_thumbnail(
             thumbnail_format: "original",
             bottom_luma: average_bottom_luma(&rgb),
             video_duration_ms: None,
+            is_animated,
+            preview_path: None,
         });
     }
-    persist_thumbnail_from_image(config, target, thumbnail_root, image)
+    let mut generated = persist_thumbnail_from_image(config, target, thumbnail_root, image)?;
+    generated.is_animated = is_animated;
+    Ok(generated)
 }
 
 fn should_use_original_image(width: u32, height: u32) -> bool {
@@ -1754,11 +1806,11 @@ fn persist_thumbnail_from_image(
         )
     };
     encode_result.map_err(|error| {
-            format!(
-                "failed to encode thumbnail {}: {error}",
-                thumbnail_path.display()
-            )
-        })?;
+        format!(
+            "failed to encode thumbnail {}: {error}",
+            thumbnail_path.display()
+        )
+    })?;
     let thumbnail_size_bytes = fs::metadata(&thumbnail_path)
         .map_err(|error| {
             format!(
@@ -1778,7 +1830,91 @@ fn persist_thumbnail_from_image(
         thumbnail_format,
         bottom_luma,
         video_duration_ms: None,
+        is_animated: false,
+        preview_path: None,
     })
+}
+
+fn detect_animated_image(source_path: &Path, extension: Option<&str>) -> Result<bool, String> {
+    match extension.unwrap_or("").to_ascii_lowercase().as_str() {
+        "gif" => {
+            let file = File::open(source_path).map_err(|error| {
+                format!("failed to open GIF {}: {error}", source_path.display())
+            })?;
+            let decoder = GifDecoder::new(BufReader::new(file)).map_err(|error| {
+                format!("failed to inspect GIF {}: {error}", source_path.display())
+            })?;
+            Ok(decoder.into_frames().take(2).count() > 1)
+        }
+        "webp" => {
+            let file = File::open(source_path).map_err(|error| {
+                format!("failed to open WebP {}: {error}", source_path.display())
+            })?;
+            let decoder = WebPDecoder::new(BufReader::new(file)).map_err(|error| {
+                format!("failed to inspect WebP {}: {error}", source_path.display())
+            })?;
+            Ok(decoder.has_animation())
+        }
+        "avif" => {
+            let mut file = File::open(source_path).map_err(|error| {
+                format!("failed to open AVIF {}: {error}", source_path.display())
+            })?;
+            let mut header = vec![0; 512];
+            let read = file.read(&mut header).map_err(|error| {
+                format!("failed to inspect AVIF {}: {error}", source_path.display())
+            })?;
+            Ok(header[..read].windows(4).any(|window| window == b"avis"))
+        }
+        _ => Ok(false),
+    }
+}
+
+fn decode_heic_preview_with_sips(
+    config: &Config,
+    target: &ThumbnailTarget,
+    thumbnail_root: &Path,
+    source_path: &Path,
+) -> Result<(DynamicImage, PathBuf), String> {
+    if !cfg!(target_os = "macos") {
+        return Err("HEIC preview generation is currently available on macOS only".to_string());
+    }
+    let vault_dir = ensure_thumbnail_vault_dir(thumbnail_root, &config.vault_id)?;
+    let preview_path = vault_dir.join(format!(
+        "{}-{:016x}.preview.jpg",
+        target.asset_id,
+        stable_hash(&target.quick_fingerprint)
+    ));
+    let output = Command::new("/usr/bin/sips")
+        .args([
+            "-Z",
+            &HEIC_PREVIEW_LONG_EDGE.to_string(),
+            "-s",
+            "format",
+            "jpeg",
+        ])
+        .arg("-s")
+        .arg("formatOptions")
+        .arg("90")
+        .arg(source_path)
+        .arg("--out")
+        .arg(&preview_path)
+        .output()
+        .map_err(|error| {
+            format!(
+                "failed to start sips for {}: {error}",
+                source_path.display()
+            )
+        })?;
+    if !output.status.success() || !preview_path.is_file() {
+        let message = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "failed to decode HEIC {} with sips: {}",
+            source_path.display(),
+            message.trim()
+        ));
+    }
+    let image = decode_image_file(&preview_path, "HEIC preview")?;
+    Ok((image, preview_path))
 }
 
 /// Average perceptual luma (0-255) of the thumbnail's bottom ~30%, where the card's
@@ -1965,7 +2101,10 @@ fn probe_video_duration_ms(source_path: &Path) -> Option<i64> {
     for ffmpeg_path in ffmpeg_candidates() {
         // ffmpeg -i prints metadata to stderr and exits non-zero without an
         // output target; that is expected for a probe-only invocation.
-        let output = Command::new(&ffmpeg_path).arg("-i").arg(source_path).output();
+        let output = Command::new(&ffmpeg_path)
+            .arg("-i")
+            .arg(source_path)
+            .output();
         let Ok(output) = output else {
             continue;
         };
@@ -2999,11 +3138,12 @@ fn push_image_cache_ready_sql(
         "\
 INSERT INTO image_cache (
   asset_id, vault_id, file_id, width, height, thumbnail_path, thumbnail_width,
-  thumbnail_height, thumbnail_size_bytes, thumbnail_format, thumbnail_luma, video_duration_ms,
+  thumbnail_height, thumbnail_size_bytes, thumbnail_format, is_animated,
+  media_metadata_version, preview_path, thumbnail_luma, video_duration_ms,
   source_size_bytes, source_mtime_ms, source_quick_fingerprint, status, error_message,
   generated_at, updated_at
 ) VALUES (
-  {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, 'ready', NULL, {now}, {now}
+  {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {MEDIA_METADATA_VERSION}, {}, {}, {}, {}, {}, {}, 'ready', NULL, {now}, {now}
 )
 ON CONFLICT(asset_id) DO UPDATE SET
   vault_id = excluded.vault_id,
@@ -3015,6 +3155,9 @@ ON CONFLICT(asset_id) DO UPDATE SET
   thumbnail_height = excluded.thumbnail_height,
   thumbnail_size_bytes = excluded.thumbnail_size_bytes,
   thumbnail_format = excluded.thumbnail_format,
+  is_animated = excluded.is_animated,
+  media_metadata_version = excluded.media_metadata_version,
+  preview_path = excluded.preview_path,
   thumbnail_luma = excluded.thumbnail_luma,
   video_duration_ms = excluded.video_duration_ms,
   source_size_bytes = excluded.source_size_bytes,
@@ -3040,6 +3183,14 @@ ON CONFLICT(asset_id) DO UPDATE SET
         generated.thumbnail_height,
         generated.thumbnail_size_bytes,
         sql_text(generated.thumbnail_format),
+        if generated.is_animated { 1 } else { 0 },
+        sql_nullable(
+            generated
+                .preview_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .as_deref(),
+        ),
         generated.bottom_luma,
         // Videos with a failed duration probe store -1 so cache hits do not retry forever.
         sql_nullable_i64(match (target.kind.as_str(), generated.video_duration_ms) {
@@ -3075,13 +3226,16 @@ fn push_image_cache_failed_sql(
     error_message: &str,
     now: i64,
 ) {
+    let source_path = config.root_path.join(&target.relative_path);
+    let is_animated =
+        detect_animated_image(&source_path, target.extension.as_deref()).unwrap_or(false);
     sql.push_str(&format!(
         "\
 INSERT INTO image_cache (
   asset_id, vault_id, file_id, source_size_bytes, source_mtime_ms,
-  source_quick_fingerprint, status, error_message, updated_at
+  source_quick_fingerprint, is_animated, media_metadata_version, status, error_message, updated_at
 ) VALUES (
-  {}, {}, {}, {}, {}, {}, 'failed', {}, {now}
+  {}, {}, {}, {}, {}, {}, {}, {MEDIA_METADATA_VERSION}, 'failed', {}, {now}
 )
 ON CONFLICT(asset_id) DO UPDATE SET
   vault_id = excluded.vault_id,
@@ -3089,6 +3243,9 @@ ON CONFLICT(asset_id) DO UPDATE SET
   source_size_bytes = excluded.source_size_bytes,
   source_mtime_ms = excluded.source_mtime_ms,
   source_quick_fingerprint = excluded.source_quick_fingerprint,
+  is_animated = excluded.is_animated,
+  media_metadata_version = excluded.media_metadata_version,
+  preview_path = NULL,
   status = 'failed',
   error_message = excluded.error_message,
   updated_at = excluded.updated_at;\n",
@@ -3098,6 +3255,7 @@ ON CONFLICT(asset_id) DO UPDATE SET
         target.size_bytes,
         target.mtime_ms,
         sql_text(&target.quick_fingerprint),
+        if is_animated { 1 } else { 0 },
         sql_text(error_message),
     ));
 }
@@ -3585,7 +3743,10 @@ fn make_excerpt(content: &str) -> Option<String> {
 
 /// Block-level lines that carry no prose worth showing in a preview.
 fn is_skippable_block_line(line: &str) -> bool {
-    line.starts_with('#') || line.starts_with("<!--") || is_thematic_break(line) || is_table_rule(line)
+    line.starts_with('#')
+        || line.starts_with("<!--")
+        || is_thematic_break(line)
+        || is_table_rule(line)
 }
 
 fn is_thematic_break(line: &str) -> bool {
@@ -4196,7 +4357,8 @@ mod tests {
     fn excerpt_continues_past_short_opening_paragraph() {
         // A one-line opener must not starve the preview: later paragraphs keep
         // accumulating, separated by newlines, and headings in between are skipped.
-        let content = "Opening line.\n\n## Section\n\nSecond paragraph\nwraps here.\n\nThird paragraph.";
+        let content =
+            "Opening line.\n\n## Section\n\nSecond paragraph\nwraps here.\n\nThird paragraph.";
         assert_eq!(
             make_excerpt(content).as_deref(),
             Some("Opening line.\nSecond paragraph wraps here.\nThird paragraph.")
@@ -4207,10 +4369,7 @@ mod tests {
     fn excerpt_strips_list_and_wiki_markup() {
         // Consecutive list items (no blank line) fold into one preview block.
         let content = "- [ ] do [[Note#Intro|the thing]]\n- next";
-        assert_eq!(
-            make_excerpt(content).as_deref(),
-            Some("do the thing next")
-        );
+        assert_eq!(make_excerpt(content).as_deref(), Some("do the thing next"));
     }
 
     #[test]
@@ -4362,6 +4521,27 @@ INSERT INTO assets (
             parse_ffmpeg_duration_ms("  Duration: 01:00:00.00, start: 0.000000\n"),
             Some(3_600_000)
         );
-        assert_eq!(parse_ffmpeg_duration_ms("Duration: N/A, start: 0.000000"), None);
+        assert_eq!(
+            parse_ffmpeg_duration_ms("Duration: N/A, start: 0.000000"),
+            None
+        );
+    }
+
+    #[test]
+    fn detects_avif_sequence_brand_without_treating_still_avif_as_animated() {
+        let animated_path = env::temp_dir().join(format!("post-animated-{}.avif", now_ms()));
+        let still_path = env::temp_dir().join(format!("post-still-{}.avif", now_ms()));
+        fs::write(&animated_path, b"\0\0\0\x18ftypavis\0\0\0\0avifmif1")
+            .expect("write animated AVIF fixture");
+        fs::write(&still_path, b"\0\0\0\x18ftypavif\0\0\0\0mif1miaf")
+            .expect("write still AVIF fixture");
+
+        assert_eq!(
+            detect_animated_image(&animated_path, Some("avif")),
+            Ok(true)
+        );
+        assert_eq!(detect_animated_image(&still_path, Some("avif")), Ok(false));
+        fs::remove_file(animated_path).expect("remove animated AVIF fixture");
+        fs::remove_file(still_path).expect("remove still AVIF fixture");
     }
 }

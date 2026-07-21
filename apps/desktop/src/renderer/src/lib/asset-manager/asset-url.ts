@@ -13,6 +13,10 @@ export function buildAssetThumbnailUrl(assetId: string, fileName: string) {
   return `post-file://thumb/${encodeURIComponent(assetId)}/${encodeURIComponent(fileName)}.jpg`;
 }
 
+export function buildAssetPreviewUrl(assetId: string, fileName: string) {
+  return `post-file://preview/${encodeURIComponent(assetId)}/${encodeURIComponent(fileName)}.jpg`;
+}
+
 export function buildVaultFileUrl(vaultId: string, relativePath: string) {
   const encoded = relativePath.split("/").map(encodeURIComponent).join("/");
   return `post-file://vault/${encodeURIComponent(vaultId)}/${encoded}`;

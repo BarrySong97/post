@@ -103,6 +103,9 @@ function buildImageCache(luma: number | null) {
     thumbnailHeight: 540,
     thumbnailSizeBytes: 4096,
     thumbnailFormat: "jpeg",
+    isAnimated: false,
+    mediaMetadataVersion: 1,
+    previewPath: null,
     thumbnailLuma: luma,
     sourceSizeBytes: 10_000,
     sourceMtimeMs: "2026-03-12T08:00:00.000Z",
@@ -216,6 +219,43 @@ describe("mapIndexedAsset original image fallback", () => {
 
     expect(asset.thumbnailUrl).toBe(asset.mediaUrl);
     expect(asset.thumbnailStatus).toBe("ready");
+  });
+});
+
+describe("mapIndexedAsset animated image media", () => {
+  it("keeps an animated AVIF off the original-thumbnail path", () => {
+    const asset = mapIndexedAsset(
+      buildIndexedAsset({
+        extension: "avif",
+        fileName: "motion.avif",
+        image: {
+          ...buildImageCache(80),
+          status: "failed",
+          thumbnailPath: null,
+          isAnimated: true,
+        },
+      }),
+    );
+
+    expect(asset.isAnimated).toBe(true);
+    expect(asset.thumbnailUrl).toBeUndefined();
+    expect(asset.mediaUrl).toContain("post-file://asset/");
+  });
+
+  it("uses a HEIC browser preview while preserving the original media URL", () => {
+    const asset = mapIndexedAsset(
+      buildIndexedAsset({
+        extension: "heic",
+        fileName: "live.heic",
+        image: {
+          ...buildImageCache(80),
+          previewPath: "/cache/live.preview.jpg",
+        },
+      }),
+    );
+
+    expect(asset.displayUrl).toContain("post-file://preview/");
+    expect(asset.mediaUrl).toContain("post-file://asset/");
   });
 });
 

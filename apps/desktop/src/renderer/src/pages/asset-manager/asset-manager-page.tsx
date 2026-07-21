@@ -3,7 +3,7 @@
  * @role    App-level React component composed by routes, shell, or shared workflows.
  * @deps    React, HeroUI/local UI primitives, tRPC hooks, and shared renderer modules as needed.
  * @gotcha  Soft detail uses home search `asset=<id>` and keeps the board mounted under the overlay
- *          so Back preserves scroll without URL `i`/`o` restore. Keep layouts dense per design.md.
+ *          so Back preserves scroll. Hover media must reset and honor reduced-motion.
  */
 
 import React, {
@@ -17,11 +17,13 @@ import React, {
   type ComponentType,
   type SVGProps,
 } from "react";
-import { useReducedMotion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { atomWithStorage } from "jotai/utils";
 import {
   assetFiltersAtom,
   activeSidebarItemAtom,
+  assetDetailOpenAtom,
   getEmptyAssetFilters,
   type ActiveSidebarItem,
   type AssetFilterState,
@@ -48,6 +50,7 @@ import type {
 import { isMacWindow } from "@/lib/platform";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
+import type { PanelImperativeHandle } from "react-resizable-panels";
 import { useSearch } from "@tanstack/react-router";
 import { Plyr, type PlyrOptions, type PlyrSource } from "plyr-react";
 import "plyr-react/plyr.css";
@@ -74,6 +77,7 @@ import {
   Image as ImageIcon,
   Link as LinkIcon,
   MessageSquareQuote,
+  PanelRightClose,
   PanelRightOpen,
   Play,
   ShieldCheck,
@@ -96,7 +100,8 @@ import {
 } from "@heroui/react";
 import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
-import { openAssetDetail } from "@/lib/asset-manager/open-asset-detail";
+import { closeAssetDetail, openAssetDetail } from "@/lib/asset-manager/open-asset-detail";
+import { router } from "@/lib/router";
 
 import { AssetDetailTags } from "@/components/asset-manager/asset-detail-tags";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
@@ -318,6 +323,207 @@ const MISSING_TAG_ID = "__missing_tag__";
 // re-enable the toggle in both the asset board header and the asset detail header. The underlying
 // terminal panel/state is left wired so this is a one-line restore.
 const SHOW_TERMINAL_TOGGLE = false as boolean;
+// Detail viewer right rail (inspector) collapse state — persisted across sessions.
+const inspectorCollapsedAtom = atomWithStorage("post.assetDetail.inspectorCollapsed", false);
+
+// ── Hero (shared-element) open transition — manual FLIP ───────────────────────
+// Motion's layoutId pairing is unreliable in our setup (virtualized grid + kept-mounted board +
+// soft routing) and keeps degrading to a fade, so we run the FLIP ourselves with WAAPI. It is
+// fully deterministic and NEVER touches routing: the enter flight is a body-portaled clone that
+// flies from the clicked card's rect to the stage's rect; the return flight (fired from the
+// stage's own unmount) flies a clone back. The overlay mounts/unmounts synchronously with
+// `?asset=`, exactly as before, so Back/Forward behave like the original soft detail.
+// TUNE FEEL HERE — "利落" preset from the approved demo:
+const HERO_SPRING = { stiffness: 550, damping: 42 } as const;
+// Chrome (canvas / inspector) fade running under the hero flight.
+const DETAIL_CHROME_FADE = { duration: 0.16, ease: "easeOut" } as const;
+
+type HeroRect = { x: number; y: number; width: number; height: number };
+const heroFlight: {
+  /** Captured on card click; consumed by the stage on mount to run the enter flight. */
+  pending: { assetId: string; from: HeroRect } | null;
+  /** Card hidden while a return flight covers its slot; restored when the flight settles. */
+  hiddenCardEl: HTMLElement | null;
+} = { pending: null, hiddenCardEl: null };
+
+// Kinds whose card media can act as the hero source (needs a real thumbnail).
+function canHeroAsset(asset: Asset) {
+  return (
+    (asset.kind === "image" || asset.kind === "video" || asset.kind === "youtube") &&
+    Boolean(asset.thumbnailUrl)
+  );
+}
+
+// Underdamped spring progress sampled at 60fps (same solution Motion uses).
+function sampleSpringProgress(stiffness: number, damping: number, mass = 1) {
+  const w0 = Math.sqrt(stiffness / mass);
+  const zeta = damping / (2 * Math.sqrt(stiffness * mass));
+  const wd = zeta < 1 ? w0 * Math.sqrt(1 - zeta * zeta) : 0;
+  const samples: number[] = [];
+  const dt = 1 / 60;
+  for (let t = 0; t < 2; t += dt) {
+    const e = Math.exp(-(zeta < 1 ? zeta * w0 : w0) * t);
+    const x =
+      zeta < 1
+        ? 1 - e * (Math.cos(wd * t) + ((zeta * w0) / wd) * Math.sin(wd * t))
+        : 1 - e * (1 + w0 * t);
+    samples.push(x);
+    if (
+      t > 0.15 &&
+      Math.abs(1 - x) < 0.001 &&
+      Math.abs(x - (samples[samples.length - 2] ?? 0)) < 0.0005
+    ) {
+      break;
+    }
+  }
+  samples.push(1);
+  return samples;
+}
+
+// FLIP keyframes: element parked at `to`, transform-origin top-left, flown in from `from`.
+function heroFlipKeyframes(from: HeroRect, to: HeroRect) {
+  const sx = from.width / to.width;
+  const sy = from.height / to.height;
+  const dx = from.x - to.x;
+  const dy = from.y - to.y;
+  const samples = sampleSpringProgress(HERO_SPRING.stiffness, HERO_SPRING.damping);
+  return {
+    frames: samples.map((p, i) => ({
+      transform: `translate(${dx * (1 - p)}px, ${dy * (1 - p)}px) scale(${sx + (1 - sx) * p}, ${sy + (1 - sy) * p})`,
+      offset: i / (samples.length - 1),
+    })),
+    durationMs: (samples.length / 60) * 1000,
+  };
+}
+
+function rectOf(el: HTMLElement): HeroRect | null {
+  const r = el.getBoundingClientRect();
+  return r.width > 0 && r.height > 0 ? { x: r.x, y: r.y, width: r.width, height: r.height } : null;
+}
+
+function restoreHeroCard() {
+  const el = heroFlight.hiddenCardEl;
+  if (el) {
+    el.style.visibility = "";
+    heroFlight.hiddenCardEl = null;
+  }
+}
+
+// Largest contain-fit rect for `ratio` inside a padded stage element (viewport coords). Used to
+// size the image box AND to target the flight, so both agree even before the bitmap loads.
+function computeStageContainRect(parent: HTMLElement, ratio: number): HeroRect | null {
+  const cs = getComputedStyle(parent);
+  const padL = parseFloat(cs.paddingLeft) || 0;
+  const padR = parseFloat(cs.paddingRight) || 0;
+  const padT = parseFloat(cs.paddingTop) || 0;
+  const padB = parseFloat(cs.paddingBottom) || 0;
+  const r = parent.getBoundingClientRect();
+  const availW = r.width - padL - padR;
+  const availH = r.height - padT - padB;
+  if (availW <= 0 || availH <= 0) return null;
+  let w = availW;
+  let h = w / ratio;
+  if (h > availH) {
+    h = availH;
+    w = h * ratio;
+  }
+  return {
+    x: r.left + padL + (availW - w) / 2,
+    y: r.top + padT + (availH - h) / 2,
+    width: w,
+    height: h,
+  };
+}
+
+function makeHeroClone(thumbnailUrl: string | undefined, at: HeroRect) {
+  const clone = document.createElement("div");
+  clone.style.cssText = `position:fixed;left:${at.x}px;top:${at.y}px;width:${at.width}px;height:${at.height}px;z-index:2147483000;pointer-events:none;transform-origin:top left;border-radius:13px;overflow:hidden;box-shadow:0 24px 60px rgba(20,18,16,.2),0 4px 14px rgba(20,18,16,.1);`;
+  if (thumbnailUrl) {
+    const img = document.createElement("img");
+    img.src = thumbnailUrl;
+    img.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
+    clone.appendChild(img);
+  } else {
+    clone.style.background = "#e4e2dd";
+  }
+  return clone;
+}
+
+function isAssetStillOpen(assetId: string) {
+  const search = router.state.location.search as { asset?: string } | undefined;
+  return String(search?.asset ?? "") === assetId;
+}
+
+// Return: a clone flies stage → card. Runs from the stage's own unmount, independent of React, so
+// the overlay can unmount instantly and routing stays untouched.
+function flyHeroBack(assetId: string, thumbnailUrl: string | undefined, from: HeroRect) {
+  const card = document.querySelector<HTMLElement>(`[data-hero-card="${CSS.escape(assetId)}"]`);
+  if (!card) return;
+  const to = rectOf(card);
+  if (!to) return;
+  const clone = makeHeroClone(thumbnailUrl, to);
+  document.body.appendChild(clone);
+  restoreHeroCard();
+  card.style.visibility = "hidden";
+  heroFlight.hiddenCardEl = card;
+  const { frames, durationMs } = heroFlipKeyframes(from, to);
+  const anim = clone.animate(frames, { duration: durationMs, easing: "linear" });
+  const done = () => {
+    restoreHeroCard();
+    clone.remove();
+  };
+  anim.onfinish = done;
+  anim.oncancel = done;
+}
+
+// Stage flight hook.
+//   ENTER: fly the REAL element (not a clone) from the clicked card's rect. Measured after two
+//     rAFs so the resizable panel / inspector widths have settled — otherwise `to` is measured at
+//     full width and the flight lands too big / offset. `pending` is consumed only when the flight
+//     actually fires (inside the rAF), so React StrictMode's mount→unmount→mount still flies once.
+//   RETURN: on a REAL close (asset param gone — not a StrictMode fake unmount) fly a body clone
+//     back to the card. The clone is on document.body, independent of React, so routing is untouched.
+function useHeroStage(asset: Asset, ref: React.RefObject<HTMLElement | null>) {
+  const assetId = asset.id;
+  const thumbnailUrl = asset.thumbnailUrl;
+  const heroable = canHeroAsset(asset);
+  useLayoutEffect(() => {
+    if (!heroable) return;
+    const el = ref.current;
+    let raf1 = 0;
+    let raf2 = 0;
+    if (el && heroFlight.pending?.assetId === assetId) {
+      el.style.visibility = "hidden";
+      raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => {
+          el.style.visibility = "";
+          const pending = heroFlight.pending;
+          if (!pending || pending.assetId !== assetId) return;
+          heroFlight.pending = null;
+          const to = rectOf(el);
+          if (!to) return;
+          const { frames, durationMs } = heroFlipKeyframes(pending.from, to);
+          el.style.transformOrigin = "top left";
+          el.animate(frames, { duration: durationMs, easing: "linear" });
+        });
+      });
+    }
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      if (el) el.style.visibility = "";
+      // StrictMode fake unmount (detail still open) → don't fly back.
+      if (prefersReducedMotion() || isAssetStillOpen(assetId)) return;
+      const from = el ? rectOf(el) : null;
+      if (from) flyHeroBack(assetId, thumbnailUrl, from);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetId]);
+}
+const INSPECTOR_WIDTH_STORAGE_KEY = "post.assetDetail.inspectorWidthPct";
+const INSPECTOR_DEFAULT_PCT = 26;
+const INSPECTOR_MIN_PCT = 18;
+const INSPECTOR_MAX_PCT = 40;
 
 function getTagIdsFromNames(tagNames: readonly string[], tagOptions: readonly SidebarTag[]) {
   if (tagNames.length === 0) {
@@ -408,11 +614,11 @@ function VisualBlock({ asset }: { asset: Asset }) {
 
   // Image (local or linked)
   if (asset.kind === "image") {
-    if (asset.mediaUrl) {
+    if (asset.displayUrl ?? asset.mediaUrl) {
       return (
         <div className="relative overflow-hidden border-b border-zinc-100 bg-zinc-100">
           <img
-            src={asset.mediaUrl}
+            src={asset.displayUrl ?? asset.mediaUrl}
             alt={asset.title}
             className="block h-auto w-full"
             draggable={false}
@@ -533,25 +739,81 @@ function VisualBlock({ asset }: { asset: Asset }) {
   return null;
 }
 
+const animatedPosterCache = new Map<string, string>();
+
+function useAnimatedImagePoster(asset: Asset) {
+  const cacheKey = `${asset.id}:${asset.timestampMs}`;
+  const [poster, setPoster] = useState<string | undefined>(
+    asset.thumbnailUrl ?? animatedPosterCache.get(cacheKey),
+  );
+
+  useEffect(() => {
+    setPoster(asset.thumbnailUrl ?? animatedPosterCache.get(cacheKey));
+    if (!asset.isAnimated || asset.thumbnailUrl || !asset.mediaUrl) return;
+
+    let cancelled = false;
+    const loader = new Image();
+    loader.decoding = "async";
+    loader.src = asset.mediaUrl;
+    const capture = () => {
+      if (cancelled || !loader.naturalWidth || !loader.naturalHeight) return;
+      const scale = Math.min(1, 720 / Math.max(loader.naturalWidth, loader.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(loader.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(loader.naturalHeight * scale));
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      try {
+        const frame = new VideoFrame(loader, { timestamp: 0 });
+        context.drawImage(frame, 0, 0, canvas.width, canvas.height);
+        frame.close();
+      } catch {
+        context.drawImage(loader, 0, 0, canvas.width, canvas.height);
+      }
+      const value = canvas.toDataURL("image/jpeg", 0.86);
+      animatedPosterCache.set(cacheKey, value);
+      if (!cancelled) setPoster(value);
+    };
+    void loader
+      .decode()
+      .then(capture)
+      .catch(() => {
+        loader.onload = capture;
+      });
+    return () => {
+      cancelled = true;
+      loader.onload = null;
+    };
+  }, [asset.isAnimated, asset.mediaUrl, asset.thumbnailUrl, cacheKey]);
+
+  return poster;
+}
+
 function AssetCardMedia({ asset }: { asset: Asset }) {
   const heightCls = { short: "h-32", medium: "h-44", tall: "h-72" }[asset.height ?? "medium"];
   const isVideo = asset.kind === "video";
   const isYouTube = asset.kind === "youtube";
+  const isAnimatedImage = asset.kind === "image" && asset.isAnimated === true;
+  const animatedFormatLabel = isAnimatedImage ? (asset.fileExt?.toUpperCase() ?? "GIF") : undefined;
+  const posterUrl = useAnimatedImagePoster(asset);
   const hasMediaThumbnail =
     (asset.kind === "image" ||
       asset.kind === "video" ||
       asset.kind === "youtube" ||
       asset.kind === "web") &&
-    asset.thumbnailUrl;
+    posterUrl;
   const imageAspectRatio =
     hasMediaThumbnail && asset.imageWidth && asset.imageHeight
       ? `${asset.imageWidth} / ${asset.imageHeight}`
       : undefined;
 
   const reduceMotion = useReducedMotion();
-  const canPreview = isVideo && Boolean(asset.mediaUrl) && !reduceMotion;
+  const previewVideoUrl = isVideo ? asset.mediaUrl : undefined;
+  const canPreview =
+    !reduceMotion && (Boolean(previewVideoUrl) || (isAnimatedImage && Boolean(asset.mediaUrl)));
   const videoRef = useRef<HTMLVideoElement>(null);
   const hoveringRef = useRef(false);
+  const [hoverActive, setHoverActive] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [durationLabel, setDurationLabel] = useState(asset.duration);
 
@@ -561,11 +823,13 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
 
   const startPreview = useCallback(() => {
     const video = videoRef.current;
-    if (!canPreview || !video) {
+    if (!canPreview) {
       return;
     }
 
     hoveringRef.current = true;
+    setHoverActive(true);
+    if (!video) return;
     video.muted = true;
     // play() rejects if the tab is backgrounded or autoplay is blocked; the thumbnail
     // simply stays visible in that case, so swallow the rejection.
@@ -574,6 +838,7 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
 
   const stopPreview = useCallback(() => {
     hoveringRef.current = false;
+    setHoverActive(false);
     const video = videoRef.current;
     setPreviewing(false);
     setDurationLabel(asset.duration);
@@ -603,6 +868,7 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
 
   return (
     <div
+      data-hero-card={canHeroAsset(asset) ? asset.id : undefined}
       className={`relative ${imageAspectRatio ? "" : heightCls} overflow-hidden`}
       onMouseEnter={canPreview ? startPreview : undefined}
       onMouseLeave={canPreview ? stopPreview : undefined}
@@ -617,7 +883,7 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
     >
       {hasMediaThumbnail ? (
         <img
-          src={asset.thumbnailUrl}
+          src={posterUrl}
           alt={asset.title}
           className="absolute inset-0 h-full w-full object-cover"
           loading="lazy"
@@ -626,10 +892,10 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
         />
       ) : null}
 
-      {canPreview ? (
+      {previewVideoUrl && !reduceMotion ? (
         <video
           ref={videoRef}
-          src={asset.mediaUrl}
+          src={previewVideoUrl}
           muted
           loop
           playsInline
@@ -638,6 +904,19 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
           aria-hidden
           onPlaying={handlePlaying}
           onTimeUpdate={asset.durationMs !== undefined ? handleTimeUpdate : undefined}
+          className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${
+            previewing ? "opacity-100" : "opacity-0"
+          }`}
+        />
+      ) : null}
+
+      {canPreview && isAnimatedImage && hoverActive && asset.mediaUrl ? (
+        <img
+          src={asset.mediaUrl}
+          alt=""
+          aria-hidden
+          draggable={false}
+          onLoad={handlePlaying}
           className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${
             previewing ? "opacity-100" : "opacity-0"
           }`}
@@ -665,6 +944,12 @@ function AssetCardMedia({ asset }: { asset: Asset }) {
             </span>
           ) : null}
         </>
+      ) : null}
+
+      {animatedFormatLabel ? (
+        <span className="pointer-events-none absolute right-2.5 top-2.5 rounded-md bg-[#1c1916]/55 px-1.5 py-0.5 font-mono text-[10.5px] font-medium text-white">
+          {animatedFormatLabel}
+        </span>
       ) : null}
 
       <AssetCardMediaOverlay asset={asset} />
@@ -1015,7 +1300,19 @@ const AssetCard = React.memo(function AssetCard({
       <button
         type="button"
         className="block w-full text-left outline-none focus-visible:ring-2 focus-visible:ring-zinc-500/20"
-        onClick={() => {
+        onClick={(event) => {
+          // Capture the media rect NOW so the stage can fly the hero in from it. No need to hide
+          // the card — the whole board goes `invisible` under the detail the same frame.
+          if (!prefersReducedMotion() && canHeroAsset(asset)) {
+            const media = event.currentTarget.querySelector<HTMLElement>("[data-hero-card]");
+            const rect = media?.getBoundingClientRect();
+            if (rect && rect.width > 0) {
+              heroFlight.pending = {
+                assetId: asset.id,
+                from: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+              };
+            }
+          }
           openAssetDetail(asset.id);
         }}
       >
@@ -2372,9 +2669,12 @@ function DetailSideMetaList({ list }: { list: [string, string][] }) {
   return (
     <div className="flex flex-col">
       {list.map(([k, v], i) => (
-        <div key={i} className="flex justify-between border-t border-zinc-100 py-2 text-[12.5px]">
-          <span className="text-zinc-500">{k}</span>
-          <span className="font-medium text-zinc-800">{v}</span>
+        <div
+          key={i}
+          className="flex items-baseline justify-between gap-3 border-t border-zinc-100 py-2 text-[12.5px]"
+        >
+          <span className="shrink-0 text-zinc-500">{k}</span>
+          <span className="min-w-0 break-all text-right font-medium text-zinc-800">{v}</span>
         </div>
       ))}
     </div>
@@ -2575,7 +2875,13 @@ function FrontmatterPanel({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-function MarkdownDetailBody({ asset }: { asset: Asset }) {
+function MarkdownDetailBody({
+  asset,
+  showFrontmatter = true,
+}: {
+  asset: Asset;
+  showFrontmatter?: boolean;
+}) {
   const { t } = useTranslation();
   const markdownQuery = useQuery(trpc.assets.markdownContent.queryOptions({ id: asset.id }));
   const rawContent = markdownQuery.data?.content ?? "";
@@ -2634,7 +2940,7 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
 
   return (
     <div className="max-w-[760px]">
-      {hasFrontmatter && <FrontmatterPanel data={parsed.data} />}
+      {showFrontmatter && hasFrontmatter && <FrontmatterPanel data={parsed.data} />}
       {bodyContent ? (
         <article className="user-select-text text-[15px] leading-[1.78] text-zinc-800 [&_a]:font-medium [&_a]:text-blue-600 [&_a:hover]:text-blue-700 [&_blockquote]:my-5 [&_blockquote]:border-l-2 [&_blockquote]:border-zinc-200 [&_blockquote]:pl-4 [&_blockquote]:text-zinc-600 [&_code]:rounded [&_code]:bg-zinc-100 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[0.88em] [&_h1]:mb-5 [&_h1]:mt-0 [&_h1]:text-[28px] [&_h1]:font-bold [&_h1]:leading-tight [&_h1]:text-zinc-950 [&_h2]:mb-3 [&_h2]:mt-8 [&_h2]:text-[22px] [&_h2]:font-bold [&_h2]:leading-tight [&_h2]:text-zinc-950 [&_h3]:mb-2.5 [&_h3]:mt-6 [&_h3]:text-[18px] [&_h3]:font-semibold [&_h3]:text-zinc-950 [&_hr]:my-8 [&_hr]:border-zinc-200 [&_li]:my-1 [&_ol]:my-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-4 [&_pre]:my-5 [&_pre]:overflow-x-auto [&_pre]:rounded-[10px] [&_pre]:bg-zinc-950 [&_pre]:p-4 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[13px] [&_pre_code]:text-zinc-100 [&_strong]:font-semibold [&_strong]:text-zinc-950 [&_table]:my-5 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-zinc-200 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-zinc-200 [&_th]:bg-zinc-50 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:my-4 [&_ul]:list-disc [&_ul]:pl-6">
           <ReactMarkdown
@@ -2696,33 +3002,6 @@ function MarkdownDetailBody({ asset }: { asset: Asset }) {
           {t("assets.markdownEmpty")}
         </div>
       )}
-    </div>
-  );
-}
-
-function ImageDetailBody({ asset }: { asset: Asset }) {
-  const { t } = useTranslation();
-  const dims =
-    asset.imageWidth && asset.imageHeight
-      ? `${asset.imageWidth} × ${asset.imageHeight}`
-      : undefined;
-  const ext = (asset.fileExt ?? "").toUpperCase() || "IMG";
-  const metaList: [string, string][] = [
-    [t("assets.fieldSource"), asset.source.split(" / ")[0] ?? "—"],
-    ...(dims ? ([[t("assets.fieldSize"), dims]] as [string, string][]) : []),
-    [t("assets.fieldFormat"), ext],
-    [t("assets.fieldCaptured"), asset.time],
-  ];
-  return (
-    <div className="flex gap-6">
-      <div className="min-w-0 flex-1">
-        <div className="overflow-hidden rounded-[13px] border border-zinc-200 shadow-sm">
-          <VisualBlock asset={asset} />
-        </div>
-      </div>
-      <div className="w-[248px] shrink-0">
-        <DetailSideMetaList list={metaList} />
-      </div>
     </div>
   );
 }
@@ -2816,18 +3095,307 @@ function LocalVideoPlayer({
   return <Plyr source={source} options={options} />;
 }
 
-function VideoDetailBody({ asset }: { asset: Asset }) {
+function buildAssetInfoRows(
+  asset: Asset,
+  t: ReturnType<typeof useTranslation>["t"],
+): [string, string][] {
+  const source = asset.source.split(" / ")[0] ?? "—";
+  const dims =
+    asset.imageWidth && asset.imageHeight
+      ? `${asset.imageWidth} × ${asset.imageHeight}`
+      : undefined;
+
+  switch (asset.kind) {
+    case "image":
+      return [
+        [t("assets.fieldSource"), source],
+        ...(dims ? ([[t("assets.fieldSize"), dims]] as [string, string][]) : []),
+        [t("assets.fieldFormat"), (asset.fileExt ?? "").toUpperCase() || "IMG"],
+        [t("assets.fieldCaptured"), asset.time],
+      ];
+    case "video":
+      return [
+        [t("assets.fieldSource"), source],
+        ...(dims ? ([[t("assets.fieldSize"), dims]] as [string, string][]) : []),
+        [t("assets.fieldFormat"), (asset.fileExt ?? "").toUpperCase() || "VIDEO"],
+        ...(asset.duration
+          ? ([[t("assets.fieldDuration"), asset.duration]] as [string, string][])
+          : []),
+        [t("assets.fieldCaptured"), asset.time],
+      ];
+    case "youtube":
+      return [
+        ...(asset.channelName
+          ? ([[t("assets.fieldChannel"), asset.channelName]] as [string, string][])
+          : []),
+        ...(asset.duration
+          ? ([[t("assets.fieldDuration"), asset.duration]] as [string, string][])
+          : []),
+        ...(asset.url ? ([[t("assets.fieldUrl"), asset.url]] as [string, string][]) : []),
+        [t("assets.fieldCaptured"), asset.time],
+      ];
+    case "web":
+    case "link":
+      return [
+        ...(asset.domain ? ([[t("assets.fieldDomain"), asset.domain]] as [string, string][]) : []),
+        [t("assets.fieldSnapshot"), t("assets.fieldSnapshotValue")],
+        [t("assets.fieldCaptured"), asset.time],
+      ];
+    case "file": {
+      const [fmt, ...rest] = asset.meta.split(" · ");
+      return [
+        [t("assets.fieldFormat"), fmt ?? "—"],
+        [t("assets.fieldFileSize"), rest.join(" · ") || "—"],
+        [
+          t("assets.fieldLocation"),
+          asset.sourceType === "vault"
+            ? t("assets.fieldLocationVault")
+            : t("assets.fieldLocationExternal"),
+        ],
+        [t("assets.fieldModified"), asset.time],
+      ];
+    }
+    default:
+      // markdown / post
+      return [
+        [t("assets.fieldSource"), source],
+        [t("assets.fieldModified"), asset.time],
+      ];
+  }
+}
+
+function YouTubePlayer({ videoId, title }: { videoId: string; title: string }) {
+  const source = useMemo<PlyrSource>(
+    () => ({
+      type: "video",
+      title,
+      sources: [{ src: videoId, provider: "youtube" }],
+    }),
+    [title, videoId],
+  );
+  const options = useMemo<PlyrOptions>(() => ({ controls: LOCAL_VIDEO_PLAYER_CONTROLS }), []);
+  return <Plyr source={source} options={options} />;
+}
+
+// Wait until the open transition (hero flight ≈ 0.5s) has settled before mounting heavy
+// children (Plyr / YouTube iframe), so their init cost never lands on the animating frames.
+function useDeferredReady(delayMs = 520) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setReady(true), delayMs);
+    return () => window.clearTimeout(id);
+  }, [delayMs]);
+  return ready;
+}
+
+// Thumbnail first; the full-resolution image is layered ON TOP and faded in — the thumbnail
+// always stays underneath, so the sharpen can never flash a blank frame. The full image is
+// mounted only after (a) it is fully DECODED (img.decode(), not just loaded) and (b) the hero
+// flight has settled, so the swap never lands on an animating frame.
+// The aspect-ratio box makes the final rect measurable before any bitmap loads, which the
+// hero flight needs on its first pre-paint frame.
+function StageImage({ asset }: { asset: Asset }) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const flightSettled = useDeferredReady();
+  const [fullReady, setFullReady] = useState(false);
+  const [hovering, setHovering] = useState(false);
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null);
+  const generatedPoster = useAnimatedImagePoster(asset);
+  const thumb = asset.thumbnailUrl ?? generatedPoster;
+  const full = asset.displayUrl ?? asset.mediaUrl;
+  const baseSrc = thumb ?? (asset.isAnimated ? undefined : full);
+  const reduceMotion = useReducedMotion();
+  const hoverPlayable = !reduceMotion && asset.isAnimated && Boolean(asset.mediaUrl);
+  const ratio =
+    asset.imageWidth && asset.imageHeight
+      ? asset.imageWidth / asset.imageHeight
+      : asset.thumbnailWidth && asset.thumbnailHeight
+        ? asset.thumbnailWidth / asset.thumbnailHeight
+        : undefined;
+
+  // Size the box to a contain-fit rect in JS (reliable for portrait AND landscape — the CSS
+  // aspect-ratio box could not), and keep it synced on panel resize. Runs pre-paint so the first
+  // frame is already correctly sized.
+  useLayoutEffect(() => {
+    const parent = wrapRef.current?.parentElement;
+    if (!parent || !ratio) return;
+    const measure = () => {
+      const rect = computeStageContainRect(parent, ratio);
+      if (!rect) return;
+      setBox((prev) =>
+        prev && Math.abs(prev.w - rect.width) < 0.5 && Math.abs(prev.h - rect.height) < 0.5
+          ? prev
+          : { w: rect.width, h: rect.height },
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, [ratio]);
+
+  // Enter/return flight — flies the real box after the panel has settled (see useHeroStage).
+  useHeroStage(asset, wrapRef);
+
+  // Decode the full-res bitmap off-thread; only reveal once fully decoded AND the flight settled —
+  // a decoded, cached swap paints with no flash. The full image is layered on top and fades in.
+  useEffect(() => {
+    setFullReady(false);
+    if (asset.isAnimated) return;
+    if (!full || !thumb || full === thumb) return;
+    let cancelled = false;
+    const loader = new Image();
+    loader.decoding = "async";
+    loader.src = full;
+    const ready = () => {
+      if (!cancelled) setFullReady(true);
+    };
+    loader
+      .decode()
+      .then(ready)
+      .catch(() => {
+        if (loader.complete) ready();
+        else loader.onload = ready;
+      });
+    return () => {
+      cancelled = true;
+      loader.onload = null;
+    };
+  }, [asset.isAnimated, full, thumb]);
+
+  const hoverLayer =
+    hovering && !reduceMotion && asset.isAnimated && asset.mediaUrl ? (
+      <img
+        src={asset.mediaUrl}
+        alt=""
+        aria-hidden
+        draggable={false}
+        className="absolute inset-0 h-full w-full object-cover"
+      />
+    ) : null;
+
+  if (!baseSrc) {
+    return (
+      <div
+        className="relative min-h-56 w-full max-w-[560px] overflow-hidden rounded-[13px] border border-zinc-200 bg-zinc-100 shadow-sm"
+        style={ratio ? { aspectRatio: ratio } : undefined}
+        onMouseEnter={hoverPlayable ? () => setHovering(true) : undefined}
+        onMouseLeave={hoverPlayable ? () => setHovering(false) : undefined}
+      >
+        {!asset.isAnimated ? <VisualBlock asset={asset} /> : null}
+        {hoverLayer}
+      </div>
+    );
+  }
+  if (!ratio) {
+    const src =
+      !asset.isAnimated && full && thumb && full !== thumb && fullReady && flightSettled
+        ? full
+        : baseSrc;
+    return (
+      <div
+        className="relative max-h-full max-w-full overflow-hidden rounded-[13px] shadow-md"
+        onMouseEnter={hoverPlayable ? () => setHovering(true) : undefined}
+        onMouseLeave={hoverPlayable ? () => setHovering(false) : undefined}
+      >
+        <img
+          src={src}
+          alt={asset.title}
+          draggable={false}
+          decoding="async"
+          className="block max-h-full max-w-full object-contain"
+        />
+        {hoverLayer}
+      </div>
+    );
+  }
+
+  const showFull = Boolean(
+    !asset.isAnimated && full && thumb && full !== thumb && fullReady && flightSettled,
+  );
+  return (
+    <div
+      ref={wrapRef}
+      className="relative overflow-hidden rounded-[13px] shadow-md"
+      onMouseEnter={hoverPlayable ? () => setHovering(true) : undefined}
+      onMouseLeave={hoverPlayable ? () => setHovering(false) : undefined}
+      // No `visibility`/`opacity` in either branch: the flight sets visibility imperatively, and
+      // React must not clobber it when `box` resolves. Empty 1px box is invisible pre-measure.
+      style={box ? { width: box.w, height: box.h } : { width: 1, height: 1 }}
+    >
+      {box ? (
+        <>
+          <img
+            src={baseSrc}
+            alt={asset.title}
+            draggable={false}
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+          {showFull && full ? (
+            <motion.img
+              src={full}
+              alt=""
+              aria-hidden
+              draggable={false}
+              className="absolute inset-0 h-full w-full object-cover"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+            />
+          ) : null}
+          {hoverLayer}
+          {asset.isAnimated ? (
+            <span className="pointer-events-none absolute right-3 top-3 rounded-md bg-[#1c1916]/55 px-2 py-1 font-mono text-[10.5px] font-medium text-white">
+              {asset.fileExt?.toUpperCase() ?? "GIF"}
+            </span>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+// Poster frame shown inside the media box until the player is mounted.
+function StagePoster({ asset }: { asset: Asset }) {
+  if (!asset.thumbnailUrl) return <VisualBlock asset={asset} />;
+  return (
+    <div className="relative h-full w-full">
+      <img
+        src={asset.thumbnailUrl}
+        alt={asset.title}
+        draggable={false}
+        className="h-full w-full object-cover"
+      />
+      <span className="absolute left-1/2 top-1/2 grid h-14 w-14 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-[#1c1916]/45 text-white shadow-lg backdrop-blur-sm">
+        <Play size={22} fill="currentColor" />
+      </span>
+    </div>
+  );
+}
+
+// Centered media/preview for the detail stage (lightbox-style, contain-fit on a soft canvas).
+function StageMedia({ asset }: { asset: Asset }) {
   const mediaRatio = useMemo(
     () => getAssetMediaRatio(asset),
     [asset.imageHeight, asset.imageWidth, asset.thumbnailHeight, asset.thumbnailWidth],
   );
-  return (
-    <div className="max-w-[780px]">
+  const heavyReady = useDeferredReady();
+  // Flight target for the video/youtube boxes (the image handles its own inside StageImage).
+  const heroBoxRef = useRef<HTMLDivElement | null>(null);
+  useHeroStage(asset, heroBoxRef);
+
+  if (asset.kind === "image") {
+    return <StageImage asset={asset} />;
+  }
+
+  if (asset.kind === "video") {
+    return (
       <div
-        className="overflow-hidden rounded-[13px] border border-zinc-200 bg-black shadow-sm"
+        ref={heroBoxRef}
+        className="max-h-full w-full max-w-[900px] overflow-hidden rounded-[13px] border border-zinc-200 bg-black shadow-md"
         style={mediaRatio ? { aspectRatio: mediaRatio.css } : undefined}
       >
-        {asset.mediaUrl ? (
+        {heavyReady && asset.mediaUrl ? (
           <LocalVideoPlayer
             src={asset.mediaUrl}
             title={asset.title}
@@ -2836,139 +3404,119 @@ function VideoDetailBody({ asset }: { asset: Asset }) {
             ratio={mediaRatio?.plyr}
           />
         ) : (
-          <VisualBlock asset={asset} />
+          <StagePoster asset={asset} />
         )}
       </div>
-    </div>
-  );
-}
+    );
+  }
 
-function LinkDetailBody({ asset, onOpen }: { asset: Asset; onOpen: () => void }) {
-  const { t } = useTranslation();
-  const metaList: [string, string][] = [
-    ...(asset.domain ? ([[t("assets.fieldDomain"), asset.domain]] as [string, string][]) : []),
-    [t("assets.fieldSnapshot"), t("assets.fieldSnapshotValue")],
-    [t("assets.fieldCaptured"), asset.time],
-  ];
-  return (
-    <div className="flex gap-6">
-      <div className="min-w-0 flex-1">
-        <div className="max-w-[660px] overflow-hidden rounded-[13px] border border-zinc-200 bg-white shadow-sm">
-          <VisualBlock asset={asset} />
+  if (asset.kind === "youtube") {
+    return asset.videoId ? (
+      <div
+        ref={heroBoxRef}
+        className="w-full max-w-[900px] overflow-hidden rounded-[13px] border border-zinc-200 bg-black shadow-md"
+      >
+        {heavyReady ? (
+          <YouTubePlayer videoId={asset.videoId} title={asset.title} />
+        ) : (
+          <div className="aspect-video w-full">
+            <StagePoster asset={asset} />
+          </div>
+        )}
+      </div>
+    ) : (
+      <div className="w-full max-w-[560px] overflow-hidden rounded-[13px] border border-zinc-200 shadow-sm">
+        <VisualBlock asset={asset} />
+      </div>
+    );
+  }
+
+  if (asset.kind === "web" || asset.kind === "link") {
+    return (
+      <div className="w-full max-w-[660px] overflow-hidden rounded-[13px] border border-zinc-200 bg-white shadow-sm">
+        <VisualBlock asset={asset} />
+        {asset.url ? (
           <div className="flex items-center gap-2.5 border-t border-zinc-100 px-3.5 py-3">
             <Globe size={14} className="shrink-0 text-zinc-500" />
             <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-zinc-500">
               <b className="font-semibold text-zinc-900">{asset.domain}</b>
-              {asset.url && asset.domain ? asset.url.replace(asset.domain, "") : (asset.url ?? "")}
+              {asset.url && asset.domain ? asset.url.replace(asset.domain, "") : asset.url}
             </span>
-            <button
-              type="button"
-              className="shrink-0 text-[11.5px] font-semibold text-blue-600"
-              onClick={onOpen}
-            >
-              {t("assets.openExternal")}
-            </button>
           </div>
-        </div>
+        ) : null}
       </div>
-      <div className="w-[248px] shrink-0">
-        <button
-          type="button"
-          className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-blue-600 px-4 py-[11px] text-[13px] font-semibold text-white shadow-sm"
-          onClick={onOpen}
-        >
-          <ExternalLink size={14} />
-          {t("assets.openOriginal")}
-        </button>
-        <div className="mt-5">
-          <span className="mb-2.5 block text-[10.5px] font-semibold uppercase tracking-[.06em] text-zinc-400">
-            {t("assets.webInfo")}
-          </span>
-          <DetailSideMetaList list={metaList} />
-        </div>
-      </div>
-    </div>
-  );
-}
+    );
+  }
 
-function FileDetailBody({
-  asset,
-  onOpen,
-  onShowInFinder,
-}: {
-  asset: Asset;
-  onOpen: () => void;
-  onShowInFinder: () => void;
-}) {
-  const { t } = useTranslation();
-  const [fmt, ...rest] = asset.meta.split(" · ");
-  const metaList: [string, string][] = [
-    [t("assets.fieldFormat"), fmt ?? "—"],
-    [t("assets.fieldFileSize"), rest.join(" · ") || "—"],
-    [
-      t("assets.fieldLocation"),
-      asset.sourceType === "vault"
-        ? t("assets.fieldLocationVault")
-        : t("assets.fieldLocationExternal"),
-    ],
-    [t("assets.fieldModified"), asset.time],
-  ];
-  return (
-    <div className="flex gap-6">
-      <div className="min-w-0 flex-1">
+  if (asset.kind === "file") {
+    return (
+      <div className="w-full max-w-[620px]">
         <DocPreviewSkeleton fileExt={asset.fileExt} />
       </div>
-      <div className="w-[248px] shrink-0">
-        <button
-          type="button"
-          className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-blue-600 px-4 py-[11px] text-[13px] font-semibold text-white shadow-sm"
-          onClick={onOpen}
-        >
-          <ExternalLink size={14} />
-          {t("assets.openDefault")}
-        </button>
-        <button
-          type="button"
-          className="mt-2 flex w-full items-center justify-center rounded-[10px] border border-zinc-200 bg-white px-4 py-[10px] text-[13px] text-zinc-900"
-          onClick={onShowInFinder}
-        >
-          {t("assets.showInFinder")}
-        </button>
-        {asset.body ? (
-          <p className="mt-3.5 rounded-[11px] border border-zinc-100 bg-zinc-50 px-4 py-3.5 text-[13.5px] leading-[1.7] text-zinc-700">
-            {asset.body}
-          </p>
-        ) : null}
-        <div className="mt-5">
-          <span className="mb-2.5 block text-[10.5px] font-semibold uppercase tracking-[.06em] text-zinc-400">
-            {t("assets.fileInfo")}
-          </span>
-          <DetailSideMetaList list={metaList} />
-        </div>
-      </div>
+    );
+  }
+
+  return null;
+}
+
+// Left content pane: markdown scrolls; media/others center on a soft canvas.
+// Chrome (canvas / doc body) fades in on its own layer so the hero flight above it is never
+// dimmed by a parent opacity, and the stage root never clips the flight path.
+function AssetStage({ asset, dragEnabled }: { asset: Asset; dragEnabled: boolean }) {
+  const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
+  const isDoc = asset.kind === "markdown" || asset.kind === "post";
+
+  if (isDoc) {
+    return (
+      <motion.div
+        className="relative h-full min-h-0 bg-white"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={DETAIL_CHROME_FADE}
+      >
+        {/* thin top strip preserves macOS window drag now that the header is gone */}
+        <div className={`${dragClassName} absolute inset-x-0 top-0 z-[1] h-8`} aria-hidden />
+        <ScrollArea className="h-full min-h-0" viewportClassName="px-10 py-9">
+          <div className="mx-auto max-w-[760px]">
+            <MarkdownDetailBody asset={asset} showFrontmatter={false} />
+          </div>
+        </ScrollArea>
+      </motion.div>
+    );
+  }
+
+  return (
+    <div className="relative flex h-full min-h-0 items-center justify-center p-8">
+      <motion.div
+        className="absolute inset-0 bg-zinc-50"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={DETAIL_CHROME_FADE}
+        aria-hidden
+      />
+      <div className={`${dragClassName} absolute inset-x-0 top-0 z-0 h-8`} aria-hidden />
+      <StageMedia asset={asset} />
     </div>
   );
 }
 
-function AssetDetail({
+// Right rail: identity + always-visible tags + read-only info + actions. Rendered both docked
+// (in the panel) and floating (the collapsed-edge hover preview, `floating`).
+function AssetInspector({
   asset,
   vaultTags,
-  dragEnabled = true,
-  terminalAvailable,
-  terminalOpen,
-  onToggleTerminal,
+  floating = false,
+  onCollapse,
+  onExpand,
 }: {
   asset: Asset;
   vaultTags: readonly SidebarTag[];
-  dragEnabled?: boolean;
-  terminalAvailable: boolean;
-  terminalOpen: boolean;
-  onToggleTerminal: () => void;
+  floating?: boolean;
+  onCollapse?: () => void;
+  onExpand?: () => void;
 }) {
   const { t } = useTranslation();
   const { label } = getKindMeta(asset.kind);
-  const headerRef = useToolbarClearance();
-  const dragClassName = dragEnabled ? "window-drag" : "window-no-drag";
   const openFileMutation = useMutation(trpc.assets.openFile.mutationOptions());
   const openVaultLocationMutation = useMutation(trpc.assets.openVaultLocation.mutationOptions());
   const openAssetInEditorMutation = useMutation(trpc.assets.openAssetInEditor.mutationOptions());
@@ -2986,7 +3534,9 @@ function AssetDetail({
   const shouldOpenFileInEditor =
     asset.kind === "markdown" || asset.kind === "post" || asset.kind === "file";
   const canOpenInDefaultMediaApp = asset.kind === "image" || asset.kind === "video";
+  const isExternalKind = asset.kind === "web" || asset.kind === "link" || asset.kind === "youtube";
   const DefaultMediaOpenIcon = asset.kind === "image" ? ImageIcon : Play;
+  const infoRows = buildAssetInfoRows(asset, t);
 
   const openVaultWithTarget = (targetId: OpenVaultTarget, persistTarget: boolean) => {
     if (persistTarget) {
@@ -3003,61 +3553,119 @@ function AssetDetail({
   };
 
   return (
-    <main className="flex h-full min-w-0 flex-col bg-white">
-      {/* ── Top bar: breadcrumb + actions on one line ── */}
-      <div
-        ref={headerRef}
-        className={`${dragClassName} relative z-[75] flex h-10 shrink-0 items-center gap-2 border-b border-zinc-100 bg-white px-6`}
-      >
-        <span className="text-xs text-zinc-400">{t("assets.breadcrumb", { tag: asset.tag })}</span>
-        <div className="flex-1" />
-        <div className="window-no-drag flex items-center gap-2">
-          {canOpenInDefaultMediaApp ? (
-            <Button
-              size="sm"
-              isIconOnly
-              aria-label={
-                asset.kind === "image"
-                  ? t("assets.openInSystemImage")
-                  : t("assets.openInSystemVideo")
-              }
-              isDisabled={openFileMutation.isPending}
-              className="window-no-drag h-6 min-h-0 rounded-lg border border-zinc-200 bg-white px-2 text-[11px] text-zinc-600 hover:bg-zinc-50"
-              onPress={() => openFileMutation.mutate({ id: asset.id })}
-            >
-              <DefaultMediaOpenIcon className={HEADER_ICON_CLASS_NAME} />
-            </Button>
-          ) : null}
-          {/* Editor split button — same as board header */}
-          <div className="inline-flex h-6 overflow-hidden rounded-lg border border-zinc-200 bg-white text-zinc-600 shadow-[0_1px_1px_rgba(24,24,27,0.03)]">
+    <motion.aside
+      className={`window-no-drag flex h-full min-h-0 min-w-0 flex-col bg-white ${
+        floating
+          ? "rounded-l-2xl border-l border-zinc-200 shadow-[-14px_0_44px_rgba(20,18,16,0.14)]"
+          : ""
+      }`}
+      initial={floating ? false : { opacity: 0, x: 10 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={DETAIL_CHROME_FADE}
+    >
+      {/* identity + tags */}
+      <div className="shrink-0 border-b border-zinc-100 px-4 pb-3.5 pt-2.5">
+        <div className="flex items-center gap-1">
+          <Button
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            aria-label={floating ? t("assets.expandInspector") : t("assets.collapseInspector")}
+            className="h-7 w-7 min-w-7 rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            onPress={floating ? onExpand : onCollapse}
+          >
+            {floating ? (
+              <PanelRightOpen className="size-4" />
+            ) : (
+              <PanelRightClose className="size-4" />
+            )}
+          </Button>
+          <span className="rounded border border-zinc-200 px-1 py-px font-mono text-[8.5px] font-semibold uppercase tracking-wider text-zinc-400">
+            {label}
+          </span>
+          <div className="flex-1" />
+          <Button
+            isIconOnly
+            size="sm"
+            variant="ghost"
+            aria-label={t("assets.closeDetail")}
+            className="h-7 w-7 min-w-7 rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            onPress={() => closeAssetDetail()}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+        <h1 className="mt-2.5 break-words text-[16px] font-semibold leading-[1.35] text-zinc-950">
+          {asset.title}
+        </h1>
+        <div className="mt-1 truncate text-[11.5px] text-zinc-400">
+          {asset.source.split(" / ")[0]}
+        </div>
+        <AssetDetailTags asset={asset} vaultTags={vaultTags} />
+      </div>
+
+      {/* info + note */}
+      <ScrollArea className="min-h-0 flex-1" viewportClassName="px-4 py-4">
+        <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[.08em] text-zinc-400">
+          {t("assets.information")}
+        </span>
+        <DetailSideMetaList list={infoRows} />
+        {asset.body ? (
+          <>
+            <span className="mb-1.5 mt-6 block text-[10px] font-semibold uppercase tracking-[.08em] text-zinc-400">
+              {t("assets.note")}
+            </span>
+            <p className="rounded-[10px] border border-zinc-100 bg-zinc-50 px-3.5 py-3 text-[13px] leading-[1.65] text-zinc-700 [overflow-wrap:anywhere]">
+              {asset.body}
+            </p>
+          </>
+        ) : null}
+      </ScrollArea>
+
+      {/* actions */}
+      <div className="flex shrink-0 items-center gap-1.5 border-t border-zinc-100 px-3 py-2.5">
+        {isExternalKind ? (
+          <Button
+            size="sm"
+            className="h-8 flex-1 gap-1.5 rounded-lg bg-blue-600 text-[12.5px] font-semibold text-white hover:bg-blue-700"
+            onPress={() => openFileMutation.mutate({ id: asset.id })}
+          >
+            <ExternalLink className="size-3.5" />
+            {asset.kind === "youtube" ? t("assets.openOnYouTube") : t("assets.openOriginal")}
+          </Button>
+        ) : (
+          <div className="inline-flex h-8 flex-1 overflow-hidden rounded-lg border border-zinc-200 bg-white text-zinc-600">
             <button
               type="button"
-              className="inline-grid h-6 w-7 place-items-center border-r border-zinc-200 transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-45"
+              className="inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 border-r border-zinc-200 text-[12.5px] font-medium transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-45"
               aria-label={t("assets.openVaultWith", { label: preferredOpenTarget.label })}
               disabled={openVaultLocationMutation.isPending}
               onClick={() => openVaultWithTarget(preferredOpenTarget.id, false)}
             >
-              <PreferredOpenIcon aria-hidden="true" className={HEADER_ICON_CLASS_NAME} />
+              <PreferredOpenIcon aria-hidden="true" className="size-3.5 shrink-0" />
+              <span className="truncate">{preferredOpenTarget.label}</span>
             </button>
             <Dropdown isOpen={openWithMenuOpen} onOpenChange={setOpenWithMenuOpen}>
               <Dropdown.Trigger
-                className="inline-grid h-6 w-6 place-items-center outline-none transition-colors hover:bg-zinc-50"
+                className="inline-grid h-8 w-7 shrink-0 place-items-center outline-none transition-colors hover:bg-zinc-50"
                 aria-label={t("assets.chooseOpenMethod")}
               >
                 <ChevronDown
-                  className={`${HEADER_ICON_CLASS_NAME} transition-transform duration-200 ${openWithMenuOpen ? "rotate-180" : ""}`}
+                  className={`size-3.5 transition-transform duration-200 ${openWithMenuOpen ? "rotate-180" : ""}`}
                 />
               </Dropdown.Trigger>
               <Dropdown.Popover
                 className="z-[120] overflow-hidden rounded-xl border border-zinc-200 bg-white p-1 shadow-[0_14px_34px_rgba(20,18,16,0.14),0_2px_7px_rgba(20,18,16,0.07)]"
                 offset={6}
-                placement="bottom end"
+                placement="top end"
               >
                 <Dropdown.Menu
                   aria-label={t("assets.openVault")}
                   className="min-w-36 p-0 outline-none"
                   disabledKeys={
-                    openVaultLocationMutation.isPending ? OPEN_VAULT_TARGETS.map((t) => t.id) : []
+                    openVaultLocationMutation.isPending
+                      ? OPEN_VAULT_TARGETS.map((target) => target.id)
+                      : []
                   }
                   onAction={(key) => openVaultWithTarget(key as OpenVaultTarget, true)}
                 >
@@ -3070,10 +3678,7 @@ function AssetDetail({
                         textValue={target.label}
                         className="flex h-7 cursor-default items-center gap-2 rounded-lg px-2 text-[12.5px] font-medium text-zinc-700 outline-none transition-colors data-[focused]:bg-zinc-100 data-[hovered]:bg-zinc-100 data-[disabled]:opacity-45"
                       >
-                        <Icon
-                          aria-hidden="true"
-                          className={`${HEADER_ICON_CLASS_NAME} text-zinc-500`}
-                        />
+                        <Icon aria-hidden="true" className="size-3.5 text-zinc-500" />
                         <Label className="cursor-default text-[12.5px] font-medium text-inherit">
                           {target.label}
                         </Label>
@@ -3084,97 +3689,233 @@ function AssetDetail({
               </Dropdown.Popover>
             </Dropdown>
           </div>
-          {/* Copy path button */}
+        )}
+        {canOpenInDefaultMediaApp ? (
           <Button
-            size="sm"
             isIconOnly
-            aria-label={t("assets.copyPath")}
-            className="window-no-drag h-6 min-h-0 rounded-lg border border-zinc-200 bg-white px-2 text-[11px] text-zinc-600 hover:bg-zinc-50"
-            onPress={() => {
-              copyAssetPathMutation.mutate(
-                { id: asset.id },
-                {
-                  onSuccess: () => {
-                    toast.success(t("assets.pathCopied"));
-                    setPathCopied(true);
-                    setTimeout(() => setPathCopied(false), 2000);
-                  },
-                },
-              );
-            }}
+            size="sm"
+            aria-label={
+              asset.kind === "image" ? t("assets.openInSystemImage") : t("assets.openInSystemVideo")
+            }
+            isDisabled={openFileMutation.isPending}
+            className="h-8 w-8 min-w-8 rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+            onPress={() => openFileMutation.mutate({ id: asset.id })}
           >
-            {pathCopied ? (
-              <Check className={HEADER_ICON_CLASS_NAME} />
-            ) : (
-              <Copy className={HEADER_ICON_CLASS_NAME} />
-            )}
+            <DefaultMediaOpenIcon className="size-3.5" />
           </Button>
-          {/* Terminal button */}
-          {SHOW_TERMINAL_TOGGLE ? (
-            <Button
-              size="sm"
-              isIconOnly
-              isDisabled={!terminalAvailable}
-              aria-label={
-                terminalAvailable ? t("assets.openTerminal") : t("assets.terminalUnsupported")
-              }
-              className={`window-no-drag h-6 min-h-0 rounded-lg border px-2 text-[11px] ${
-                terminalOpen
-                  ? "border-zinc-300 bg-zinc-100 text-zinc-900"
-                  : "border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
-              }`}
-              onPress={onToggleTerminal}
-            >
-              <PanelRightOpen className={HEADER_ICON_CLASS_NAME} />
-            </Button>
-          ) : null}
-        </div>
+        ) : null}
+        {asset.kind === "file" ? (
+          <Button
+            isIconOnly
+            size="sm"
+            aria-label={t("assets.showInFinder")}
+            className="h-8 w-8 min-w-8 rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+            onPress={() => openVaultLocationMutation.mutate({ target: "finder" })}
+          >
+            <FolderClosed className="size-3.5" />
+          </Button>
+        ) : null}
+        <Button
+          isIconOnly
+          size="sm"
+          aria-label={t("assets.copyPath")}
+          className="h-8 w-8 min-w-8 rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50"
+          onPress={() => {
+            copyAssetPathMutation.mutate(
+              { id: asset.id },
+              {
+                onSuccess: () => {
+                  toast.success(t("assets.pathCopied"));
+                  setPathCopied(true);
+                  setTimeout(() => setPathCopied(false), 2000);
+                },
+              },
+            );
+          }}
+        >
+          {pathCopied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </Button>
       </div>
+    </motion.aside>
+  );
+}
 
-      {/* ── Sub-header: kind badge + title + meta + tags ── */}
-      <div className="shrink-0 border-b border-zinc-100 px-10 pb-5 pt-6">
-        {/* kind badge + title */}
-        <div className="flex items-start gap-2.5">
-          <span className="mt-[7px] shrink-0 rounded border border-zinc-200 px-1 py-px font-mono text-[8.5px] font-semibold uppercase tracking-wider text-zinc-400">
-            {label}
-          </span>
-          <h1 className="max-w-[760px] text-[25px] font-bold leading-[1.28] tracking-[0.005em] text-zinc-950">
-            {asset.title}
-          </h1>
-        </div>
-        {/* meta row */}
-        <div className="mt-3.5 flex flex-wrap items-center gap-[9px] text-xs text-zinc-500">
-          <span>{asset.source.split(" / ")[0]}</span>
-          <span className="opacity-60">·</span>
-          <span>{asset.time}</span>
-          <span className="opacity-60">·</span>
-          <span>{asset.meta}</span>
-          <span className="opacity-60">·</span>
-          <span className="text-zinc-400">{t("assets.readonlyPreview")}</span>
-        </div>
-        {/* tags row */}
-        <AssetDetailTags asset={asset} vaultTags={vaultTags} />
-      </div>
+// Detail viewer: content stage + collapsible/resizable right inspector.
+function AssetDetailViewer({
+  asset,
+  vaultTags,
+  dragEnabled = true,
+}: {
+  asset: Asset;
+  vaultTags: readonly SidebarTag[];
+  dragEnabled?: boolean;
+}) {
+  const { t } = useTranslation();
+  const [collapsed, setCollapsed] = useAtom(inspectorCollapsedAtom);
+  const inspectorPanelRef = useRef<PanelImperativeHandle | null>(null);
+  const initializingRef = useRef(true);
+  // Collapse/expand flex-grow animation (mirrors the sidebar's `panel-animating`), and the
+  // collapsed-edge hover preview (mirrors the sidebar's floating preview, flipped to the right).
+  const [animating, setAnimating] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  // During the collapse/expand animation the inspector content is pinned to a fixed pixel width so
+  // it is CLIPPED by the narrowing panel (like the sidebar) instead of reflowing/squishing.
+  const [frozenWidth, setFrozenWidth] = useState<number | null>(null);
+  const lastWidthRef = useRef<number>(0);
+  const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-      {/* ── Body ── */}
-      <ScrollArea className="min-h-0 flex-1" viewportClassName="px-10 py-7">
-        {(asset.kind === "markdown" || asset.kind === "post") && (
-          <MarkdownDetailBody asset={asset} />
-        )}
-        {asset.kind === "image" && <ImageDetailBody asset={asset} />}
-        {asset.kind === "video" && <VideoDetailBody asset={asset} />}
-        {(asset.kind === "web" || asset.kind === "link" || asset.kind === "youtube") && (
-          <LinkDetailBody asset={asset} onOpen={() => openFileMutation.mutate({ id: asset.id })} />
-        )}
-        {asset.kind === "file" && (
-          <FileDetailBody
-            asset={asset}
-            onOpen={() => openFileMutation.mutate({ id: asset.id })}
-            onShowInFinder={() => openVaultLocationMutation.mutate({ target: "finder" })}
+  // First-paint width from storage so the rail renders at its real size immediately.
+  const [initPct] = useState(() => {
+    const stored = Number.parseFloat(
+      window.localStorage.getItem(INSPECTOR_WIDTH_STORAGE_KEY) ?? "",
+    );
+    return Number.isFinite(stored)
+      ? Math.min(INSPECTOR_MAX_PCT, Math.max(INSPECTOR_MIN_PCT, stored))
+      : INSPECTOR_DEFAULT_PCT;
+  });
+
+  // Freeze the content width to `px` for the toggle, then release it back to fluid afterwards.
+  const playToggleAnimation = (px: number) => {
+    if (animTimerRef.current !== null) clearTimeout(animTimerRef.current);
+    setFrozenWidth(px > 0 ? px : lastWidthRef.current || null);
+    setAnimating(true);
+    animTimerRef.current = setTimeout(() => {
+      setAnimating(false);
+      setFrozenWidth(null);
+      animTimerRef.current = null;
+    }, 300);
+  };
+  useEffect(
+    () => () => {
+      if (animTimerRef.current !== null) clearTimeout(animTimerRef.current);
+    },
+    [],
+  );
+
+  const collapseInspector = () => {
+    playToggleAnimation(inspectorPanelRef.current?.getSize().inPixels ?? lastWidthRef.current);
+    setPreviewOpen(false);
+    setCollapsed(true);
+    inspectorPanelRef.current?.collapse();
+  };
+  const expandInspector = () => {
+    playToggleAnimation(lastWidthRef.current);
+    setPreviewOpen(false);
+    setCollapsed(false);
+    inspectorPanelRef.current?.expand();
+  };
+
+  // Close the floating preview once the pointer leaves it (right-anchored; mirror of the sidebar).
+  useEffect(() => {
+    if (!collapsed || !previewOpen) return;
+    const previewWidth = Math.min(320, window.innerWidth * 0.84);
+    const exitPadding = 32;
+    const onMove = (event: PointerEvent) => {
+      const leftBound = window.innerWidth - previewWidth - exitPadding;
+      if (
+        event.clientX < leftBound ||
+        event.clientY < -exitPadding ||
+        event.clientY > window.innerHeight + exitPadding
+      ) {
+        setPreviewOpen(false);
+      }
+    };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onMove);
+  }, [collapsed, previewOpen]);
+
+  return (
+    <ResizablePanelGroup
+      id="asset-detail-layout"
+      direction="horizontal"
+      className={`detail-panel-layout relative h-full min-h-0 overflow-hidden ${
+        animating ? "panel-animating" : ""
+      }`}
+      resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
+      defaultLayout={
+        collapsed
+          ? { "asset-detail-stage": 100, "asset-detail-inspector": 0 }
+          : {
+              "asset-detail-stage": 100 - initPct,
+              "asset-detail-inspector": initPct,
+            }
+      }
+    >
+      <ResizablePanel id="asset-detail-stage" minSize={40} className="min-w-0">
+        <AssetStage asset={asset} dragEnabled={dragEnabled} />
+      </ResizablePanel>
+      <ResizableHandle
+        withHandle
+        className={collapsed ? "pointer-events-none opacity-0" : undefined}
+      />
+      <ResizablePanel
+        panelRef={inspectorPanelRef}
+        id="asset-detail-inspector"
+        collapsible
+        collapsedSize={0}
+        defaultSize={initPct}
+        minSize={INSPECTOR_MIN_PCT}
+        maxSize={INSPECTOR_MAX_PCT}
+        className={`min-w-0 overflow-hidden transition-opacity duration-200 ${
+          collapsed ? "pointer-events-none opacity-0" : "opacity-100"
+        }`}
+        onResize={(size) => {
+          const nextCollapsed = size.asPercentage <= 0.01;
+          if (!nextCollapsed) {
+            lastWidthRef.current = size.inPixels;
+            window.localStorage.setItem(INSPECTOR_WIDTH_STORAGE_KEY, String(size.asPercentage));
+          }
+          // Panel may report 0% once on mount before layout settles.
+          if (initializingRef.current) {
+            if (!nextCollapsed) initializingRef.current = false;
+            else return;
+          }
+          setCollapsed(nextCollapsed);
+        }}
+      >
+        {/* Pinned to a fixed pixel width during the toggle so the narrowing panel CLIPS it
+            (no reflow/squish); fluid otherwise so it stays adaptive on resize. */}
+        <div className="h-full" style={frozenWidth ? { width: frozenWidth } : { width: "100%" }}>
+          <AssetInspector asset={asset} vaultTags={vaultTags} onCollapse={collapseInspector} />
+        </div>
+      </ResizablePanel>
+
+      {/* Collapsed: right-edge hotspot opens a floating preview; the tab clicks straight to expand. */}
+      {collapsed ? (
+        <>
+          <div
+            aria-hidden="true"
+            className="window-no-drag absolute inset-y-0 right-0 z-[75] w-6"
+            onMouseEnter={() => setPreviewOpen(true)}
+            onMouseMove={() => setPreviewOpen(true)}
           />
-        )}
-      </ScrollArea>
-    </main>
+          <button
+            type="button"
+            aria-label={t("assets.expandInspector")}
+            onClick={expandInspector}
+            onMouseEnter={() => setPreviewOpen(true)}
+            className="window-no-drag absolute right-0 top-1/2 z-[80] flex h-16 w-6 -translate-y-1/2 items-center justify-center rounded-l-lg border border-r-0 border-zinc-200 bg-white text-zinc-500 shadow-[-4px_0_14px_rgba(20,18,16,0.06)] transition-colors hover:bg-zinc-50 hover:text-zinc-800"
+          >
+            <PanelRightOpen className="size-4" />
+          </button>
+          <motion.div
+            className="absolute inset-y-0 right-0 z-[85] w-[min(320px,84vw)]"
+            initial={false}
+            animate={{ x: previewOpen ? 0 : "100%" }}
+            transition={{ x: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
+            style={{ pointerEvents: previewOpen ? "auto" : "none" }}
+            onMouseEnter={() => setPreviewOpen(true)}
+          >
+            <AssetInspector
+              asset={asset}
+              vaultTags={vaultTags}
+              floating
+              onExpand={expandInspector}
+            />
+          </motion.div>
+        </>
+      ) : null}
+    </ResizablePanelGroup>
   );
 }
 
@@ -3313,6 +4054,23 @@ export function AssetManagerPage() {
       ? mapIndexedAsset(detailQuery.data)
       : activeAssetFromList
     : undefined;
+
+  // Safety net: whenever the board is showing (no detail), never leave a card hidden, and drop any
+  // pending enter capture that no stage consumed (query error / non-heroable kind).
+  useEffect(() => {
+    if (!assetId) {
+      heroFlight.pending = null;
+      restoreHeroCard();
+    }
+  }, [assetId]);
+
+  // Let AppLayout suppress the top window-drag strip while the detail is open, so the inspector's
+  // top controls stay clickable (the strip otherwise wins -webkit-app-region by DOM order).
+  const setDetailOpen = useSetAtom(assetDetailOpenAtom);
+  useEffect(() => {
+    setDetailOpen(Boolean(assetId));
+    return () => setDetailOpen(false);
+  }, [assetId, setDetailOpen]);
 
   useEffect(() => {
     if (layoutIndexQuery.fetchStatus !== "fetching") {
@@ -3572,22 +4330,32 @@ export function AssetManagerPage() {
               activeViewIcon={activeViewIcon}
             />
           </div>
+          {/* Detail overlay mounts/unmounts synchronously with `assetId` — identical routing to
+              the original soft-detail (Back/Forward just toggle the search param). The hero
+              enter/return flights are handled independently (WAAPI on the stage + a body clone),
+              so no AnimatePresence is needed and nothing lingers to fight history navigation. */}
           {assetId ? (
-            <div className="absolute inset-0 z-[70] bg-white">
-              {activeAsset ? (
-                <AssetDetail
-                  asset={activeAsset}
-                  vaultTags={sidebarQuery.data?.tags ?? []}
-                  dragEnabled={backgroundWindowDragEnabled}
-                  terminalAvailable={terminalAvailable}
-                  terminalOpen={terminalOpen}
-                  onToggleTerminal={() => setTerminalOpen((open) => !open)}
-                />
-              ) : (
-                <main className="grid h-full place-items-center bg-white text-sm text-zinc-400">
-                  {detailQuery.error ? detailQuery.error.message : t("assets.readingAsset")}
-                </main>
-              )}
+            <div className="absolute inset-0 z-[70]">
+              {/* Instant opaque white — no fade. A fade let the empty main area flash through on
+                  non-hero opens (markdown/link/file). The hero flight element sits above this and
+                  provides its own continuity, so instant backdrop is seamless for media too. */}
+              <div className="absolute inset-0 bg-white" aria-hidden />
+              {/* overflow-hidden clips the transient width overflow at the main-area boundary
+                  (panels settling on open) so no horizontal scrollbar flashes; it contains the
+                  whole card→stage flight path, so the hero flight is never cut. */}
+              <div className="relative h-full min-h-0 overflow-hidden">
+                {activeAsset ? (
+                  <AssetDetailViewer
+                    asset={activeAsset}
+                    vaultTags={sidebarQuery.data?.tags ?? []}
+                    dragEnabled={backgroundWindowDragEnabled}
+                  />
+                ) : (
+                  <main className="grid h-full place-items-center text-sm text-zinc-400">
+                    {detailQuery.error ? detailQuery.error.message : t("assets.readingAsset")}
+                  </main>
+                )}
+              </div>
             </div>
           ) : null}
         </ResizablePanel>

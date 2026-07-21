@@ -25,6 +25,7 @@ Vault indexing crosses Electron main services, the Rust indexer, SQLite schema, 
 - `assets` and `asset_files` model normalized content and concrete paths.
 - `asset_links` and `markdown_cache` model markdown-derived graph data.
 - `image_cache` stores generated thumbnail metadata.
+- Animation flags and HEIC display proxies are rebuildable `image_cache` metadata. HEIC files remain ordinary still-image assets.
 - `sync_runs` and `sync_events` record indexing activity.
 
 ## Notes

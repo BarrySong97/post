@@ -21,6 +21,8 @@ Video thumbnail generation still uses ffmpeg for a representative frame. In the 
 
 Image thumbnail generation never enlarges small raster sources. When an image's long edge is at most 720px, the indexer records its dimensions, source fingerprint, bottom-strip luma, and `thumbnail_format = original` without writing or recompressing a cache file; the renderer uses the vault source directly. Larger PNG sources produce lossless 720px PNG thumbnails to preserve screenshot text and transparency, while other supported large rasters produce JPEG thumbnails. Existing small JPEG thumbnails and large PNG-to-JPEG thumbnails are invalidated once and replaced with the appropriate representation. Video frames always remain generated JPEG posters.
 
+Animated GIF/WebP sources are detected during thumbnail analysis and always receive a static first-frame thumbnail, including sources below the normal 720px original-file threshold. AVIF sequence branding is recorded even though Chromium remains the playback decoder. On macOS, HEIC sources are decoded through `sips` into a 720px card thumbnail plus a longest-edge-4096 JPEG detail proxy; originals are never rewritten.
+
 ## Commands
 
 - `scan` - initial import style scan.
@@ -43,6 +45,7 @@ pnpm indexer:build
 - Keep CLI argument names and event shapes stable for Electron callers.
 - Keep parser and indexer version constants meaningful when behavior changes.
 - Thumbnail output must remain under the configured thumbnail root.
+- `image_cache.media_metadata_version` gates animated-image metadata backfills independently of source identity; increment it when extraction semantics change.
 - Thumbnail generation also records `image_cache.thumbnail_luma`, the average Rec. 601 luma of the thumbnail's bottom strip (`average_bottom_luma`), which the renderer uses to flip card overlay text between dark and light. Ready thumbnails cached before this column existed are treated as stale by `thumbnail_cache_matches` so the value backfills once.
 - A ready `image_cache` row with `thumbnail_format = original` intentionally has no `thumbnail_path`; cache validation must treat a matching source fingerprint plus recorded luma as complete so small images do not requeue forever.
 - Thumbnail target loading normalizes cached error text before parsing sqlite CLI output so previous ffmpeg failures cannot corrupt tab-delimited rows.
