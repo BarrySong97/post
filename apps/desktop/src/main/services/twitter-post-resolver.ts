@@ -7,6 +7,7 @@
 
 import { Buffer } from "node:buffer";
 
+import { toOriginalTwitterImageUrl } from "./twitter-image-url";
 import { getTwitterSyndicationToken, parseTwitterVideoVariants } from "./twitter-video-resolver";
 
 export type TwitterPostVisibleSnapshot = {
@@ -266,29 +267,6 @@ function addServerRenderedText(rawPayload: unknown, text: string) {
     : addText(rawPayload);
 }
 
-function normalizeImageUrl(rawUrl: string) {
-  try {
-    const url = new URL(rawUrl);
-    if (
-      (url.hostname === "pbs.twimg.com" || url.hostname.endsWith(".pbs.twimg.com")) &&
-      url.pathname.startsWith("/media/")
-    ) {
-      const extensionMatch = url.pathname.match(/\.([a-z0-9]+)$/i);
-      const format = url.searchParams.get("format") ?? extensionMatch?.[1]?.toLowerCase();
-      if (extensionMatch) {
-        url.pathname = url.pathname.slice(0, -extensionMatch[0].length);
-      }
-      if (format) {
-        url.searchParams.set("format", format);
-      }
-      url.searchParams.set("name", "orig");
-    }
-    return url.href;
-  } catch {
-    return rawUrl;
-  }
-}
-
 function imageIdentityKey(rawUrl: string) {
   try {
     const url = new URL(rawUrl);
@@ -317,7 +295,7 @@ function parseMedia(payload: Record<string, unknown>, snapshot?: TwitterPostVisi
     if (type === "photo") {
       const imageUrl = readString(value, "media_url_https", "media_url");
       if (imageUrl) {
-        media.push({ kind: "image", url: normalizeImageUrl(imageUrl), candidateUrls: [] });
+        media.push({ kind: "image", url: toOriginalTwitterImageUrl(imageUrl), candidateUrls: [] });
       }
       continue;
     }
@@ -342,13 +320,13 @@ function parseMedia(payload: Record<string, unknown>, snapshot?: TwitterPostVisi
     }
     const imageUrl = readString(value, "url", "media_url_https", "media_url");
     if (imageUrl) {
-      media.push({ kind: "image", url: normalizeImageUrl(imageUrl), candidateUrls: [] });
+      media.push({ kind: "image", url: toOriginalTwitterImageUrl(imageUrl), candidateUrls: [] });
     }
   }
 
   for (const rawUrl of snapshot?.mediaUrls ?? []) {
     if (/^https?:\/\//.test(rawUrl)) {
-      media.push({ kind: "image", url: normalizeImageUrl(rawUrl), candidateUrls: [] });
+      media.push({ kind: "image", url: toOriginalTwitterImageUrl(rawUrl), candidateUrls: [] });
     }
   }
 

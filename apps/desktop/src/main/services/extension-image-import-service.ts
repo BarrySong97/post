@@ -2,7 +2,7 @@
  * @purpose Import browser-selected image URLs into the active Post vault from the extension bridge.
  * @role    Main-process service for downloading image bytes, writing vault files, and creating asset rows.
  * @deps    Node fs/path/crypto, @post/db schema, Drizzle helpers, main database and vault repositories.
- * @gotcha  Extension imports accept only http(s) image URLs and write into assets/web-clips/.
+ * @gotcha  X Post photo thumbnails are upgraded to the pbs.twimg.com name=orig variant before fetch.
  */
 
 import { randomUUID, createHash } from "node:crypto";
@@ -15,6 +15,7 @@ import { schema, type TagRecord } from "@post/db";
 import { getDatabase } from "../db";
 import { getRequestedOrActiveVault } from "../repositories/vaults-repository";
 import { enqueueThumbnails } from "./thumbnail-queue";
+import { toOriginalTwitterImageUrl } from "./twitter-image-url";
 
 const WEB_CLIP_DIR = "assets/web-clips";
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
@@ -92,7 +93,7 @@ function extensionFromUrl(url: URL): string | null {
 }
 
 async function fetchImage(input: SaveExtensionImageInput) {
-  const url = assertHttpUrl(input.srcUrl);
+  const url = assertHttpUrl(toOriginalTwitterImageUrl(input.srcUrl));
   const headers: HeadersInit = {
     Accept: "image/avif,image/webp,image/png,image/svg+xml,image/jpeg,image/gif,image/*;q=0.8",
     "User-Agent":

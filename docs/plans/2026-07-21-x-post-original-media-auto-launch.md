@@ -9,7 +9,9 @@ Post opens for a user-triggered collection while Desktop is closed.
 ## Implementation
 
 - Canonicalize `pbs.twimg.com/media` variants by media ID, request `name=orig`, and import each
-  unique image once. Vault originals remain separate from generated board thumbnails.
+  unique image once. Apply the same canonicalization to the generic right-click image workflow so
+  it does not persist X's displayed `small`/`medium` thumbnail. Vault originals remain separate from
+  generated board thumbnails.
 - Resolve the selected tag once and idempotently attach it to the Post plus every successfully
   imported image/video child. Later Desktop tag edits and historical data are intentionally unchanged.
 - Register `post://` with the packaged app and focus its main window when a protocol URL arrives.
