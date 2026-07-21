@@ -6,8 +6,10 @@
   "type": "module",
   "scripts": {
     "build": "vite build --config vite.config.chrome.ts",
+    "build:local-prod": "POST_DESKTOP_ENV=prod vite build --config vite.config.chrome.ts",
     "build:prod": "POST_CHANNEL=prod vite build --config vite.config.chrome.ts",
     "package:prod": "node scripts/package-extension.mjs",
+    "test": "node --test native-host/*.test.mjs",
     "check-types": "tsc --noEmit",
     "dev": "nodemon --config nodemon.chrome.json",
     "native-host:install": "node native-host/install-native-host.mjs"

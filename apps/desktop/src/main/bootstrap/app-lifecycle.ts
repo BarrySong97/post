@@ -2,10 +2,10 @@
  * @purpose Coordinate Electron app lifecycle startup, shutdown, and window recreation.
  * @role    Bootstrap module wiring database initialization, native adapters, IPC, and windows.
  * @deps    Electron app/path APIs, database bootstrap, presentation adapters, terminal, watcher manager.
- * @gotcha  Set display name and userData before app readiness so DB resolution stays stable.
+ * @gotcha  Register the packaged post:// client and open-url listener before app readiness.
  */
 
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, ipcMain, type BrowserWindow } from "electron";
 import { electronApp, optimizer } from "@electron-toolkit/utils";
 import path from "node:path";
 
@@ -29,6 +29,26 @@ import { isDevRuntime } from "./runtime-env";
 import { createWindow, getDevDockIconPath } from "./window";
 
 let mainWindow: BrowserWindow | null = null;
+const APP_PROTOCOL_SCHEME = "post";
+
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = createWindow();
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function isPostProtocolUrl(rawUrl: string): boolean {
+  try {
+    return new URL(rawUrl).protocol === `${APP_PROTOCOL_SCHEME}:`;
+  } catch {
+    return false;
+  }
+}
 
 function applyDevDockIcon(): void {
   if (process.platform !== "darwin" || !isDevRuntime()) {
@@ -64,6 +84,14 @@ export function bootApplication(): void {
   app.setAboutPanelOptions({ applicationName: APP_DISPLAY_NAME });
   applyUserDataPath();
 
+  app.on("open-url", (event, rawUrl) => {
+    if (!isPostProtocolUrl(rawUrl)) {
+      return;
+    }
+    event.preventDefault();
+    void app.whenReady().then(focusMainWindow);
+  });
+
   app.whenReady().then(() => {
     initDatabase();
     resetAssetProfileLog();
@@ -72,6 +100,9 @@ export function bootApplication(): void {
     });
     startLocalIpcServer(app.getPath("userData"));
     electronApp.setAppUserModelId("com.post.desktop");
+    if (!isDevRuntime()) {
+      app.setAsDefaultProtocolClient(APP_PROTOCOL_SCHEME);
+    }
     applyDevDockIcon();
     applyNativeMessagingHost();
 
@@ -102,8 +133,6 @@ export function bootApplication(): void {
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      mainWindow = createWindow();
-    }
+    focusMainWindow();
   });
 }

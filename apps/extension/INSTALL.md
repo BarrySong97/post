@@ -16,6 +16,11 @@ This zip is the **prod** Post browser extension (`appEnv: prod`). It talks to th
 
 Or install from the Chrome Web Store / Edge Add-ons when a listing is published — use the same prod package.
 
+For local packaged-Desktop testing before review, a source checkout can run
+`pnpm -F extension build:local-prod`. Chrome keeps the unpacked development extension ID and
+`dist_chrome` path, while its native messages target the production Desktop channel. Run the normal
+dev build afterward to restore development routing.
+
 ## Register the native host (Load unpacked)
 
 Unpacked extensions get a **path-derived ID**. Chrome shows it on the extension card (32 lowercase letters `a`–`p`).
@@ -28,7 +33,7 @@ pnpm -F extension native-host:install -- --extension-id <your-32-char-id>
 
 Pass multiple IDs comma-separated if you also keep a “Post Dev” build loaded.
 
-After registering, restart Chrome (or reload the extension) and ensure Post Desktop is running before using “Add … to Post”.
+After registering, restart Chrome (or reload the extension). Post Desktop may be closed when you collect: a user-triggered Popup or save menu asks Chrome to open `post://`, and confirming the browser prompt opens the installed macOS app and continues the request automatically.
 
 ## Verify
 

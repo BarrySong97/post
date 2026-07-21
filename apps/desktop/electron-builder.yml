@@ -1,5 +1,9 @@
 appId: com.post.desktop
 productName: Post
+protocols:
+  - name: Post
+    schemes:
+      - post
 directories:
   output: release
 files:

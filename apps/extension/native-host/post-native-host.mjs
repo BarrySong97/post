@@ -3,13 +3,14 @@
  * @purpose Bridge Chrome Native Messaging requests from the Post extension to Desktop local IPC.
  * @role    Stdio native host executable launched by Chromium-family browsers.
  * @deps    Node fs/net/os/path/crypto/process built-ins and Desktop's newline-delimited local IPC.
- * @gotcha  Native Messaging stdout must contain only length-prefixed JSON frames; write diagnostics to stderr.
+ * @gotcha  Report confirmed unavailability to Chrome; the extension owns post:// navigation and retries.
  */
 
 import { createHash } from "node:crypto";
 import net from "node:net";
 import { homedir, tmpdir, endianness } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const CONTEXT_IPC_TIMEOUT_MS = 1500;
 const IMAGE_IPC_TIMEOUT_MS = 60_000;
@@ -19,6 +20,7 @@ const BOOKMARK_LOOKUP_IPC_TIMEOUT_MS = 2000;
 const BOOKMARK_SAVE_IPC_TIMEOUT_MS = 60_000;
 const HOST_TIMEOUT_MS = 5000;
 const HOST_NAME = "com.post.desktop";
+const DESKTOP_PROTOCOL_URL = "post://extension/open";
 
 function getDefaultUserDataDir() {
   if (process.env.POST_USER_DATA_DIR) {
@@ -112,12 +114,16 @@ function readNativeMessage() {
 function sendLocalIpcToAddress(address, message, timeoutMs) {
   return new Promise((resolve) => {
     let settled = false;
+    let connected = false;
     let buffer = "";
     const socket = net.createConnection(address);
     const timer = setTimeout(() => {
       settle({
-        ok: false,
-        message: "Post Desktop did not respond at the local IPC socket.",
+        response: {
+          ok: false,
+          message: "Post Desktop did not respond at the local IPC socket.",
+        },
+        failureKind: connected ? "timeout" : "unavailable",
       });
     }, timeoutMs);
 
@@ -133,6 +139,7 @@ function sendLocalIpcToAddress(address, message, timeoutMs) {
     }
 
     socket.once("connect", () => {
+      connected = true;
       socket.write(`${JSON.stringify(message)}\n`);
     });
 
@@ -146,9 +153,15 @@ function sendLocalIpcToAddress(address, message, timeoutMs) {
 
         if (line.length > 0) {
           try {
-            settle(JSON.parse(line));
+            settle({ response: JSON.parse(line), failureKind: null });
           } catch {
-            settle({ ok: false, message: "Post Desktop returned an invalid local IPC response." });
+            settle({
+              response: {
+                ok: false,
+                message: "Post Desktop returned an invalid local IPC response.",
+              },
+              failureKind: "invalid_response",
+            });
           }
           return;
         }
@@ -159,8 +172,11 @@ function sendLocalIpcToAddress(address, message, timeoutMs) {
 
     socket.once("error", () => {
       settle({
-        ok: false,
-        message: "Post Desktop is unavailable at the local IPC socket.",
+        response: {
+          ok: false,
+          message: "Post Desktop is unavailable at the local IPC socket.",
+        },
+        failureKind: connected ? "connection_lost" : "unavailable",
       });
     });
   });
@@ -181,22 +197,47 @@ async function sendLocalIpc(dbPath, message) {
               ? VIDEO_IPC_TIMEOUT_MS
               : POST_IPC_TIMEOUT_MS;
   let lastResult = null;
+  let allUnavailable = true;
 
   for (const address of addresses) {
     const result = await sendLocalIpcToAddress(address, message, timeoutMs);
-    if (result && typeof result === "object" && result.ok !== false) {
+    if (result.failureKind === null) {
       return result;
     }
 
-    lastResult = result;
+    if (result.failureKind !== "unavailable") {
+      allUnavailable = false;
+    }
+    lastResult = result.response;
   }
 
-  return (
-    lastResult ?? {
+  return {
+    response: lastResult ?? {
       ok: false,
       message: "Post Desktop is unavailable. Start Post Desktop and reload the extension.",
-    }
-  );
+    },
+    failureKind: allUnavailable ? "unavailable" : "request_failed",
+  };
+}
+
+function shouldRequestDesktopLaunch(message) {
+  return getAppEnv(message.appEnv) === "prod" && message.launchIfNeeded === true;
+}
+
+export async function forwardToDesktop(dbPath, nativeMessage, localMessage, dependencies = {}) {
+  const sendLocalIpcImpl = dependencies.sendLocalIpc ?? sendLocalIpc;
+  const first = await sendLocalIpcImpl(dbPath, localMessage);
+  if (first.failureKind === "unavailable" && shouldRequestDesktopLaunch(nativeMessage)) {
+    return {
+      ok: false,
+      code: "desktop_unavailable",
+      launchRequired: true,
+      launchUrl: DESKTOP_PROTOCOL_URL,
+      message: "Post Desktop is closed. Confirm Chrome's prompt to open it.",
+    };
+  }
+
+  return first.response;
 }
 
 function getAppEnv(value) {
@@ -288,10 +329,18 @@ async function handleMessage(message) {
       action: message.action,
     };
   }
-  const ack = await sendLocalIpc(dbPath, localMessage);
+  const ack = await forwardToDesktop(dbPath, message, localMessage);
 
   if (!ack || typeof ack !== "object") {
     return { ok: false, message: "Post Desktop returned an unsupported extension response." };
+  }
+
+  if (ack.launchRequired === true) {
+    return ack;
+  }
+
+  if (ack.ok === false && typeof ack.message === "string" && !("type" in ack)) {
+    return { ok: false, message: ack.message };
   }
 
   if (message.type === "post.context.get") {
@@ -336,10 +385,16 @@ async function handleMessage(message) {
   return { ok: false, message: ack.message ?? "Post Desktop rejected the save request." };
 }
 
-try {
-  const message = await readNativeMessage();
-  writeNativeMessage(await handleMessage(message));
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  writeNativeMessage({ ok: false, message: "Post native host failed." });
+const isMainModule =
+  typeof process.argv[1] === "string" &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
+  try {
+    const message = await readNativeMessage();
+    writeNativeMessage(await handleMessage(message));
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    writeNativeMessage({ ok: false, message: "Post native host failed." });
+  }
 }

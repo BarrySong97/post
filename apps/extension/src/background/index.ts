@@ -2,7 +2,7 @@
  * @purpose Register Post browser collection menus, popup preparation, and save handoffs.
  * @role    Chrome MV3 background worker for image/video/post/web/YouTube collection workflows.
  * @deps    chrome.contextMenus, tabs, scripting, runtime, storage, and native messaging APIs.
- * @gotcha  Twitter/X videos often expose blob: URLs; only direct MP4 candidates can be imported.
+ * @gotcha  Only user-triggered popup/save requests may ask for Chrome's post:// launch prompt.
  */
 
 import { inspectBookmarkDocument } from "../page-inspector";
@@ -40,6 +40,9 @@ const POST_NATIVE_HOST = "com.post.desktop";
 const MAX_CONTEXT_MENU_TAGS = 20;
 const SAVE_DEDUP_WINDOW_MS = 5000;
 const BACKGROUND_VIDEO_CANDIDATE_LIMIT = 30;
+const DESKTOP_LAUNCH_TIMEOUT_MS = 15_000;
+const DESKTOP_LAUNCH_POLL_MS = 250;
+const DESKTOP_PROTOCOL_URL = "post://extension/open";
 
 type MenuTag = { id: string; name: string; color: string | null; sortOrder: number };
 
@@ -112,6 +115,16 @@ type ExtensionContextResponse =
       ok: false;
       message: string;
     };
+
+type DesktopLaunchRequiredResponse = {
+  ok: false;
+  code: "desktop_unavailable";
+  launchRequired: true;
+  launchUrl: string;
+  message: string;
+};
+
+type NativeOperationResponse = { ok: boolean; message?: string };
 
 type ExtensionImageSaveResponse =
   | {
@@ -206,12 +219,93 @@ function sendNativeMessage<TResponse>(message: Record<string, unknown>): Promise
   });
 }
 
-async function getDesktopContext(): Promise<ExtensionContextResponse> {
+function isDesktopLaunchRequired(response: unknown): response is DesktopLaunchRequiredResponse {
+  if (!response || typeof response !== "object") {
+    return false;
+  }
+  const candidate = response as Partial<DesktopLaunchRequiredResponse>;
+  return (
+    candidate.ok === false &&
+    candidate.code === "desktop_unavailable" &&
+    candidate.launchRequired === true &&
+    candidate.launchUrl === DESKTOP_PROTOCOL_URL
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForDesktop(): Promise<boolean> {
+  const deadline = Date.now() + DESKTOP_LAUNCH_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const response = await getDesktopContext();
+    if (response.ok) {
+      return true;
+    }
+    await delay(DESKTOP_LAUNCH_POLL_MS);
+  }
+  return false;
+}
+
+let desktopLaunchPromise: Promise<boolean> | null = null;
+
+function launchDesktopFromChrome(): Promise<boolean> {
+  if (desktopLaunchPromise) {
+    return desktopLaunchPromise;
+  }
+
+  desktopLaunchPromise = (async () => {
+    await chrome.tabs.create({ url: DESKTOP_PROTOCOL_URL, active: true });
+    return waitForDesktop();
+  })().finally(() => {
+    desktopLaunchPromise = null;
+  });
+  return desktopLaunchPromise;
+}
+
+async function sendUserTriggeredNativeMessage<TResponse extends NativeOperationResponse>(
+  message: Record<string, unknown>,
+): Promise<TResponse> {
+  const first = await sendNativeMessage<TResponse | DesktopLaunchRequiredResponse>({
+    ...message,
+    launchIfNeeded: true,
+  });
+  if (!isDesktopLaunchRequired(first)) {
+    return first;
+  }
+
   try {
-    const response = await sendNativeMessage<ExtensionContextResponse>({
+    if (!(await launchDesktopFromChrome())) {
+      return {
+        ok: false,
+        message: "Post 未在 15 秒内打开。请在 Chrome 弹窗中确认后重试。",
+      } as TResponse;
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Chrome 无法打开 Post。",
+    } as TResponse;
+  }
+
+  return sendNativeMessage<TResponse>({
+    ...message,
+    launchIfNeeded: false,
+  });
+}
+
+async function getDesktopContext(
+  options: { launchIfNeeded?: boolean } = {},
+): Promise<ExtensionContextResponse> {
+  try {
+    const request = {
       type: "post.context.get",
       appEnv: APP_ENV,
-    });
+    };
+    const response = options.launchIfNeeded
+      ? await sendUserTriggeredNativeMessage<ExtensionContextResponse>(request)
+      : await sendNativeMessage<ExtensionContextResponse>({ ...request, launchIfNeeded: false });
     console.log("[Post extension] native context response", response);
     return response;
   } catch (error) {
@@ -221,12 +315,6 @@ async function getDesktopContext(): Promise<ExtensionContextResponse> {
       message: error instanceof Error ? error.message : "Native messaging failed.",
     };
   }
-}
-
-function formatMenuMessage(prefix: string, message: string) {
-  const normalized = message.trim().replace(/\s+/g, " ");
-  const clipped = normalized.length > 54 ? `${normalized.slice(0, 51)}...` : normalized;
-  return `${prefix}: ${clipped}`;
 }
 
 function createDisabledChild(parentId: string, title: string, contexts: ContextMenuContexts) {
@@ -397,31 +485,7 @@ async function registerContextMenus() {
     documentUrlPatterns: YOUTUBE_URL_PATTERNS,
   });
 
-  if (!context.ok) {
-    createDisabledChild(
-      IMAGE_PARENT_MENU_ID,
-      formatMenuMessage("Post unavailable", context.message),
-      IMAGE_CONTEXTS,
-    );
-    createDisabledChild(
-      VIDEO_PARENT_MENU_ID,
-      formatMenuMessage("Post unavailable", context.message),
-      VIDEO_CONTEXTS,
-    );
-    createDisabledChild(
-      POST_PARENT_MENU_ID,
-      formatMenuMessage("Post unavailable", context.message),
-      POST_CONTEXTS,
-    );
-    createDisabledChild(
-      YOUTUBE_PARENT_MENU_ID,
-      formatMenuMessage("Post unavailable", context.message),
-      YOUTUBE_CONTEXTS,
-    );
-    return;
-  }
-
-  const tags = context.context.tags;
+  const tags = context.ok ? context.context.tags : [];
   buildSaveSubmenu({
     parentId: IMAGE_PARENT_MENU_ID,
     tagPrefix: IMAGE_TAG_MENU_PREFIX,
@@ -457,6 +521,17 @@ async function registerContextMenus() {
     tags,
     recentIds,
   });
+
+  if (!context.ok) {
+    for (const [parentId, contexts] of [
+      [IMAGE_PARENT_MENU_ID, IMAGE_CONTEXTS],
+      [VIDEO_PARENT_MENU_ID, VIDEO_CONTEXTS],
+      [POST_PARENT_MENU_ID, POST_CONTEXTS],
+      [YOUTUBE_PARENT_MENU_ID, YOUTUBE_CONTEXTS],
+    ] as const) {
+      createDisabledChild(parentId, "Post closed · saving opens it", contexts);
+    }
+  }
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -488,13 +563,22 @@ async function inspectBookmarkInTab(tabId: number): Promise<BookmarkCapture> {
   return capture;
 }
 
-async function lookupBookmark(capture: BookmarkCapture): Promise<ExtensionBookmarkLookupResponse> {
+async function lookupBookmark(
+  capture: BookmarkCapture,
+  options: { launchIfNeeded?: boolean } = {},
+): Promise<ExtensionBookmarkLookupResponse> {
   try {
-    return await sendNativeMessage<ExtensionBookmarkLookupResponse>({
+    const request = {
       type: "post.bookmark.lookup",
       appEnv: APP_ENV,
       capture,
-    });
+    };
+    return options.launchIfNeeded
+      ? await sendUserTriggeredNativeMessage<ExtensionBookmarkLookupResponse>(request)
+      : await sendNativeMessage<ExtensionBookmarkLookupResponse>({
+          ...request,
+          launchIfNeeded: false,
+        });
   } catch (error) {
     return {
       ok: false,
@@ -511,7 +595,7 @@ async function saveBookmark(input: {
   action: BookmarkSaveAction;
 }): Promise<BookmarkSaveResponse> {
   try {
-    return await sendNativeMessage<BookmarkSaveResponse>({
+    return await sendUserTriggeredNativeMessage<BookmarkSaveResponse>({
       type: "post.bookmark.save",
       appEnv: APP_ENV,
       ...input,
@@ -531,13 +615,13 @@ async function prepareBookmarkPopup(): Promise<BookmarkPopupPrepareResponse> {
   }
   try {
     const [context, capture] = await Promise.all([
-      getDesktopContext(),
+      getDesktopContext({ launchIfNeeded: true }),
       inspectBookmarkInTab(tab.id),
     ]);
     if (!context.ok) {
       return { ok: false, message: context.message };
     }
-    const lookup = await lookupBookmark(capture);
+    const lookup = await lookupBookmark(capture, { launchIfNeeded: true });
     if (!lookup.ok) {
       return { ok: false, message: lookup.message };
     }
@@ -616,11 +700,13 @@ chrome.webRequest.onBeforeRequest.addListener(
   { urls: ["https://video.twimg.com/*"] },
 );
 
-// After a save that used a tag, promote it in the recency list and rebuild the menu so
-// the tag surfaces first next time. Untagged (direct-to-Inbox) saves change no ordering.
-function afterTaggedSave(tagId: string | undefined) {
+// Refresh after every successful save so a cold-start direct save replaces the offline-only menu
+// with the now-running Desktop context. Tagged saves also promote their tag first.
+function afterSuccessfulSave(tagId: string | undefined) {
   if (tagId) {
     void recordRecentTag(tagId).then(() => queueContextMenuRegistration());
+  } else {
+    void queueContextMenuRegistration();
   }
 }
 
@@ -665,7 +751,7 @@ function saveImageFromContextMenu(
   }
 
   pendingSaves.set(dedupKey, now);
-  sendNativeMessage<ExtensionImageSaveResponse>({
+  sendUserTriggeredNativeMessage<ExtensionImageSaveResponse>({
     type: "post.image.save",
     appEnv: APP_ENV,
     srcUrl,
@@ -676,7 +762,7 @@ function saveImageFromContextMenu(
     .then((response) => {
       if (response.ok) {
         console.log("[Post extension] image saved", response.asset);
-        afterTaggedSave(tagId);
+        afterSuccessfulSave(tagId);
       } else {
         console.warn("[Post extension] image save failed", response.message);
       }
@@ -764,7 +850,7 @@ async function saveVideoFromContextMenu(
   }
 
   pendingSaves.set(dedupKey, now);
-  sendNativeMessage<ExtensionVideoSaveResponse>({
+  sendUserTriggeredNativeMessage<ExtensionVideoSaveResponse>({
     type: "post.video.save",
     appEnv: APP_ENV,
     srcUrl,
@@ -778,7 +864,7 @@ async function saveVideoFromContextMenu(
     .then((response) => {
       if (response.ok) {
         console.log("[Post extension] video saved", response.asset);
-        afterTaggedSave(tagId);
+        afterSuccessfulSave(tagId);
       } else {
         console.warn("[Post extension] video save failed", response.message);
       }
@@ -817,7 +903,7 @@ async function savePostFromContextMenu(tagId: string | undefined, tab?: chrome.t
 
   pendingSaves.set(dedupKey, now);
   try {
-    const result = await sendNativeMessage<ExtensionPostSaveResponse>({
+    const result = await sendUserTriggeredNativeMessage<ExtensionPostSaveResponse>({
       type: "post.post.save",
       appEnv: APP_ENV,
       ...context,
@@ -826,7 +912,7 @@ async function savePostFromContextMenu(tagId: string | undefined, tab?: chrome.t
     });
     if (result.ok) {
       console.log("[Post extension] post saved", result.asset);
-      afterTaggedSave(tagId);
+      afterSuccessfulSave(tagId);
     } else {
       console.warn("[Post extension] post save failed", result.message);
     }
@@ -877,7 +963,7 @@ async function saveYouTubeBookmarkFromContextMenu(
     });
     if (result.ok) {
       console.log("[Post extension] YouTube bookmark saved", result.asset);
-      afterTaggedSave(tagId);
+      afterSuccessfulSave(tagId);
     } else {
       console.warn("[Post extension] YouTube bookmark save failed", result.message);
     }
