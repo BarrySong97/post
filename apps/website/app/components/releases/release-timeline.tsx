@@ -23,10 +23,24 @@ export type ReleaseNote = {
 
 export const RELEASES: ReleaseNote[] = [
   {
+    version: "0.1.15",
+    date: "2026-07-22",
+    head: "Hover-only asset metadata and tidier background task status.",
+    badge: "latest",
+    groups: [
+      {
+        title: "Desktop",
+        items: [
+          "Asset metadata now stays out of the detail canvas until the pointer reaches the right edge, then slides in as a temporary card and dismisses when the pointer moves away. A one-time localized hint introduces the interaction.",
+          "Long running-task names in the footer now stay within a stable 220px slot, truncate with an ellipsis, and expose the full text on hover.",
+        ],
+      },
+    ],
+  },
+  {
     version: "0.1.14",
     date: "2026-07-21",
     head: "Animated image previews and more reliable, higher-quality X capture.",
-    badge: "latest",
     groups: [
       {
         title: "Desktop",
