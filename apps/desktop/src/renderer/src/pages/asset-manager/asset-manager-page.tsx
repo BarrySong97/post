@@ -17,9 +17,8 @@ import React, {
   type ComponentType,
   type SVGProps,
 } from "react";
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { atomWithStorage } from "jotai/utils";
 import {
   assetFiltersAtom,
   activeSidebarItemAtom,
@@ -50,7 +49,6 @@ import type {
 import { isMacWindow } from "@/lib/platform";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
-import type { PanelImperativeHandle } from "react-resizable-panels";
 import { useSearch } from "@tanstack/react-router";
 import { Plyr, type PlyrOptions, type PlyrSource } from "plyr-react";
 import "plyr-react/plyr.css";
@@ -77,7 +75,6 @@ import {
   Image as ImageIcon,
   Link as LinkIcon,
   MessageSquareQuote,
-  PanelRightClose,
   PanelRightOpen,
   Play,
   ShieldCheck,
@@ -323,9 +320,8 @@ const MISSING_TAG_ID = "__missing_tag__";
 // re-enable the toggle in both the asset board header and the asset detail header. The underlying
 // terminal panel/state is left wired so this is a one-line restore.
 const SHOW_TERMINAL_TOGGLE = false as boolean;
-// Detail viewer right rail (inspector) collapse state — persisted across sessions.
-const inspectorCollapsedAtom = atomWithStorage("post.assetDetail.inspectorCollapsed", false);
-
+const METADATA_HOVER_HINT_STORAGE_KEY = "post.assetDetail.metadataHoverHintSeen";
+const METADATA_HOVER_HINT_VISIBLE_MS = 4500;
 // ── Hero (shared-element) open transition — manual FLIP ───────────────────────
 // Motion's layoutId pairing is unreliable in our setup (virtualized grid + kept-mounted board +
 // soft routing) and keeps degrading to a fade, so we run the FLIP ourselves with WAAPI. It is
@@ -520,11 +516,6 @@ function useHeroStage(asset: Asset, ref: React.RefObject<HTMLElement | null>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assetId]);
 }
-const INSPECTOR_WIDTH_STORAGE_KEY = "post.assetDetail.inspectorWidthPct";
-const INSPECTOR_DEFAULT_PCT = 26;
-const INSPECTOR_MIN_PCT = 18;
-const INSPECTOR_MAX_PCT = 40;
-
 function getTagIdsFromNames(tagNames: readonly string[], tagOptions: readonly SidebarTag[]) {
   if (tagNames.length === 0) {
     return [];
@@ -3500,21 +3491,8 @@ function AssetStage({ asset, dragEnabled }: { asset: Asset; dragEnabled: boolean
   );
 }
 
-// Right rail: identity + always-visible tags + read-only info + actions. Rendered both docked
-// (in the panel) and floating (the collapsed-edge hover preview, `floating`).
-function AssetInspector({
-  asset,
-  vaultTags,
-  floating = false,
-  onCollapse,
-  onExpand,
-}: {
-  asset: Asset;
-  vaultTags: readonly SidebarTag[];
-  floating?: boolean;
-  onCollapse?: () => void;
-  onExpand?: () => void;
-}) {
+// Floating right-edge metadata card: identity + tags + read-only info + actions.
+function AssetInspector({ asset, vaultTags }: { asset: Asset; vaultTags: readonly SidebarTag[] }) {
   const { t } = useTranslation();
   const { label } = getKindMeta(asset.kind);
   const openFileMutation = useMutation(trpc.assets.openFile.mutationOptions());
@@ -3554,32 +3532,14 @@ function AssetInspector({
 
   return (
     <motion.aside
-      className={`window-no-drag flex h-full min-h-0 min-w-0 flex-col bg-white ${
-        floating
-          ? "rounded-l-2xl border-l border-zinc-200 shadow-[-14px_0_44px_rgba(20,18,16,0.14)]"
-          : ""
-      }`}
-      initial={floating ? false : { opacity: 0, x: 10 }}
+      className="window-no-drag flex h-full min-h-0 min-w-0 flex-col rounded-l-2xl border-l border-zinc-200 bg-white shadow-[-14px_0_44px_rgba(20,18,16,0.14)]"
+      initial={false}
       animate={{ opacity: 1, x: 0 }}
       transition={DETAIL_CHROME_FADE}
     >
       {/* identity + tags */}
       <div className="shrink-0 border-b border-zinc-100 px-4 pb-3.5 pt-2.5">
         <div className="flex items-center gap-1">
-          <Button
-            isIconOnly
-            size="sm"
-            variant="ghost"
-            aria-label={floating ? t("assets.expandInspector") : t("assets.collapseInspector")}
-            className="h-7 w-7 min-w-7 rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-            onPress={floating ? onExpand : onCollapse}
-          >
-            {floating ? (
-              <PanelRightOpen className="size-4" />
-            ) : (
-              <PanelRightClose className="size-4" />
-            )}
-          </Button>
           <span className="rounded border border-zinc-200 px-1 py-px font-mono text-[8.5px] font-semibold uppercase tracking-wider text-zinc-400">
             {label}
           </span>
@@ -3740,7 +3700,7 @@ function AssetInspector({
   );
 }
 
-// Detail viewer: content stage + collapsible/resizable right inspector.
+// Detail viewer: full-width content stage + hover-only metadata card on the right edge.
 function AssetDetailViewer({
   asset,
   vaultTags,
@@ -3751,63 +3711,26 @@ function AssetDetailViewer({
   dragEnabled?: boolean;
 }) {
   const { t } = useTranslation();
-  const [collapsed, setCollapsed] = useAtom(inspectorCollapsedAtom);
-  const inspectorPanelRef = useRef<PanelImperativeHandle | null>(null);
-  const initializingRef = useRef(true);
-  // Collapse/expand flex-grow animation (mirrors the sidebar's `panel-animating`), and the
-  // collapsed-edge hover preview (mirrors the sidebar's floating preview, flipped to the right).
-  const [animating, setAnimating] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  // During the collapse/expand animation the inspector content is pinned to a fixed pixel width so
-  // it is CLIPPED by the narrowing panel (like the sidebar) instead of reflowing/squishing.
-  const [frozenWidth, setFrozenWidth] = useState<number | null>(null);
-  const lastWidthRef = useRef<number>(0);
-  const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // First-paint width from storage so the rail renders at its real size immediately.
-  const [initPct] = useState(() => {
-    const stored = Number.parseFloat(
-      window.localStorage.getItem(INSPECTOR_WIDTH_STORAGE_KEY) ?? "",
-    );
-    return Number.isFinite(stored)
-      ? Math.min(INSPECTOR_MAX_PCT, Math.max(INSPECTOR_MIN_PCT, stored))
-      : INSPECTOR_DEFAULT_PCT;
-  });
-
-  // Freeze the content width to `px` for the toggle, then release it back to fluid afterwards.
-  const playToggleAnimation = (px: number) => {
-    if (animTimerRef.current !== null) clearTimeout(animTimerRef.current);
-    setFrozenWidth(px > 0 ? px : lastWidthRef.current || null);
-    setAnimating(true);
-    animTimerRef.current = setTimeout(() => {
-      setAnimating(false);
-      setFrozenWidth(null);
-      animTimerRef.current = null;
-    }, 300);
-  };
-  useEffect(
-    () => () => {
-      if (animTimerRef.current !== null) clearTimeout(animTimerRef.current);
-    },
-    [],
+  const [hintVisible, setHintVisible] = useState(
+    () => window.localStorage.getItem(METADATA_HOVER_HINT_STORAGE_KEY) !== "true",
   );
 
-  const collapseInspector = () => {
-    playToggleAnimation(inspectorPanelRef.current?.getSize().inPixels ?? lastWidthRef.current);
-    setPreviewOpen(false);
-    setCollapsed(true);
-    inspectorPanelRef.current?.collapse();
-  };
-  const expandInspector = () => {
-    playToggleAnimation(lastWidthRef.current);
-    setPreviewOpen(false);
-    setCollapsed(false);
-    inspectorPanelRef.current?.expand();
+  useEffect(() => {
+    if (!hintVisible) return;
+    const timer = window.setTimeout(() => setHintVisible(false), METADATA_HOVER_HINT_VISIBLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [hintVisible]);
+
+  const revealMetadata = () => {
+    setPreviewOpen(true);
+    setHintVisible(false);
+    window.localStorage.setItem(METADATA_HOVER_HINT_STORAGE_KEY, "true");
   };
 
   // Close the floating preview once the pointer leaves it (right-anchored; mirror of the sidebar).
   useEffect(() => {
-    if (!collapsed || !previewOpen) return;
+    if (!previewOpen) return;
     const previewWidth = Math.min(320, window.innerWidth * 0.84);
     const exitPadding = 32;
     const onMove = (event: PointerEvent) => {
@@ -3822,100 +3745,43 @@ function AssetDetailViewer({
     };
     window.addEventListener("pointermove", onMove, { passive: true });
     return () => window.removeEventListener("pointermove", onMove);
-  }, [collapsed, previewOpen]);
+  }, [previewOpen]);
 
   return (
-    <ResizablePanelGroup
-      id="asset-detail-layout"
-      direction="horizontal"
-      className={`detail-panel-layout relative h-full min-h-0 overflow-hidden ${
-        animating ? "panel-animating" : ""
-      }`}
-      resizeTargetMinimumSize={{ coarse: 32, fine: 12 }}
-      defaultLayout={
-        collapsed
-          ? { "asset-detail-stage": 100, "asset-detail-inspector": 0 }
-          : {
-              "asset-detail-stage": 100 - initPct,
-              "asset-detail-inspector": initPct,
-            }
-      }
-    >
-      <ResizablePanel id="asset-detail-stage" minSize={40} className="min-w-0">
-        <AssetStage asset={asset} dragEnabled={dragEnabled} />
-      </ResizablePanel>
-      <ResizableHandle
-        withHandle
-        className={collapsed ? "pointer-events-none opacity-0" : undefined}
+    <div className="relative h-full min-h-0 overflow-hidden">
+      <AssetStage asset={asset} dragEnabled={dragEnabled} />
+      <div
+        aria-hidden="true"
+        className="window-no-drag absolute inset-y-0 right-0 z-[75] w-6"
+        onMouseEnter={revealMetadata}
+        onMouseMove={revealMetadata}
       />
-      <ResizablePanel
-        panelRef={inspectorPanelRef}
-        id="asset-detail-inspector"
-        collapsible
-        collapsedSize={0}
-        defaultSize={initPct}
-        minSize={INSPECTOR_MIN_PCT}
-        maxSize={INSPECTOR_MAX_PCT}
-        className={`min-w-0 overflow-hidden transition-opacity duration-200 ${
-          collapsed ? "pointer-events-none opacity-0" : "opacity-100"
-        }`}
-        onResize={(size) => {
-          const nextCollapsed = size.asPercentage <= 0.01;
-          if (!nextCollapsed) {
-            lastWidthRef.current = size.inPixels;
-            window.localStorage.setItem(INSPECTOR_WIDTH_STORAGE_KEY, String(size.asPercentage));
-          }
-          // Panel may report 0% once on mount before layout settles.
-          if (initializingRef.current) {
-            if (!nextCollapsed) initializingRef.current = false;
-            else return;
-          }
-          setCollapsed(nextCollapsed);
-        }}
-      >
-        {/* Pinned to a fixed pixel width during the toggle so the narrowing panel CLIPS it
-            (no reflow/squish); fluid otherwise so it stays adaptive on resize. */}
-        <div className="h-full" style={frozenWidth ? { width: frozenWidth } : { width: "100%" }}>
-          <AssetInspector asset={asset} vaultTags={vaultTags} onCollapse={collapseInspector} />
-        </div>
-      </ResizablePanel>
-
-      {/* Collapsed: right-edge hotspot opens a floating preview; the tab clicks straight to expand. */}
-      {collapsed ? (
-        <>
-          <div
-            aria-hidden="true"
-            className="window-no-drag absolute inset-y-0 right-0 z-[75] w-6"
-            onMouseEnter={() => setPreviewOpen(true)}
-            onMouseMove={() => setPreviewOpen(true)}
-          />
-          <button
-            type="button"
-            aria-label={t("assets.expandInspector")}
-            onClick={expandInspector}
-            onMouseEnter={() => setPreviewOpen(true)}
-            className="window-no-drag absolute right-0 top-1/2 z-[80] flex h-16 w-6 -translate-y-1/2 items-center justify-center rounded-l-lg border border-r-0 border-zinc-200 bg-white text-zinc-500 shadow-[-4px_0_14px_rgba(20,18,16,0.06)] transition-colors hover:bg-zinc-50 hover:text-zinc-800"
-          >
-            <PanelRightOpen className="size-4" />
-          </button>
+      <AnimatePresence>
+        {hintVisible && !previewOpen ? (
           <motion.div
-            className="absolute inset-y-0 right-0 z-[85] w-[min(320px,84vw)]"
-            initial={false}
-            animate={{ x: previewOpen ? 0 : "100%" }}
-            transition={{ x: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
-            style={{ pointerEvents: previewOpen ? "auto" : "none" }}
-            onMouseEnter={() => setPreviewOpen(true)}
+            role="status"
+            initial={{ opacity: 0, x: 8 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 4, transition: { duration: 0.12 } }}
+            transition={{ delay: 0.65, duration: 0.2, ease: "easeOut" }}
+            className="pointer-events-none absolute right-3.5 top-1/2 z-[90] -translate-y-1/2 whitespace-nowrap rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[11.5px] font-medium text-zinc-600 shadow-[0_6px_20px_rgba(20,18,16,0.10)]"
           >
-            <AssetInspector
-              asset={asset}
-              vaultTags={vaultTags}
-              floating
-              onExpand={expandInspector}
-            />
+            {t("assets.metadataHoverHint")}
+            <span className="absolute -right-[5px] top-1/2 size-2.5 -translate-y-1/2 rotate-45 border-r border-t border-zinc-200 bg-white" />
           </motion.div>
-        </>
-      ) : null}
-    </ResizablePanelGroup>
+        ) : null}
+      </AnimatePresence>
+      <motion.div
+        className="absolute inset-y-0 right-0 z-[85] w-[min(320px,84vw)]"
+        initial={false}
+        animate={{ x: previewOpen ? 0 : "100%" }}
+        transition={{ x: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } }}
+        style={{ pointerEvents: previewOpen ? "auto" : "none" }}
+        onMouseEnter={revealMetadata}
+      >
+        <AssetInspector asset={asset} vaultTags={vaultTags} />
+      </motion.div>
+    </div>
   );
 }
 

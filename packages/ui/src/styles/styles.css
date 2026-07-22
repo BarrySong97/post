@@ -67,11 +67,6 @@
   transition: flex-grow 0.25s ease-in-out;
 }
 
-/* Same collapse/expand animation for the asset-detail inspector (right rail). */
-.detail-panel-layout.panel-animating #asset-detail-inspector {
-  transition: flex-grow 0.25s ease-in-out;
-}
-
 /* Plyr: match the app's dark translucent play button (StagePoster / board cards), not Plyr's
    default cyan — so the poster→player swap is seamless. Retint the control bar off cyan too. */
 .plyr {
