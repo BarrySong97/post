@@ -666,7 +666,9 @@ function PFPill({
   return (
     <span className={`pf-pill pf-pill--${kind} ${open ? "is-open" : ""}`}>
       <span className="pf-pill-glyph">{glyph}</span>
-      <span className="pf-pill-label">{label}</span>
+      <span className="pf-pill-label" title={kind === "run" ? label : undefined}>
+        {label}
+      </span>
       {countStr ? <span className="pf-pill-count">{countStr}</span> : null}
       {others > 0 ? <span className="pf-pill-more">+{others}</span> : null}
       <span className="pf-caret">▲</span>

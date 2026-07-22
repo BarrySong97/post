@@ -3244,6 +3244,7 @@ function PFPill({
     >
       <span className="pf-pill-glyph flex shrink-0 items-center">{glyph}</span>
       <span
+        title={kind === "run" ? label : undefined}
         className={cn(
           "pf-pill-label whitespace-nowrap font-medium text-[#1b1b1a]",
           kind === "bad" && "text-red-600",

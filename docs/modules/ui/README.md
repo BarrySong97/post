@@ -26,6 +26,7 @@ The desktop renderer imports `@post/ui/styles.css` (theme + Electron-specific ru
 
 - Do not move feature-specific runtime behavior here. Shared components must avoid Electron APIs, tRPC, router state, Jotai atoms, localStorage, filesystem access, and database dependencies.
 - Desktop preview components accept only data props and callbacks. Website-owned state covers history, active screen, sidebar width/collapse, filter values, editor target selection, popovers, and mock reorder actions.
+- The shared footer keeps running-task labels in a fixed 220px slot with ellipsis; desktop and preview pills expose the full label through the native hover title.
 - Keep `theme.css` free of window-chrome assumptions (no `overflow: hidden`, transparent body background, minimum window width, or desktop `user-select` policy) since it's consumed outside Electron too.
 - Desktop `styles.css` sets `user-select: none` on `body` so top-chrome drag does not start text selection. Re-enable with native form controls, `[contenteditable]`, or the `.user-select-text` class (e.g. Markdown preview body).
 - Keep design decisions synchronized with [../../../design.md](../../../design.md).

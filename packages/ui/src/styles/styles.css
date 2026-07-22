@@ -282,6 +282,11 @@
   font-weight: 500;
   white-space: nowrap;
 }
+.pf-pill--run .pf-pill-label {
+  flex: 0 0 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .pf-pill-count {
   font-family: var(--mono, "JetBrains Mono", ui-monospace, Menlo, monospace);
   font-size: 10px;
